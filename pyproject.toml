@@ -1,0 +1,16 @@
+[project]
+name = "tinyvecdb"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.121.2",
+    "jupyterlab>=4.4.10",
+    "numpy>=2.3.5",
+    "pytest>=9.0.1",
+    "pytest-cov>=7.0.0",
+    "sentence-transformers>=5.1.2",
+    "sqlite-vec>=0.1.6",
+    "uvicorn[standard]>=0.38.0",
+]
