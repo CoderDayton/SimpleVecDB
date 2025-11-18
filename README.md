@@ -1,9 +1,9 @@
 # TinyVecDB • A dead-simple, file-based vector database
 
-[![CI](https://github.com/yourusername/tinyvecdb/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/tinyvecdb/actions)
+[![CI](https://github.com/coderdayton/tinyvecdb/actions/workflows/ci.yml/badge.svg)](https://github.com/coderdayton/tinyvecdb/actions)
 [![PyPI](https://img.shields.io/pypi/v/tinyvecdb?color=blue)](https://pypi.org/project/tinyvecdb/)
-[![License: MIT](https://img.shields.io/github/license/yourusername/tinyvecdb)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/yourusername/tinyvecdb?style=social)](https://github.com/yourusername/tinyvecdb)
+[![License: MIT](https://img.shields.io/github/license/coderdayton/tinyvecdb)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/coderdayton/tinyvecdb?style=social)](https://github.com/coderdayton/tinyvecdb)
 
 **One SQLite file. Zero external servers. Full-text + vector search. OpenAI-compatible embeddings endpoint.**
 
