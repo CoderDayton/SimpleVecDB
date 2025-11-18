@@ -1,16 +1,29 @@
 [project]
 name = "tinyvecdb"
-version = "0.1.0"
-description = "TinyVecDB is a lightweight Python wrapper around SQLite and the sqlite-vec extension, providing a dead-simple API for local vector storage and similarity search."
+version = "0.0.1"
+description = "Dead-simple local vector database powered by sqlite-vec."
+authors = [{ name = "Dayton Dunbar", email = "coderdayton14@gmail.com" }]
+license = { text = "MIT" }
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
+
 dependencies = [
-    "fastapi>=0.121.2",
-    "jupyterlab>=4.4.10",
-    "numpy>=2.3.5",
-    "pytest>=9.0.1",
-    "pytest-cov>=7.0.0",
-    "sentence-transformers>=5.1.2",
-    "sqlite-vec>=0.1.6",
-    "uvicorn[standard]>=0.38.0",
+    "sqlite-vec>=0.1.2",
+    "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+server = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+dev = ["pytest>=8.0", "pytest-cov", "jupyterlab", "sentence-transformers"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "jupyterlab",
+    "sentence-transformers",
 ]
