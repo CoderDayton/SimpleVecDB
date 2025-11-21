@@ -2,24 +2,56 @@ from __future__ import annotations
 
 import sqlite3
 import struct
+import json
 import numpy as np
 from collections.abc import Iterable, Sequence
 from typing import Any, TYPE_CHECKING
 import sqlite_vec
 from pathlib import Path
-import json
 
-from .types import Document, DistanceStrategy
+from .types import Document, DistanceStrategy, StrEnum
 
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
     from .integrations.langchain import TinyVecDBVectorStore
     from .integrations.llamaindex import TinyVecDBLlamaStore
 
+Quantization = StrEnum("Quantization", ["FLOAT", "INT8", "BIT"])
 
-def _serialize_float32(vector: Sequence[float]) -> bytes:
-    """Pack a list/array of floats into little-endian float32 blob."""
-    return struct.pack("<%sf" % len(vector), *(float(x) for x in vector))
+
+def _serialize_vector(vector: np.ndarray, quant: Quantization) -> bytes:
+    """Serialize a normalized float vector according to quantization mode."""
+    if quant == Quantization.FLOAT:
+        return struct.pack("<%sf" % len(vector), *(float(x) for x in vector))
+
+    elif quant == Quantization.INT8:
+        # Scalar quantization: scale to [-128, 127]
+        scaled = np.clip(np.round(vector * 127), -128, 127).astype(np.int8)
+        return scaled.tobytes()
+
+    elif quant == Quantization.BIT:
+        # Binary quantization: threshold at 0 → pack bits
+        bits = (vector > 0).astype(np.uint8)
+        packed = np.packbits(bits)
+        return packed.tobytes()
+
+    raise ValueError(f"Unsupported quantization: {quant}")
+
+
+def _dequantize_vector(blob: bytes, dim: int | None, quant: Quantization) -> np.ndarray:
+    """Reverse serialization for fallback path."""
+    if quant == Quantization.FLOAT:
+        return np.frombuffer(blob, dtype=np.float32)
+
+    elif quant == Quantization.INT8:
+        return np.frombuffer(blob, dtype=np.int8).astype(np.float32) / 127.0
+
+    elif quant == Quantization.BIT and dim is not None:
+        unpacked = np.unpackbits(np.frombuffer(blob, dtype=np.uint8))
+        v = unpacked[:dim].astype(np.float32)
+        return np.where(v == 1, 1.0, -1.0)
+
+    raise ValueError(f"Unsupported quantization: {quant} or unknown dim {dim}")
 
 
 def _normalize_l2(vector: np.ndarray) -> np.ndarray:
@@ -30,31 +62,33 @@ def _normalize_l2(vector: np.ndarray) -> np.ndarray:
 class VectorDB:
     """
     Dead-simple local vector database powered by sqlite-vec.
-    One SQLite file = one collection. Chroma-style API.
+    One SQLite file = one collection. Chroma-style API with quantization.
     """
 
     def __init__(
         self,
         path: str | Path = ":memory:",
         distance_strategy: DistanceStrategy = DistanceStrategy.COSINE,
+        quantization: Quantization = Quantization.FLOAT,
     ):
         self.path = str(path)
         self.distance_strategy = distance_strategy
+        self.quantization = quantization
 
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.enable_load_extension(True)
         try:
             sqlite_vec.load(self.conn)
+            self._extension_available = True
         except sqlite3.OperationalError:
-            # Some platforms (WASM, restricted envs) can't load – we'll fallback later
-            pass
+            self._extension_available = False
+
         self.conn.enable_load_extension(False)
 
         self._dim: int | None = None
         self._table_name = "tinyvec_items"
         self._create_table()
-        self._detect_dimension()
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -65,29 +99,10 @@ class VectorDB:
             CREATE TABLE IF NOT EXISTS {self._table_name} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 text TEXT NOT NULL,
-                metadata TEXT,                     -- JSON string
-                embedding BLOB NOT NULL
+                metadata TEXT
             )
             """
         )
-        # Virtual table is created lazily on first insert once we know dimension
-
-    def _detect_dimension(self) -> None:
-        """Detect dimension from existing data if database already has vectors."""
-        try:
-            cursor = self.conn.execute(
-                f"SELECT LENGTH(embedding) FROM {self._table_name} LIMIT 1"
-            )
-            row = cursor.fetchone()
-            if row and row[0]:
-                # embedding is stored as float32 (4 bytes per float)
-                dim = row[0] // 4
-                self._dim = dim
-                # Ensure virtual table exists with correct dimension
-                self._ensure_virtual_table(dim)
-        except sqlite3.OperationalError:
-            # Table doesn't exist yet or is empty
-            pass
 
     def _ensure_virtual_table(self, dim: int) -> None:
         if self._dim is not None and self._dim != dim:
@@ -96,13 +111,57 @@ class VectorDB:
             # First insert – recreate virtual table with correct dimension
             self._dim = dim
             self.conn.execute("DROP TABLE IF EXISTS vec_index")
+
+            storage_dim = dim
+            if self.quantization == Quantization.BIT:
+                storage_dim = ((dim + 7) // 8) * 8
+
+            vec_type = {
+                Quantization.FLOAT: f"float[{dim}]",
+                Quantization.INT8: f"int8[{dim}]",
+                Quantization.BIT: f"bit[{storage_dim}]",
+            }[self.quantization]
+
+            # BIT quantization implies Hamming distance; others need explicit metric
+            distance_clause = ""
+            if self.quantization != Quantization.BIT:
+                distance_clause = f"distance_metric={self.distance_strategy.value}"
+
             self.conn.execute(
                 f"""
                 CREATE VIRTUAL TABLE vec_index USING vec0(
-                    embedding float[{dim}]
+                embedding {vec_type} {distance_clause}
                 )
                 """
             )
+
+    # ------------------------------------------------------------------ #
+    # Filtering helpers
+    # ------------------------------------------------------------------ #
+    def _build_filter_clause(
+        self, filter_dict: dict[str, Any] | None
+    ) -> tuple[str, list[Any]]:
+        if not filter_dict:
+            return "", []
+
+        clauses = []
+        params = []
+        for key, value in filter_dict.items():
+            json_path = f"$.{key}"
+            if isinstance(value, (int, float)):
+                clauses.append("json_extract(metadata, ?) = ?")
+                params.extend([json_path, value])
+            elif isinstance(value, str):
+                clauses.append("json_extract(metadata, ?) LIKE ?")
+                params.extend([json_path, f"%{value}%"])
+            elif isinstance(value, list):
+                placeholders = ",".join("?" for _ in value)
+                clauses.append(f"json_extract(metadata, ?) IN ({placeholders})")
+                params.extend([json_path] + value)
+            else:
+                raise ValueError(f"Unsupported filter value type for {key}")
+        where = " AND ".join(clauses)
+        return f"AND ({where})" if where else "", params
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -112,110 +171,105 @@ class VectorDB:
         texts: Sequence[str],
         metadatas: Sequence[dict] | None = None,
         embeddings: Sequence[Sequence[float]] | None = None,
-        ids: Sequence[int] | None = None,
+        ids: Sequence[int | None] | None = None,
+        batch_size: int = 1000,
     ) -> list[int]:
         """
         Add texts with optional pre-computed embeddings.
         Returns the assigned integer IDs.
         """
         if not texts:
-            raise ValueError("No texts provided")
+            return []
 
-        import json
-
-        if metadatas is None:
-            metadatas = [{} for _ in texts]
-
+        # If embeddings are not provided, we need to generate them.
+        embed_func = None
         if embeddings is None:
             try:
-                from .embeddings.models import embed_texts
-
-                embeddings = embed_texts(list(texts))
+                from tinyvecdb.embeddings.models import embed_texts
+                embed_func = embed_texts
             except Exception as e:
                 raise ValueError(
                     "No embeddings provided and local embedder failed – install with [server] extra"
                 ) from e
 
-        first_emb = embeddings[0]
-        dim = len(first_emb)
-        self._ensure_virtual_table(dim)
+        all_ids = []
+        n_total = len(texts)
 
-        # Normalise for cosine if needed
-        if self.distance_strategy == DistanceStrategy.COSINE:
-            embeddings = [
-                _normalize_l2(np.array(e, dtype=np.float32)).tolist()
-                for e in embeddings
-            ]
+        for start_idx in range(0, n_total, batch_size):
+            end_idx = min(start_idx + batch_size, n_total)
+            
+            batch_texts = texts[start_idx:end_idx]
+            batch_metadatas = metadatas[start_idx:end_idx] if metadatas else [{} for _ in batch_texts]
+            batch_ids = ids[start_idx:end_idx] if ids else [None] * len(batch_texts)
+            
+            if embeddings is not None:
+                batch_embeddings = embeddings[start_idx:end_idx]
+            else:
+                batch_embeddings = embed_func(list(batch_texts))
 
-        rows = []
-        vec_rows = []
-        for i, (text, meta, emb) in enumerate(zip(texts, metadatas, embeddings)):
-            rowid = ids[i] if ids and ids[i] is not None else None
-            rows.append((rowid, text, json.dumps(meta), _serialize_float32(emb)))
-            vec_rows.append(
-                (rowid or i + 999999999, _serialize_float32(emb))
-            )  # temporary rowid
+            # Ensure table exists (idempotent check)
+            if self._dim is None:
+                dim = len(batch_embeddings[0])
+                self._ensure_virtual_table(dim)
 
-        with self.conn:
-            # Insert main rows (id may be NULL → AUTOINCREMENT)
-            self.conn.executemany(
-                f"""
-                INSERT INTO {self._table_name}(id, text, metadata, embedding)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    text=excluded.text,
-                    metadata=excluded.metadata,
-                    embedding=excluded.embedding
-                """,
-                rows,
-            )
-            # Sync to virtual table using real rowids
-            actual_ids = [
-                row[0]
-                for row in self.conn.execute(
-                    "SELECT id FROM tinyvec_items WHERE rowid IN (SELECT max(rowid) FROM tinyvec_items GROUP BY id)"
+            # Normalize for cosine before quantization
+            emb_np = np.array(batch_embeddings, dtype=np.float32)
+            if self.distance_strategy == DistanceStrategy.COSINE:
+                norms = np.linalg.norm(emb_np, axis=1, keepdims=True)
+                emb_np = emb_np / np.maximum(norms, 1e-12)
+
+            serialized = [_serialize_vector(vec, self.quantization) for vec in emb_np]
+
+            rows = []
+            for txt, meta, uid in zip(batch_texts, batch_metadatas, batch_ids):
+                rows.append((uid, txt, json.dumps(meta)))
+
+            with self.conn:
+                # Insert main table
+                self.conn.executemany(
+                    f"""
+                    INSERT INTO {self._table_name}(id, text, metadata)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        text=excluded.text,
+                        metadata=excluded.metadata
+                    """,
+                    rows,
                 )
-            ]
-            # Simpler: just re-insert into vec_index with correct rowid
-            self.conn.execute("DELETE FROM vec_index")
-            real_vec_rows = []
-            for real_id, (_, _, _, blob) in zip(actual_ids, rows):
-                real_vec_rows.append((real_id, blob))
-            self.conn.executemany(
-                "INSERT INTO vec_index(rowid, embedding) VALUES (?, ?)",
-                real_vec_rows,
-            )
+                # Sync vec_index with correct rowids
+                batch_real_ids = [
+                    r[0]
+                    for r in self.conn.execute(
+                        f"SELECT id FROM {self._table_name} ORDER BY id DESC LIMIT ?",
+                        (len(batch_texts),),
+                    )
+                ]
+                batch_real_ids.reverse()  # Align with input order
+                
+                real_vec_rows = [
+                    (real_id, ser) for real_id, ser in zip(batch_real_ids, serialized)
+                ]
+                
+                insert_placeholder = "?"
+                if self.quantization == Quantization.INT8:
+                    insert_placeholder = "vec_int8(?)"
+                elif self.quantization == Quantization.BIT:
+                    insert_placeholder = "vec_bit(?)"
 
-        return actual_ids or [
-            row[0]
-            for row in self.conn.execute(
-                "SELECT id FROM tinyvec_items ORDER BY id DESC LIMIT ?", (len(texts),)
-            )
-        ]
+                # Delete existing rows in vec_index to handle upserts
+                placeholders = ",".join("?" for _ in batch_real_ids)
+                self.conn.execute(
+                    f"DELETE FROM vec_index WHERE rowid IN ({placeholders})",
+                    tuple(batch_real_ids)
+                )
 
-    def upsert_texts(
-        self,
-        texts: Sequence[str],
-        embeddings: Sequence[Sequence[float]],
-        ids: Sequence[int],
-        metadatas: Sequence[dict] | None = None,
-    ) -> None:
-        """Upsert by explicit IDs (add_texts handles ON CONFLICT)."""
-        # Reuse add_texts logic – it's already upsert-capable
-        self.add_texts(texts, metadatas, embeddings, ids=ids)
+                self.conn.executemany(
+                    f"INSERT INTO vec_index(rowid, embedding) VALUES (?, {insert_placeholder})", real_vec_rows
+                )
+                
+                all_ids.extend(batch_real_ids)
 
-    def delete_by_ids(self, ids: Iterable[int]) -> None:
-        """Delete documents by IDs."""
-        with self.conn:
-            placeholders = ",".join("?" for _ in ids)
-            self.conn.execute(
-                f"DELETE FROM {self._table_name} WHERE id IN ({placeholders})",
-                list(ids),
-            )
-            self.conn.execute(
-                f"DELETE FROM vec_index WHERE rowid IN ({placeholders})",
-                list(ids),
-            )
+        return all_ids
 
     def similarity_search(
         self,
@@ -228,8 +282,6 @@ class VectorDB:
         Supports vector queries (text queries require embeddings integration).
         Optional metadata filter as dict (e.g., {"category": "fruit"}).
         """
-        import json
-
         if self._dim is None:
             return []  # empty collection
 
@@ -253,41 +305,40 @@ class VectorDB:
         if self.distance_strategy == DistanceStrategy.COSINE:
             query_vec = _normalize_l2(query_vec)
 
-        blob = _serialize_float32(query_vec.tolist())
+        blob = _serialize_vector(query_vec, self.quantization)
+
+        filter_clause, filter_params = self._build_filter_clause(filter)
+
+        match_placeholder = "?"
+        if self.quantization == Quantization.INT8:
+            match_placeholder = "vec_int8(?)"
+        elif self.quantization == Quantization.BIT:
+            match_placeholder = "vec_bit(?)"
 
         try:
-            # Fast path: use sqlite-vec if available
-            sql = """
-                SELECT
-                    rowid,
-                    distance
-                FROM vec_index
-                WHERE embedding MATCH ?
+            sql = f"""
+                SELECT ti.id, distance
+                FROM vec_index vi
+                JOIN {self._table_name} ti ON vi.rowid = ti.id
+                WHERE embedding MATCH {match_placeholder}
+                AND k = ?
+                {filter_clause}
                 ORDER BY distance
-                LIMIT ?
             """
-            params = (blob, k)
-            candidates = self.conn.execute(sql, params).fetchall()
-
+            candidates = self.conn.execute(
+                sql, (blob,) + (k,) + tuple(filter_params)
+            ).fetchall()
         except sqlite3.OperationalError:
-            # Fallback: pure NumPy brute-force scan (slow but works everywhere)
-            candidates = self._brute_force_search(query_vec, k)
+            # Fallback brute-force
+            candidates = self._brute_force_search(query_vec, k, filter)
 
-        # Apply metadata filter if any
-        if filter:
-            candidates = [c for c in candidates if self._matches_filter(c[0], filter)]
-
-        # Fetch full docs (limit to final k after filter)
         results = []
-        for rowid, distance in candidates[:k]:
+        for cid, dist in candidates[:k]:
             text, meta_json = self.conn.execute(
-                f"SELECT text, metadata FROM {self._table_name} WHERE id = ?",
-                (rowid,),
+                f"SELECT text, metadata FROM {self._table_name} WHERE id = ?", (cid,)
             ).fetchone()
             meta = json.loads(meta_json) if meta_json else {}
-            results.append(
-                (Document(page_content=text, metadata=meta), float(distance))
-            )
+            results.append((Document(page_content=text, metadata=meta), float(dist)))
 
         return results
 
@@ -299,7 +350,9 @@ class VectorDB:
         filter: dict[str, Any] | None = None,
     ) -> list[Document]:
         """
-        Max marginal relevance search.
+        MMR search to diversify results.
+        Returns k documents selected from top fetch_k candidates.
+        0.5 trade-off between relevance and diversity.
         """
         # First get top fetch_k candidates
         candidates_with_scores = self.similarity_search(query, k=fetch_k, filter=filter)
@@ -340,47 +393,81 @@ class VectorDB:
         return selected
 
     def _brute_force_search(
-        self, query_vec: np.ndarray, k: int
+        self,
+        query_vec: np.ndarray,
+        k: int,
+        filter: dict[str, Any] | None,
     ) -> list[tuple[int, float]]:
-        """Pure-NumPy fallback for no-extension environments."""
+        # Fetch embeddings from vec_index since we don't store them in main table
         rows = self.conn.execute(
-            f"SELECT id, embedding FROM {self._table_name}"
+            f"SELECT rowid, embedding FROM vec_index"
         ).fetchall()
-
+        
         if not rows:
             return []
 
         ids, blobs = zip(*rows)
-        vectors = np.array([np.frombuffer(blob, dtype=np.float32) for blob in blobs])
+        
+        # Fetch metadata only if needed for filtering
+        metas = []
+        if filter:
+            # This might be slow for large DBs, but it's brute force fallback anyway
+            placeholders = ",".join("?" for _ in ids)
+            meta_rows = self.conn.execute(
+                f"SELECT id, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
+                ids
+            ).fetchall()
+            meta_map = {r[0]: r[1] for r in meta_rows}
+            metas = [meta_map.get(i) for i in ids]
+        else:
+            metas = [None] * len(ids)
+
+        vectors = np.array(
+            [_dequantize_vector(b, self._dim, self.quantization) for b in blobs]
+        )
 
         if self.distance_strategy == DistanceStrategy.COSINE:
             dots = np.dot(vectors, query_vec)
             norms = np.linalg.norm(vectors, axis=1)
-            similarities = dots / (norms * np.linalg.norm(query_vec))
-            distances = 1 - similarities  # cosine distance = 1 - sim
+            similarities = dots / (norms * np.linalg.norm(query_vec) + 1e-12)
+            distances = 1 - similarities
         elif self.distance_strategy == DistanceStrategy.L2:
             distances = np.linalg.norm(vectors - query_vec, axis=1)
         else:  # IP
-            distances = -np.dot(vectors, query_vec)  # negative for sorting
+            distances = -np.dot(vectors, query_vec)
 
-        # Sort and take top-k
+        # Apply filter if any
+        if filter:
+            filtered = []
+            for i, (cid, dist, meta_json) in enumerate(zip(ids, distances, metas)):
+                meta = json.loads(meta_json) if meta_json else {}
+                if all(
+                    meta.get(k) == v if not isinstance(v, list) else meta.get(k) in v
+                    for k, v in filter.items()
+                ):
+                    filtered.append((cid, dist))
+            distances = np.array([d for _, d in filtered])
+            ids = [i for i, _ in filtered]
+        else:
+            filtered = list(zip(ids, distances))
+
         indices = np.argsort(distances)[:k]
-        return [(ids[i], distances[i]) for i in indices]
+        # Ensure pure Python primitives (int, float) for type compatibility
+        return [(int(ids[i]), float(distances[i])) for i in indices]
 
-    def _matches_filter(self, rowid: int, filter_dict: dict[str, Any]) -> bool:
-        """Simple JSON filter matcher (expand for complex in v1)."""
-        meta_json = self.conn.execute(
-            f"SELECT metadata FROM {self._table_name} WHERE id = ?",
-            (rowid,),
-        ).fetchone()[0]
-        if not meta_json:
-            return False
-        meta = json.loads(meta_json)
-
-        for key, value in filter_dict.items():
-            if meta.get(key) != value:  # exact match for now
-                return False
-        return True
+    def delete_by_ids(self, ids: Iterable[int]) -> None:
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        with self.conn:
+            self.conn.execute(
+                f"DELETE FROM {self._table_name} WHERE id IN ({placeholders})",
+                tuple(ids),
+            )
+            self.conn.execute(
+                f"DELETE FROM vec_index WHERE rowid IN ({placeholders})", tuple(ids)
+            )
+        self.conn.execute("VACUUM")
 
     # ------------------------------------------------------------------ #
     # Integrations

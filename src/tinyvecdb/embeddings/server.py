@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from typing import List, Optional, Union, Literal
+from typing import Literal
 import uvicorn
 
 from .models import embed_texts, DEFAULT_MODEL
+from tinyvecdb.config import config
 
 app = FastAPI(
     title="TinyVecDB Embeddings",
@@ -17,21 +18,21 @@ app = FastAPI(
 
 
 class EmbeddingRequest(BaseModel):
-    input: Union[str, List[str], List[int], List[List[int]]]
-    model: Optional[str] = DEFAULT_MODEL
-    encoding_format: Optional[Literal["float", "base64"]] = "float"
-    user: Optional[str] = None
+    input: str | list[str] | list[int] | list[list[int]]
+    model: str | None = DEFAULT_MODEL
+    encoding_format: Literal["float", "base64"] | None = "float"
+    user: str | None = None
 
 
 class EmbeddingData(BaseModel):
     object: Literal["embedding"] = "embedding"
-    embedding: List[float]
+    embedding: list[float]
     index: int
 
 
 class EmbeddingResponse(BaseModel):
     object: Literal["list"] = "list"
-    data: List[EmbeddingData]
+    data: list[EmbeddingData]
     model: str
     usage: dict = Field(default_factory=lambda: {"prompt_tokens": 0, "total_tokens": 0})
 
@@ -79,5 +80,13 @@ async def list_models():
     }
 
 
-def run_server(host: str = "127.0.0.1", port: int = 53287):
+def run_server(host: str | None = None, port: int | None = None):
+    """Run the embedding server.
+
+    Args:
+        host: Server host (defaults to config.SERVER_HOST)
+        port: Server port (defaults to config.SERVER_PORT)
+    """
+    host = host or config.SERVER_HOST
+    port = port or config.SERVER_PORT
     uvicorn.run(app, host=host, port=port, log_level="info")

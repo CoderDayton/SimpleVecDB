@@ -13,6 +13,7 @@ dependencies = [
     "fastapi>=0.121.2",
     "uvicorn>=0.38.0",
     "sentence-transformers>=5.1.2",
+    "python-dotenv>=1.2.1",
 ]
 
 [dependency-groups]
@@ -43,3 +44,9 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 tinyvecdb-server = "tinyvecdb.embeddings.server:run_server"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests",
+    "perf: marks tests as performance benchmarks",
+]

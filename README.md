@@ -24,6 +24,15 @@ Perfect for private knowledge bases, local copilot tools, edge-device RAG, and a
 uv pip install tinyvecdb[server]    # or: pip install tinyvecdb[server]
 ```
 
+**Setup (optional):** Copy `.env.example` to `.env` and configure your API keys:
+
+```bash
+cp .env.example .env
+# Edit .env with your embedding/LLM endpoints and keys
+```
+
+See [docs/ENV_SETUP.md](docs/ENV_SETUP.md) for details.
+
 ```python
 from tinyvecdb import VectorDB
 
@@ -90,13 +99,11 @@ uv pip install "tinyvecdb[server]"
 
 ## Contributing
 
-Contributions are very welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) (will be added soon).
+Contributions are very welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Sponsors & Pro Version
+## Sponsors
 
 Love TinyVecDB? Consider [sponsoring on GitHub ❤️](https://github.com/sponsors/coderdayton) — sponsors get priority feature requests, early access to the encrypted Pro build, and eternal gratitude.
-
-A paid Pro tier (one-time or subscription) with encryption, GUI, and team sync is in active development.
 
 ## License
 

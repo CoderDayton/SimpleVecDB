@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from torch.cuda import is_available
 from pathlib import Path
-from typing import List
 
 from sentence_transformers import SentenceTransformer
 from huggingface_hub import snapshot_download
@@ -34,10 +33,9 @@ def load_default_model() -> SentenceTransformer:
         tokenizer_kwargs={"padding": True, "truncation": True, "max_length": 512},
     )
     # Optional: enable memory-efficient attention if flash-attn available (no-op otherwise)
-    try:
-        model[0].auto_model = model[0].auto_model.to_bettertransformer()
-    except Exception:
-        pass
+    # Modern PyTorch (2.0+) uses SDPA by default, so explicit BetterTransformer conversion
+    # is often unnecessary or deprecated in newer transformers versions.
+
     return model
 
 
@@ -52,7 +50,7 @@ def get_embedder() -> SentenceTransformer:
     return _default_model
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
+def embed_texts(texts: list[str]) -> list[list[float]]:
     model = get_embedder()
     embeddings = model.encode(
         texts,
