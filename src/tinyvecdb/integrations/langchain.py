@@ -29,7 +29,19 @@ class TinyVecDBVectorStore(VectorStore):
         db_path: str = ":memory:",
         **kwargs: Any,
     ) -> "TinyVecDBVectorStore":
-        """Initialize from texts (embeds them automatically)."""
+        """
+        Initialize from texts (embeds them automatically).
+
+        Args:
+            texts: List of texts to add.
+            embedding: LangChain Embeddings model.
+            metadatas: Optional list of metadata dicts.
+            db_path: Path to SQLite database.
+            **kwargs: Additional arguments for VectorDB.
+
+        Returns:
+            Initialized TinyVecDBVectorStore.
+        """
         store = cls(embedding=embedding, db_path=db_path, **kwargs)
         store.add_texts(texts, metadatas)
         return store
@@ -40,7 +52,17 @@ class TinyVecDBVectorStore(VectorStore):
         metadatas: list[dict] | None = None,
         **kwargs: Any,
     ) -> list[str]:
-        """Add texts (embed if no pre-computed). Returns IDs as str."""
+        """
+        Add texts (embed if no pre-computed). Returns IDs as str.
+
+        Args:
+            texts: Iterable of texts to add.
+            metadatas: Optional list of metadata dicts.
+            **kwargs: Additional arguments (e.g., ids).
+
+        Returns:
+            List of document IDs.
+        """
         texts_list = list(texts)
         embeddings = None
         if self.embedding:
@@ -59,7 +81,17 @@ class TinyVecDBVectorStore(VectorStore):
         k: int = 4,
         **kwargs: Any,
     ) -> list[LangChainDocument]:
-        """Search by text query (auto-embeds)."""
+        """
+        Search by text query (auto-embeds).
+
+        Args:
+            query: Text query string.
+            k: Number of results to return.
+            **kwargs: Additional arguments (e.g., filter).
+
+        Returns:
+            List of LangChain Documents.
+        """
         if self.embedding:
             query_vec = self.embedding.embed_query(query)
         else:
@@ -80,7 +112,17 @@ class TinyVecDBVectorStore(VectorStore):
         k: int = 4,
         **kwargs: Any,
     ) -> list[tuple[LangChainDocument, float]]:
-        """Return with scores (distances)."""
+        """
+        Return with scores (distances).
+
+        Args:
+            query: Text query string.
+            k: Number of results to return.
+            **kwargs: Additional arguments (e.g., filter).
+
+        Returns:
+            List of (Document, score) tuples.
+        """
         if self.embedding:
             query_vec = self.embedding.embed_query(query)
         else:
@@ -99,6 +141,13 @@ class TinyVecDBVectorStore(VectorStore):
         ]
 
     def delete(self, ids: list[str] | None = None, **kwargs: Any) -> None:
+        """
+        Delete documents by ID.
+
+        Args:
+            ids: List of document IDs to delete.
+            **kwargs: Unused.
+        """
         if ids:
             int_ids = [int(id_) for id_ in ids]
             self._db.delete_by_ids(int_ids)
@@ -111,7 +160,19 @@ class TinyVecDBVectorStore(VectorStore):
         lambda_mult: float = 0.5,
         **kwargs: Any,
     ) -> list[LangChainDocument]:
-        """Max marginal relevance search."""
+        """
+        Max marginal relevance search.
+
+        Args:
+            query: Text query string.
+            k: Number of results to return.
+            fetch_k: Number of candidates to fetch.
+            lambda_mult: Diversity trade-off (unused in core currently).
+            **kwargs: Additional arguments (e.g., filter).
+
+        Returns:
+            List of LangChain Documents.
+        """
         if self.embedding:
             query_vec = self.embedding.embed_query(query)
         else:

@@ -3,11 +3,14 @@ from __future__ import annotations
 import sqlite3
 import struct
 import json
+import re
 import numpy as np
 from collections.abc import Iterable, Sequence
 from typing import Any, TYPE_CHECKING
-import sqlite_vec
+import sqlite_vec  # type: ignore
 from pathlib import Path
+import platform
+import multiprocessing
 
 from .types import Document, DistanceStrategy, StrEnum
 
@@ -16,7 +19,11 @@ if TYPE_CHECKING:
     from .integrations.langchain import TinyVecDBVectorStore
     from .integrations.llamaindex import TinyVecDBLlamaStore
 
-Quantization = StrEnum("Quantization", ["FLOAT", "INT8", "BIT"])
+
+class Quantization(StrEnum):
+    FLOAT = "float"
+    INT8 = "int8"
+    BIT = "bit"
 
 
 def _serialize_vector(vector: np.ndarray, quant: Quantization) -> bytes:
@@ -59,6 +66,129 @@ def _normalize_l2(vector: np.ndarray) -> np.ndarray:
     return vector if norm == 0 else vector / norm
 
 
+def get_optimal_batch_size() -> int:
+    """
+    Automatically determine optimal batch size based on hardware.
+
+    Detection hierarchy:
+    1. CUDA GPU (NVIDIA) - High batch sizes for desktop/server GPUs
+    2. ROCm GPU (AMD) - Similar to CUDA for high-end cards
+    3. MPS (Apple Metal Performance Shaders) - Apple Silicon optimization
+    4. ONNX Runtime GPU (CUDA/TensorRT/DirectML)
+    5. CPU - Scale with cores and architecture
+
+    Returns:
+        Optimal batch size for the detected hardware.
+    """
+    # 1. Try PyTorch detection first
+    try:
+        import torch
+
+        # Check for NVIDIA CUDA GPU
+        if torch.cuda.is_available():
+            # Get GPU properties
+            gpu_props = torch.cuda.get_device_properties(0)
+            vram_gb = gpu_props.total_memory / (1024**3)
+
+            if vram_gb >= 20:
+                return 512  # RTX 4090, A100, H100
+            elif vram_gb >= 12:
+                return 256  # RTX 4070 Ti, 3090, A10
+            elif vram_gb >= 8:
+                return 128  # RTX 4060 Ti, 3070
+            else:
+                return 64  # GTX 1660, RTX 3050
+
+        # Check for AMD ROCm GPU
+        if hasattr(torch, "hip") and torch.hip.is_available():  # type: ignore
+            return 256
+
+        # Check for Apple Metal (Apple Silicon)
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            machine = platform.machine().lower()
+            if "arm" in machine or "aarch64" in machine:
+                try:
+                    import subprocess
+
+                    chip_info = subprocess.check_output(
+                        ["sysctl", "-n", "machdep.cpu.brand_string"], text=True
+                    ).lower()
+
+                    if "m3" in chip_info or "m4" in chip_info:
+                        return 64
+                    elif "max" in chip_info or "ultra" in chip_info:
+                        return 128
+                    else:
+                        return 32
+                except Exception:
+                    return 32
+
+    except ImportError:
+        pass
+
+    # 2. Try ONNX Runtime detection
+    try:
+        import onnxruntime as ort  # type: ignore
+
+        providers = ort.get_available_providers()
+        if (
+            "CUDAExecutionProvider" in providers
+            or "TensorrtExecutionProvider" in providers
+        ):
+            # Hard to get VRAM from ORT directly without other libs, assume mid-range
+            return 128
+        if "DmlExecutionProvider" in providers:
+            # DirectML (Windows AMD/Intel/NVIDIA)
+            return 64
+        if "CoreMLExecutionProvider" in providers:
+            # Apple CoreML
+            return 32
+    except ImportError:
+        pass
+
+    # 3. CPU fallback - scale with available cores and RAM
+    try:
+        import psutil  # type: ignore
+
+        # Physical cores are better for dense math
+        cpu_count = psutil.cpu_count(logical=False) or multiprocessing.cpu_count()
+        available_ram_gb = psutil.virtual_memory().available / (1024**3)
+    except ImportError:
+        cpu_count = multiprocessing.cpu_count()
+        available_ram_gb = 8.0  # Assume decent machine
+
+    machine = platform.machine().lower()
+
+    # Check for ARM architecture (mobile/embedded)
+    if "arm" in machine or "aarch64" in machine:
+        if cpu_count <= 4:
+            return 4
+        elif cpu_count <= 8:
+            return 8
+        else:
+            return 16
+
+    # x86/x64 CPU
+    base_batch = 16
+    if cpu_count >= 32:
+        base_batch = 64
+    elif cpu_count >= 16:
+        base_batch = 48
+    elif cpu_count >= 8:
+        base_batch = 32
+
+    # Constrain by available RAM to avoid swapping
+    # Rough heuristic: reduce batch size if RAM is tight
+    if available_ram_gb < 2.0:
+        return min(base_batch, 4)
+    elif available_ram_gb < 4.0:
+        return min(base_batch, 8)
+    elif available_ram_gb < 8.0:
+        return min(base_batch, 16)
+
+    return base_batch
+
+
 class VectorDB:
     """
     Dead-simple local vector database powered by sqlite-vec.
@@ -89,10 +219,25 @@ class VectorDB:
         self._dim: int | None = None
         self._table_name = "tinyvec_items"
         self._create_table()
+        self._recover_dim()
 
     # ------------------------------------------------------------------ #
     # Internal helpers
     # ------------------------------------------------------------------ #
+    def _recover_dim(self) -> None:
+        """Attempt to recover dimension from existing virtual table schema."""
+        try:
+            row = self.conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'vec_index'"
+            ).fetchone()
+            if row and row[0]:
+                # Match float[N], int8[N], or bit[N]
+                match = re.search(r"(?:float|int8|bit)\[(\d+)\]", row[0])
+                if match:
+                    self._dim = int(match.group(1))
+        except Exception:
+            pass  # Ignore errors, will be set on first add
+
     def _create_table(self) -> None:
         self.conn.execute(
             f"""
@@ -172,11 +317,18 @@ class VectorDB:
         metadatas: Sequence[dict] | None = None,
         embeddings: Sequence[Sequence[float]] | None = None,
         ids: Sequence[int | None] | None = None,
-        batch_size: int = 1000,
     ) -> list[int]:
         """
         Add texts with optional pre-computed embeddings.
-        Returns the assigned integer IDs.
+
+        Args:
+            texts: List of text strings to add.
+            metadatas: Optional list of metadata dicts for each text.
+            embeddings: Optional list of pre-computed embedding vectors.
+            ids: Optional list of integer IDs. If None, auto-incrementing IDs are generated.
+
+        Returns:
+            List of assigned integer IDs.
         """
         if not texts:
             return []
@@ -186,31 +338,40 @@ class VectorDB:
         if embeddings is None:
             try:
                 from tinyvecdb.embeddings.models import embed_texts
+
                 embed_func = embed_texts
             except Exception as e:
                 raise ValueError(
                     "No embeddings provided and local embedder failed – install with [server] extra"
                 ) from e
 
+        from tinyvecdb import config
+
         all_ids = []
         n_total = len(texts)
+        batch_size = config.EMBEDDING_BATCH_SIZE
 
         for start_idx in range(0, n_total, batch_size):
             end_idx = min(start_idx + batch_size, n_total)
-            
+
             batch_texts = texts[start_idx:end_idx]
-            batch_metadatas = metadatas[start_idx:end_idx] if metadatas else [{} for _ in batch_texts]
+            batch_metadatas = (
+                metadatas[start_idx:end_idx] if metadatas else [{} for _ in batch_texts]
+            )
             batch_ids = ids[start_idx:end_idx] if ids else [None] * len(batch_texts)
-            
+
             if embeddings is not None:
                 batch_embeddings = embeddings[start_idx:end_idx]
             else:
+                assert embed_func is not None
                 batch_embeddings = embed_func(list(batch_texts))
 
             # Ensure table exists (idempotent check)
             if self._dim is None:
                 dim = len(batch_embeddings[0])
                 self._ensure_virtual_table(dim)
+            elif len(batch_embeddings[0]) != self._dim:
+                raise ValueError(f"Dimension mismatch: existing {self._dim}, got {len(batch_embeddings[0])}")
 
             # Normalize for cosine before quantization
             emb_np = np.array(batch_embeddings, dtype=np.float32)
@@ -245,11 +406,11 @@ class VectorDB:
                     )
                 ]
                 batch_real_ids.reverse()  # Align with input order
-                
+
                 real_vec_rows = [
                     (real_id, ser) for real_id, ser in zip(batch_real_ids, serialized)
                 ]
-                
+
                 insert_placeholder = "?"
                 if self.quantization == Quantization.INT8:
                     insert_placeholder = "vec_int8(?)"
@@ -260,13 +421,14 @@ class VectorDB:
                 placeholders = ",".join("?" for _ in batch_real_ids)
                 self.conn.execute(
                     f"DELETE FROM vec_index WHERE rowid IN ({placeholders})",
-                    tuple(batch_real_ids)
+                    tuple(batch_real_ids),
                 )
 
                 self.conn.executemany(
-                    f"INSERT INTO vec_index(rowid, embedding) VALUES (?, {insert_placeholder})", real_vec_rows
+                    f"INSERT INTO vec_index(rowid, embedding) VALUES (?, {insert_placeholder})",
+                    real_vec_rows,
                 )
-                
+
                 all_ids.extend(batch_real_ids)
 
         return all_ids
@@ -279,8 +441,14 @@ class VectorDB:
     ) -> list[tuple[Document, float]]:
         """
         Return top-k documents with distances.
-        Supports vector queries (text queries require embeddings integration).
-        Optional metadata filter as dict (e.g., {"category": "fruit"}).
+
+        Args:
+            query: Text string (requires embedding model) or vector.
+            k: Number of results to return.
+            filter: Metadata filter dict (e.g., {"category": "fruit"}).
+
+        Returns:
+            List of (Document, distance) tuples.
         """
         if self._dim is None:
             return []  # empty collection
@@ -351,8 +519,15 @@ class VectorDB:
     ) -> list[Document]:
         """
         MMR search to diversify results.
-        Returns k documents selected from top fetch_k candidates.
-        0.5 trade-off between relevance and diversity.
+
+        Args:
+            query: Text string or vector.
+            k: Number of results to return.
+            fetch_k: Number of candidates to fetch before reranking.
+            filter: Metadata filter dict.
+
+        Returns:
+            List of selected Documents.
         """
         # First get top fetch_k candidates
         candidates_with_scores = self.similarity_search(query, k=fetch_k, filter=filter)
@@ -398,16 +573,18 @@ class VectorDB:
         k: int,
         filter: dict[str, Any] | None,
     ) -> list[tuple[int, float]]:
+        """Perform brute-force search using NumPy when sqlite-vec is unavailable."""
         # Fetch embeddings from vec_index since we don't store them in main table
-        rows = self.conn.execute(
-            f"SELECT rowid, embedding FROM vec_index"
-        ).fetchall()
-        
+        try:
+            rows = self.conn.execute("SELECT rowid, embedding FROM vec_index").fetchall()
+        except sqlite3.OperationalError:
+            return []
+
         if not rows:
             return []
 
         ids, blobs = zip(*rows)
-        
+
         # Fetch metadata only if needed for filtering
         metas = []
         if filter:
@@ -415,7 +592,7 @@ class VectorDB:
             placeholders = ",".join("?" for _ in ids)
             meta_rows = self.conn.execute(
                 f"SELECT id, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
-                ids
+                ids,
             ).fetchall()
             meta_map = {r[0]: r[1] for r in meta_rows}
             metas = [meta_map.get(i) for i in ids]
@@ -447,15 +624,22 @@ class VectorDB:
                 ):
                     filtered.append((cid, dist))
             distances = np.array([d for _, d in filtered])
-            ids = [i for i, _ in filtered]
+            filtered_ids = [i for i, _ in filtered]
         else:
+            filtered_ids = list(ids)
             filtered = list(zip(ids, distances))
 
         indices = np.argsort(distances)[:k]
         # Ensure pure Python primitives (int, float) for type compatibility
-        return [(int(ids[i]), float(distances[i])) for i in indices]
+        return [(int(filtered_ids[i]), float(distances[i])) for i in indices]
 
     def delete_by_ids(self, ids: Iterable[int]) -> None:
+        """
+        Delete documents by their integer IDs.
+
+        Args:
+            ids: Iterable of integer IDs to delete.
+        """
         if not ids:
             return
         placeholders = ",".join("?" for _ in ids)
@@ -475,11 +659,26 @@ class VectorDB:
     def as_langchain(
         self, embeddings: Embeddings | None = None
     ) -> TinyVecDBVectorStore:
+        """
+        Return a LangChain-compatible vector store interface.
+
+        Args:
+            embeddings: LangChain Embeddings model (optional).
+
+        Returns:
+            TinyVecDBVectorStore instance.
+        """
         from .integrations.langchain import TinyVecDBVectorStore
 
         return TinyVecDBVectorStore(db_path=self.path, embedding=embeddings)
 
     def as_llama_index(self) -> TinyVecDBLlamaStore:
+        """
+        Return a LlamaIndex-compatible vector store interface.
+
+        Returns:
+            TinyVecDBLlamaStore instance.
+        """
         from .integrations.llamaindex import TinyVecDBLlamaStore
 
         return TinyVecDBLlamaStore(db_path=self.path)
@@ -488,6 +687,7 @@ class VectorDB:
     # Convenience
     # ------------------------------------------------------------------ #
     def close(self) -> None:
+        """Close the database connection."""
         self.conn.close()
 
     def __del__(self):

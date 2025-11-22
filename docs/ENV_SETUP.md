@@ -1,70 +1,68 @@
-# Environment Setup Guide
+# Environment Setup
 
-## Quick Start
+TinyVecDB uses environment variables for configuration, particularly for the optional embeddings server and RAG examples.
 
-1. **Copy the example env file:**
+## Quick Setup
+
+1. Copy the example file:
 
    ```bash
    cp .env.example .env
    ```
 
-2. **Edit `.env` with your values:**
+2. Edit `.env` with your preferred settings.
 
-   ```bash
-   nano .env  # or your preferred editor
-   ```
+## Configuration Variables
 
-3. **Fill in your API keys and endpoints:**
-   ```env
-   EMBEDDING_API_KEY=sk-xxx...
-   LLM_API_KEY=cpk_xxx...
-   ```
+### Embedding Model (Local)
 
-## Environment Variables
+Used for local embeddings when running TinyVecDB without an external API.
 
-### Embeddings
+| Variable               | Description                                          | Default                 |
+| ---------------------- | ---------------------------------------------------- | ----------------------- |
+| `EMBEDDING_MODEL`      | HuggingFace model ID for local embeddings.           | `TaylorAI/bge-micro-v2` |
+| `EMBEDDING_CACHE_DIR`  | Directory to cache downloaded models.                | `~/.cache/tinyvecdb`    |
+| `EMBEDDING_BATCH_SIZE` | Batch size for inference (auto-detected if not set). | _Auto_                  |
 
-- `EMBEDDING_API_BASE` - OpenAI-compatible embeddings endpoint (default: `http://127.0.0.1:53287/v1`)
-- `EMBEDDING_API_KEY` - API key for embeddings service
+#### Batch Size Auto-Detection
 
-### LLM (for RAG)
+TinyVecDB automatically detects the optimal batch size based on your hardware:
 
-- `LLM_MODEL` - Model name (default: `unsloth/gemma-3-4b-it`)
-- `LLM_API_BASE` - LLM API endpoint
-- `LLM_API_KEY` - API key for LLM service
+- **NVIDIA GPUs**: 64-512 based on VRAM (4GB-24GB+)
+- **AMD GPUs**: 256 (ROCm)
+- **Apple Silicon**: 32-128 based on chip (M1/M2 vs M3/M4, base vs Max/Ultra)
+- **ARM CPUs**: 4-16 based on core count (mobile, Pi, servers)
+- **x86 CPUs**: 8-64 based on core count
+
+Only override `EMBEDDING_BATCH_SIZE` if you need to tune for specific workloads or troubleshoot memory issues.
 
 ### Database
 
-- `DATABASE_PATH` - Path to SQLite database file (default: `:memory:`)
+| Variable        | Description                       | Default    |
+| --------------- | --------------------------------- | ---------- |
+| `DATABASE_PATH` | Path to the SQLite database file. | `:memory:` |
 
 ### Server
 
-- `SERVER_HOST` - Server host (default: `0.0.0.0`)
-- `SERVER_PORT` - Server port (default: `8000`)
+Configuration for `tinyvecdb-server`.
 
-## In Your Code
+| Variable      | Description                 | Default                                   |
+| ------------- | --------------------------- | ----------------------------------------- |
+| `SERVER_HOST` | Host to bind the server to. | `0.0.0.0`                                 |
+| `SERVER_PORT` | Port to bind the server to. | `8000` (Code default) / `53287` (Example) |
 
-```python
-from tinyvecdb.config import config
+## Using with Custom Embedding Models
 
-# Access configuration
-print(config.EMBEDDING_API_BASE)
-print(config.LLM_API_KEY)
+To use a different HuggingFace model for local embeddings:
+
+```bash
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+EMBEDDING_CACHE_DIR=~/.cache/my_embeddings
 ```
 
-Or load environment variables directly:
+Popular embedding models:
 
-```python
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-api_key = os.getenv("EMBEDDING_API_KEY")
-```
-
-## Security Notes
-
-- **Never commit `.env`** to version control (it's in `.gitignore`)
-- Use `.env.example` to document required variables
-- Keep API keys in `.env` only, never in code
-- Use different keys for development vs production
+- `TaylorAI/bge-micro-v2` - 384 dims, 17M params (default, very fast)
+- `Snowflake/snowflake-arctic-embed-xs` - 384 dims, 22M params (best overall, fast)
+- `BAAI/bge-small-en-v1.5` - 384 dims, 33M params
+- `BAAI/bge-m3` - 1024 dims, ~568M params (best quality, multilingual, slower)

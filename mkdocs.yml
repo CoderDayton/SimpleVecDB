@@ -1,0 +1,74 @@
+site_name: TinyVecDB Docs
+site_url: https://coderdayton.github.io/tinyvecdb
+repo_url: https://github.com/coderdayton/tinyvecdb
+repo_name: tinyvecdb
+
+theme:
+  name: shadcn
+  show_title: true
+  show_stargazers: true
+  pygments_style:
+    light: shadcn-light
+    dark: github-dark
+  show_datetime: true
+  topbar_sections: false
+  icon: heroicons:cube-transparent
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/coderdayton/tinyvecdb
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/tinyvecdb/
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_root_heading: true
+            show_source: true
+            members_order: source
+            docstring_style: google
+
+nav:
+  - Home: index.md
+  - API:
+      - VectorDB: api/core.md
+      - Integrations: api/integrations.md
+  - Examples: examples.md
+  - Benchmarks: benchmarks.md
+  - Contributing: CONTRIBUTING.md
+  - Setup: ENV_SETUP.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - shadcn.extensions.echarts.alpha
+  - shadcn.extensions.iconify
+  - codehilite
+  - fenced_code
+  - footnotes
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.snippets
+  - pymdownx.tabbed
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.keys
+  - pymdownx.smartsymbols
+  - pymdownx.blocks.caption
+  - pymdownx.details
+  - pymdownx.blocks.tab
+  - pymdownx.arithmatex:
+      generic: true

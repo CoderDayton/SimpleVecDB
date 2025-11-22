@@ -7,7 +7,7 @@ from llama_index.core.vector_stores import (
     VectorStoreQueryResult,
 )
 from llama_index.core.schema import TextNode, BaseNode
-from llama_index.core.vector_stores.types import BasePydanticVectorStore
+from llama_index.core.vector_stores.types import BasePydanticVectorStore, MetadataFilters
 
 from tinyvecdb.core import VectorDB  # our core
 
@@ -36,7 +36,16 @@ class TinyVecDBLlamaStore(BasePydanticVectorStore):
         return self.stores_text
 
     def add(self, nodes: Sequence[BaseNode], **kwargs: Any) -> list[str]:
-        """Add nodes with embeddings."""
+        """
+        Add nodes with embeddings.
+
+        Args:
+            nodes: Sequence of LlamaIndex BaseNodes.
+            **kwargs: Unused.
+
+        Returns:
+            List of node IDs.
+        """
         texts = [node.get_content() for node in nodes]
         metadatas = [node.metadata for node in nodes]
 
@@ -69,7 +78,13 @@ class TinyVecDBLlamaStore(BasePydanticVectorStore):
         return node_ids
 
     def delete(self, ref_doc_id: str, **delete_kwargs: Any) -> None:
-        """Delete by ref_doc_id (node ID)."""
+        """
+        Delete by ref_doc_id (node ID).
+
+        Args:
+            ref_doc_id: The node ID to delete.
+            **delete_kwargs: Unused.
+        """
         # Find internal ID from node ID
         internal_id = None
         for int_id, node_id in self._id_map.items():
@@ -81,8 +96,35 @@ class TinyVecDBLlamaStore(BasePydanticVectorStore):
             self._db.delete_by_ids([internal_id])
             del self._id_map[internal_id]
 
+    def delete_nodes(
+        self,
+        node_ids: list[str] | None = None,
+        filters: MetadataFilters | None = None,
+        **delete_kwargs: Any,
+    ) -> None:
+        """
+        Delete nodes from vector store.
+
+        Args:
+            node_ids: List of node IDs to delete.
+            filters: Metadata filters (unused).
+            **delete_kwargs: Unused.
+        """
+        if node_ids:
+            for node_id in node_ids:
+                self.delete(node_id)
+
     def query(self, query: VectorStoreQuery, **kwargs: Any) -> VectorStoreQueryResult:
-        """Query with embedding or str (auto-embeds if str)."""
+        """
+        Query with embedding or str (auto-embeds if str).
+
+        Args:
+            query: VectorStoreQuery object.
+            **kwargs: Unused.
+
+        Returns:
+            VectorStoreQueryResult.
+        """
         # Get query embedding - prefer embedding over string
         query_emb = query.query_embedding
 

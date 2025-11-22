@@ -28,10 +28,9 @@ def test_insert_performance():
     embs /= np.linalg.norm(embs, axis=1, keepdims=True)
 
     t0 = time.time()
-    db.add_texts(["text"] * N, embeddings=embs.tolist(), batch_size=1000)
+    db.add_texts(["text"] * N, embeddings=embs.tolist())
     duration = time.time() - t0
 
-    # Assert reasonable performance (e.g., > 1000 vec/s)
     # 10k items should take < 10s
     assert duration < 10
     print(f"\n{N} inserts: {duration:.2f}s ({N / duration:.0f} vec/s)")

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 try:
     from ollama import Client as OllamaClient
 except ImportError:
-    OllamaClient = Mock()
+    OllamaClient = Mock()  # type: ignore
 
 from tinyvecdb import VectorDB
 

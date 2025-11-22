@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+from .core import get_optimal_batch_size
+
 # Load .env file from project root
 env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -12,19 +14,18 @@ load_dotenv(dotenv_path=env_path)
 class Config:
     """Environment configuration."""
 
-    # Embedding
-    EMBEDDING_API_BASE: str = os.getenv(
-        "EMBEDDING_API_BASE", "http://127.0.0.1:53287/v1"
+    # Embedding Model
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "TaylorAI/bge-micro-v2")
+    EMBEDDING_CACHE_DIR: str = os.getenv(
+        "EMBEDDING_CACHE_DIR", str(Path.home() / ".cache" / "tinyvecdb")
     )
-    EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
-
-    # LLM
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "unsloth/gemma-3-4b-it")
-    LLM_API_BASE: str = os.getenv("LLM_API_BASE", "https://llm.chutes.ai/v1")
-    LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
-
-    # Quantization
-    QUANTIZATION_DIM: int = int(os.getenv("QUANTIZATION_DIM", "4"))
+    # Auto-detect optimal batch size if not explicitly set
+    _batch_size_env = os.getenv("EMBEDDING_BATCH_SIZE")
+    EMBEDDING_BATCH_SIZE: int = (
+        int(_batch_size_env)
+        if _batch_size_env is not None
+        else get_optimal_batch_size()
+    )
 
     # Database
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", ":memory:")

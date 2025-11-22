@@ -8,6 +8,7 @@ build/
 *.egg-info/
 .mypy_cache/
 .pytest_cache/
+.ruff_cache/
 
 # IDE
 .vscode/
@@ -23,3 +24,7 @@ build/
 # Project specific
 tinyvecdb_plan.md
 AGENTS.md
+exploration/
+htmlcov/
+site/
+scripts

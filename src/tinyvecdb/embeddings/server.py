@@ -17,6 +17,12 @@ app = FastAPI(
 )
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "ok"}
+
+
 class EmbeddingRequest(BaseModel):
     input: str | list[str] | list[int] | list[list[int]]
     model: str | None = DEFAULT_MODEL
@@ -39,6 +45,15 @@ class EmbeddingResponse(BaseModel):
 
 @app.post("/v1/embeddings")
 async def create_embeddings(request: EmbeddingRequest):
+    """
+    Create embeddings for the input text(s).
+
+    Args:
+        request: EmbeddingRequest containing input text and model.
+
+    Returns:
+        EmbeddingResponse with vector data.
+    """
     if isinstance(request.input, str):
         texts = [request.input]
     elif isinstance(request.input, list) and all(
@@ -67,6 +82,12 @@ async def create_embeddings(request: EmbeddingRequest):
 
 @app.get("/v1/models")
 async def list_models():
+    """
+    List available embedding models.
+
+    Returns:
+        JSON response with model list.
+    """
     return {
         "data": [
             {
@@ -83,10 +104,34 @@ async def list_models():
 def run_server(host: str | None = None, port: int | None = None):
     """Run the embedding server.
 
+    Can be called programmatically or via the ``tinyvecdb-server`` CLI.
+
+    Examples
+    --------
+    Run with default settings:
+    $ tinyvecdb-server
+
+    Override port:
+    $ tinyvecdb-server --port 8000
+
     Args:
-        host: Server host (defaults to config.SERVER_HOST)
-        port: Server port (defaults to config.SERVER_PORT)
+        host: Server host (defaults to config.SERVER_HOST).
+        port: Server port (defaults to config.SERVER_PORT).
     """
+    # Minimal CLI-style override when invoked as a script/entry point
+    # Allows commands like: tinyvecdb-server --host 0.0.0.0 --port 8000
+    import sys
+
+    argv = sys.argv[1:]
+    for i, arg in enumerate(argv):
+        if arg in {"--host", "-h"} and i + 1 < len(argv):
+            host = argv[i + 1]
+        if arg in {"--port", "-p"} and i + 1 < len(argv):
+            try:
+                port = int(argv[i + 1])
+            except ValueError:
+                pass
+
     host = host or config.SERVER_HOST
     port = port or config.SERVER_PORT
     uvicorn.run(app, host=host, port=port, log_level="info")
