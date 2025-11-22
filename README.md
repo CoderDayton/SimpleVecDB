@@ -31,74 +31,110 @@ pip install "tinyvecdb[server]"
 
 ## ⚡ Quickstart
 
-### Environment Setup (optional)
+TinyVecDB is **just a vector storage layer**—it doesn't include an LLM or generate embeddings for you. You can use it in three ways:
 
-View the [Setup Guide](docs/ENV_SETUP.md) for configuring environment variables for local embedding models.
-
-**Python API:**
-
-```python
-from tinyvecdb import VectorDB, Quantization
-
-# Initialize persistent DB with INT8 quantization
-db = VectorDB("knowledge.db", quantization=Quantization.INT8)
-
-# Add documents (auto-embedded locally)
-db.add_texts(
-    ["Paris is the capital of France.", "The mitochondria is the powerhouse of the cell."],
-    metadatas=[{"category": "geography"}, {"category": "biology"}]
-)
-
-# Search
-results = db.similarity_search("capital of France", k=1)
-print(f"Result: {results[0][0].page_content}")
-
-# Search with metadata filter
-geo_results = db.similarity_search(
-    "capital",
-    k=3,
-    filter={"category": "geography"},
-)
-```
-
-**Embeddings Server:**
-
-```bash
-# Start the OpenAI-compatible server
-tinyvecdb-server --port 8000
-```
-
-This server runs **entirely locally** and exposes an OpenAI-compatible `/v1/embeddings` endpoint backed by your configured HuggingFace model. TinyVecDB never calls remote APIs on your behalf.
-
-**Using Remote Embeddings (Optional):**
-
-You can also generate embeddings with a remote provider (e.g. OpenAI) **in your own code** and store them directly in TinyVecDB. TinyVecDB remains LLM- and provider-agnostic – it just stores whatever vectors you give it:
+### Option 1: With OpenAI (Simplest)
 
 ```python
 from tinyvecdb import VectorDB
 from openai import OpenAI
 
+# Initialize TinyVecDB
+db = VectorDB("knowledge.db")
+
+# Generate embeddings using OpenAI
 client = OpenAI()
+texts = ["Paris is the capital of France.", "The mitochondria is the powerhouse of the cell."]
 
-texts = [
-    "TinyVecDB is a local-first vector database.",
-    "SQLite with sqlite-vec can power fast semantic search.",
-]
-
-# Use your preferred embedding model (e.g. OpenAI, Gemini, etc.)
 embeddings = [
-    client.embeddings.create(
-        model="text-embedding-3-small",
-        input=t,
-    ).data[0].embedding
+    client.embeddings.create(model="text-embedding-3-small", input=t).data[0].embedding
     for t in texts
 ]
 
-db = VectorDB("remote_embed.db")
-db.add_texts(texts=texts, embeddings=embeddings)
+# Store in TinyVecDB
+db.add_texts(
+    texts=texts,
+    embeddings=embeddings,
+    metadatas=[{"category": "geography"}, {"category": "biology"}]
+)
+
+# Search (you still need to embed your query)
+query_embedding = client.embeddings.create(
+    model="text-embedding-3-small",
+    input="capital of France"
+).data[0].embedding
+
+results = db.similarity_search(query_embedding, k=1)
+print(f"Result: {results[0][0].page_content}")
+
+# Search with metadata filter
+geo_results = db.similarity_search(
+    query_embedding,
+    k=3,
+    filter={"category": "geography"},
+)
+print(f"Geography results: {len(geo_results)}")
 ```
 
-For end-to-end RAG examples using TinyVecDB with different LLMs (Ollama, LangChain, LlamaIndex), see the **[Examples](https://coderdayton.github.io/tinyvecdb/examples/)** page.
+### Option 2: Fully Local (with `[server]` extras)
+
+```bash
+# Install with local embedding support
+pip install "tinyvecdb[server]"
+```
+
+```python
+from tinyvecdb import VectorDB
+from tinyvecdb.embeddings.models import embed_texts
+
+db = VectorDB("local.db")
+
+texts = ["Paris is the capital of France.", "The mitochondria is the powerhouse of the cell."]
+
+# Generate embeddings locally using HuggingFace models
+embeddings = embed_texts(texts)
+
+db.add_texts(
+    texts=texts,
+    embeddings=embeddings,
+    metadatas=[{"category": "geography"}, {"category": "biology"}]
+)
+
+# Search
+query_embeddings = embed_texts(["capital of France"])
+results = db.similarity_search(query_embeddings[0], k=1)
+print(f"Result: {results[0][0].page_content}")
+```
+
+**Local Embeddings Server** (Optional):
+
+If you prefer an OpenAI-compatible API running 100% locally:
+
+```bash
+tinyvecdb-server --port 8000
+# Now use http://localhost:8000/v1/embeddings with any OpenAI-compatible client
+```
+
+See the [Setup Guide](docs/ENV_SETUP.md) for configuring which HuggingFace model to use.
+
+### Option 3: With LangChain or LlamaIndex
+
+TinyVecDB integrates directly with popular frameworks:
+
+```python
+from tinyvecdb.integrations.langchain import TinyVecDBVectorStore
+from langchain_openai import OpenAIEmbeddings
+
+# Use LangChain's embedding models
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+store = TinyVecDBVectorStore(db_path="langchain.db", embedding=embeddings)
+
+# Now use standard LangChain methods
+store.add_texts(["Paris is the capital of France."])
+results = store.similarity_search("capital of France", k=1)
+```
+
+For complete RAG workflows with Ollama, LangChain, and LlamaIndex, see the **[Examples](https://coderdayton.github.io/tinyvecdb/examples/)** page.
 
 ## 🛠️ Features
 
@@ -110,24 +146,6 @@ For end-to-end RAG examples using TinyVecDB with different LLMs (Ollama, LangCha
 | **Filtering**    | ✅     | Metadata filtering with SQL `WHERE` clauses.    |
 | **Integrations** | ✅     | First-class LangChain & LlamaIndex support.     |
 | **Hardware**     | ✅     | Auto-detects CUDA/MPS/CPU for optimal batching. |
-
-### Integrations (at a glance)
-
-TinyVecDB plugs into popular Python ecosystems without dictating your LLM provider:
-
-```python
-from tinyvecdb import VectorDB
-
-db = VectorDB("knowledge.db")
-
-# LangChain
-from tinyvecdb.integrations.langchain import TinyVecDBVectorStore
-lc_store = TinyVecDBVectorStore(db_path="knowledge.db", embedding=my_langchain_embeddings)
-
-# LlamaIndex
-from tinyvecdb.integrations.llamaindex import TinyVecDBLlamaStore
-li_store = TinyVecDBLlamaStore(db_path="knowledge.db")
-```
 
 ## 📊 Benchmarks
 
