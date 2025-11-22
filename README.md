@@ -115,7 +115,7 @@ tinyvecdb-server --port 8000
 # Now use http://localhost:8000/v1/embeddings with any OpenAI-compatible client
 ```
 
-See the [Setup Guide](docs/ENV_SETUP.md) for configuring which HuggingFace model to use.
+See the [Setup Guide](ENV_SETUP.md) for configuring which HuggingFace model to use.
 
 ### Option 3: With LangChain or LlamaIndex
 
@@ -159,10 +159,10 @@ _Tested on i9-13900K & RTX 4090 with `sqlite-vec` v0.1.2 (10k vectors, 384-dim)_
 
 ## 📚 Documentation
 
-- **[Setup Guide](docs/ENV_SETUP.md)**: Configuration and environment variables.
-- **[API Reference](https://coderdayton.github.io/tinyvecdb/api/core/)**: Full class and method documentation.
-- **[Benchmarks](https://coderdayton.github.io/tinyvecdb/benchmarks/)**: Performance comparisons.
-- **[Examples](https://coderdayton.github.io/tinyvecdb/examples/)**: RAG notebooks and integration demos.
+- **[Setup Guide](ENV_SETUP.md)**: Configuration and environment variables.
+- **[API Reference](api/core/)**: Full class and method documentation.
+- **[Benchmarks](benchmarks/)**: Performance comparisons.
+- **[Examples](examples/)**: RAG notebooks and integration demos.
 - **[Contributing](CONTRIBUTING.md)**: How to build and test.
 
 ## 🗺️ Roadmap
