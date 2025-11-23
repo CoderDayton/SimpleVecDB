@@ -313,7 +313,9 @@ class VectorCollection:
 
                 yield (batch_texts, batch_metadatas, batch_ids, serialized)
 
-        return self._catalog.add_texts(texts, metadatas, embeddings, ids, batch_processor)
+        return self._catalog.add_texts(
+            texts, metadatas, embeddings, ids, batch_processor
+        )
 
     def similarity_search(
         self,

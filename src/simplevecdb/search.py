@@ -290,19 +290,6 @@ class SearchEngine:
                 continue
 
             ids, blobs = zip(*batch)
-
-            metas = []
-            if filter:
-                placeholders = ",".join("?" for _ in ids)
-                meta_rows = self.conn.execute(
-                    f"SELECT id, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
-                    ids,
-                ).fetchall()
-                meta_map = {r[0]: r[1] for r in meta_rows}
-                metas = [meta_map.get(i) for i in ids]
-            else:
-                metas = [None] * len(ids)
-
             dim = self._get_dim()
             vectors = np.array([self._quantizer.deserialize(b, dim) for b in blobs])
 
@@ -320,24 +307,40 @@ class SearchEngine:
                     f"Unsupported distance strategy: {self.distance_strategy}"
                 )
 
-            batch_candidates = []
-            for _, (cid, dist, meta_json) in enumerate(zip(ids, distances, metas)):
-                if filter:
-                    meta = json.loads(meta_json) if meta_json else {}
-                    if not all(
-                        meta.get(k) == v
-                        if not isinstance(v, list)
-                        else meta.get(k) in v
-                        for k, v in filter.items()
-                    ):
-                        continue
-                batch_candidates.append((int(cid), float(dist)))
+            for cid, dist in zip(ids, distances):
+                top_k_candidates.append((int(cid), float(dist)))
 
-            top_k_candidates.extend(batch_candidates)
-            top_k_candidates.sort(key=lambda x: x[1])
-            top_k_candidates = top_k_candidates[:k]
+        top_k_candidates.sort(key=lambda x: x[1])
+        top_k = top_k_candidates[:k]
 
-        return top_k_candidates
+        # Apply filter if needed
+        if filter and filter_builder:
+            filtered = []
+            ids_to_check = [cid for cid, _ in top_k]
+            if ids_to_check:
+                placeholders = ",".join("?" for _ in ids_to_check)
+                meta_rows = self.conn.execute(
+                    f"SELECT id, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
+                    tuple(ids_to_check),
+                ).fetchall()
+                meta_map = {r[0]: r[1] for r in meta_rows}
+
+                for cid, dist in top_k:
+                    meta_json = meta_map.get(cid)
+                    if meta_json:
+                        import json
+
+                        meta = json.loads(meta_json)
+                        if all(
+                            meta.get(k) == v
+                            if not isinstance(v, list)
+                            else meta.get(k) in v
+                            for k, v in filter.items()
+                        ):
+                            filtered.append((cid, dist))
+                return filtered
+
+        return top_k
 
     def _hydrate_documents(
         self, candidates: Sequence[tuple[int, float]]
