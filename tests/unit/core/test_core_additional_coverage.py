@@ -45,7 +45,7 @@ def test_ensure_virtual_table_dimension_mismatch(tmp_path):
     collection._dim = 3
 
     with pytest.raises(ValueError):
-        collection._ensure_virtual_table(2)
+        collection._catalog.ensure_virtual_table(2)
 
     db.close()
 

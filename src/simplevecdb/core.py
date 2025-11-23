@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sqlite3
-import json
 import re
 import numpy as np
 from collections.abc import Iterable, Sequence
@@ -16,6 +15,7 @@ from .types import Document, DistanceStrategy, Quantization
 from .utils import _import_optional
 from .quantization import QuantizationStrategy
 from .search import SearchEngine
+from .catalog import CatalogManager
 
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
@@ -188,20 +188,34 @@ class VectorCollection:
         self._fts_enabled = False
         self._dim: int | None = None
 
-        # Initialize SearchEngine after table names are set
+        # Initialize catalog and search engines
+        self._catalog = CatalogManager(
+            conn=self.conn,
+            table_name=self._table_name,
+            vec_table_name=self._vec_table_name,
+            fts_table_name=self._fts_table_name,
+            quantization=self.quantization,
+            distance_strategy=self.distance_strategy,
+            quantizer=self._quantizer,
+            dim_getter=lambda: self._dim,
+            dim_setter=lambda d: setattr(self, "_dim", d),
+        )
+
         self._search = SearchEngine(
             conn=self.conn,
             table_name=self._table_name,
             vec_table_name=self._vec_table_name,
             fts_table_name=self._fts_table_name,
-            fts_enabled=False,  # Will be updated in _ensure_fts_table
+            fts_enabled=False,
             distance_strategy=self.distance_strategy,
             quantization=self.quantization,
             quantizer=self._quantizer,
             dim_getter=lambda: self._dim,
         )
 
-        self._create_table()
+        self._catalog.create_tables()
+        self._fts_enabled = self._catalog._fts_enabled
+        self._search._fts_enabled = self._catalog._fts_enabled
         self._recover_dim()
 
     def _recover_dim(self) -> None:
@@ -217,109 +231,10 @@ class VectorCollection:
         except Exception:
             pass
 
-    def _create_table(self) -> None:
-        self.conn.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {self._table_name} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                text TEXT NOT NULL,
-                metadata TEXT
-            )
-            """
-        )
-        self._ensure_fts_table()
-
-    def _ensure_fts_table(self) -> None:
-        try:
-            self.conn.execute(
-                f"""
-                CREATE VIRTUAL TABLE IF NOT EXISTS {self._fts_table_name}
-                USING fts5(text)
-                """
-            )
-            self._fts_enabled = True
-            self._search._fts_enabled = True
-        except sqlite3.OperationalError:
-            self._fts_enabled = False
-            self._search._fts_enabled = False
-
-    def _upsert_fts_rows(self, ids: Sequence[int], texts: Sequence[str]) -> None:
-        if not self._fts_enabled or not ids:
-            return
-        placeholders = ",".join("?" for _ in ids)
-        self.conn.execute(
-            f"DELETE FROM {self._fts_table_name} WHERE rowid IN ({placeholders})",
-            tuple(ids),
-        )
-        rows = list(zip(ids, texts))
-        self.conn.executemany(
-            f"INSERT INTO {self._fts_table_name}(rowid, text) VALUES (?, ?)", rows
-        )
-
-    def _delete_fts_rows(self, ids: Sequence[int]) -> None:
-        if not self._fts_enabled or not ids:
-            return
-        placeholders = ",".join("?" for _ in ids)
-        self.conn.execute(
-            f"DELETE FROM {self._fts_table_name} WHERE rowid IN ({placeholders})",
-            tuple(ids),
-        )
-
-    def _ensure_virtual_table(self, dim: int) -> None:
-        if self._dim is not None and self._dim != dim:
-            raise ValueError(f"Dimension mismatch: existing {self._dim}, got {dim}")
-        if self._dim is None:
-            self._dim = dim
-            self.conn.execute(f"DROP TABLE IF EXISTS {self._vec_table_name}")
-
-            storage_dim = dim
-            if self.quantization == Quantization.BIT:
-                storage_dim = ((dim + 7) // 8) * 8
-
-            vec_type = {
-                Quantization.FLOAT: f"float[{storage_dim}]",
-                Quantization.INT8: f"int8[{storage_dim}]",
-                Quantization.BIT: f"bit[{storage_dim}]",
-            }[self.quantization]
-
-            # Custom SQL creation with dynamic table name
-            sql = f"CREATE VIRTUAL TABLE {self._vec_table_name} USING vec0(embedding {vec_type}"
-            if (
-                self.distance_strategy
-                and not vec_type.startswith("bit")
-                and self.distance_strategy != DistanceStrategy.COSINE
-            ):
-                # Note: sqlite-vec defaults to cosine/l2 depending on usage, but we can enforce metric in table def
-                # Actually, sqlite-vec 0.1.1+ supports distance_metric param
-                sql += f" distance_metric={self.distance_strategy.value}"
-            sql += ")"
-            self.conn.execute(sql)
-
     def _build_filter_clause(
         self, filter_dict: dict[str, Any] | None, metadata_column: str = "metadata"
     ) -> tuple[str, list[Any]]:
-        if not filter_dict:
-            return "", []
-        clauses = []
-        params = []
-        for key, value in filter_dict.items():
-            json_path = f"$.{key}"
-            if isinstance(value, (int, float)):
-                clauses.append(f"json_extract({metadata_column}, ?) = ?")
-                params.extend([json_path, value])
-            elif isinstance(value, str):
-                clauses.append(f"json_extract({metadata_column}, ?) LIKE ?")
-                params.extend([json_path, f"%{value}%"])
-            elif isinstance(value, list):
-                placeholders = ",".join("?" for _ in value)
-                clauses.append(
-                    f"json_extract({metadata_column}, ?) IN ({placeholders})"
-                )
-                params.extend([json_path] + value)
-            else:
-                raise ValueError(f"Unsupported filter value type for {key}")
-        where = " AND ".join(clauses)
-        return f"AND ({where})" if where else "", params
+        return self._catalog.build_filter_clause(filter_dict, metadata_column)
 
     def add_texts(
         self,
@@ -328,126 +243,77 @@ class VectorCollection:
         embeddings: Sequence[Sequence[float]] | None = None,
         ids: Sequence[int | None] | None = None,
     ) -> list[int]:
-        if not texts:
-            return []
+        def batch_processor(texts, metadatas, embeddings, ids):
+            embed_func = None
+            if embeddings is None:
+                try:
+                    from simplevecdb.embeddings.models import embed_texts as embed_fn
 
-        embed_func = None
-        if embeddings is None:
-            try:
-                from simplevecdb.embeddings.models import embed_texts
-
-                embed_func = embed_texts
-            except Exception as e:
-                raise ValueError(
-                    "No embeddings provided and local embedder failed – install with [server] extra"
-                ) from e
-
-        from simplevecdb import config
-
-        all_ids = []
-        n_total = len(texts)
-        batch_size = config.EMBEDDING_BATCH_SIZE
-
-        metas_it = metadatas if metadatas else ({} for _ in range(n_total))
-        ids_it = ids if ids else (None for _ in range(n_total))
-
-        combined: Iterable[Any]
-        if embeddings:
-            combined = zip(texts, metas_it, ids_it, embeddings)
-        else:
-            combined = zip(texts, metas_it, ids_it)
-
-        for batch in _batched(combined, batch_size):
-            unzipped = list(zip(*batch))
-            batch_texts = list(unzipped[0])
-            batch_metadatas = list(unzipped[1])
-            batch_ids = list(unzipped[2])
-
-            batch_embeddings: Sequence[float] | Sequence[list[float]] | Any
-            if embeddings:
-                batch_embeddings = list(unzipped[3])
-            else:
-                assert embed_func is not None
-                batch_embeddings = embed_func(list(batch_texts))
-
-            if self._dim is None:
-                first_emb = batch_embeddings[0]
-                if isinstance(first_emb, (list, tuple)):
-                    dim = len(first_emb)
-                elif isinstance(first_emb, np.ndarray):
-                    dim = len(first_emb)
-                else:
-                    dim = len(list(first_emb))  # type: ignore
-                self._ensure_virtual_table(dim)
-            else:
-                first_emb = batch_embeddings[0]
-                if isinstance(first_emb, (list, tuple)):
-                    first_dim = len(first_emb)
-                elif isinstance(first_emb, np.ndarray):
-                    first_dim = len(first_emb)
-                else:
-                    first_dim = len(list(first_emb))  # type: ignore
-                if first_dim != self._dim:
+                    embed_func = embed_fn
+                except Exception as e:
                     raise ValueError(
-                        f"Dimension mismatch: existing {self._dim}, got {first_dim}"
-                    )
+                        "No embeddings provided and local embedder failed – install with [server] extra"
+                    ) from e
 
-            emb_np = np.array(batch_embeddings, dtype=np.float32)
-            if self.distance_strategy == DistanceStrategy.COSINE:
-                norms = np.linalg.norm(emb_np, axis=1, keepdims=True)
-                emb_np = emb_np / np.maximum(norms, 1e-12)
+            from simplevecdb import config
 
-            serialized = [self._quantizer.serialize(vec) for vec in emb_np]
+            n_total = len(texts)
+            batch_size = config.EMBEDDING_BATCH_SIZE
 
-            rows = []
-            for txt, meta, uid in zip(batch_texts, batch_metadatas, batch_ids):
-                rows.append((uid, txt, json.dumps(meta)))
+            metas_it = metadatas if metadatas else ({} for _ in range(n_total))
+            ids_it = ids if ids else (None for _ in range(n_total))
 
-            with self.conn:
-                self.conn.executemany(
-                    f"""
-                    INSERT INTO {self._table_name}(id, text, metadata)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        text=excluded.text,
-                        metadata=excluded.metadata
-                    """,
-                    rows,
-                )
-                batch_real_ids = [
-                    r[0]
-                    for r in self.conn.execute(
-                        f"SELECT id FROM {self._table_name} ORDER BY id DESC LIMIT ?",
-                        (len(batch_texts),),
-                    )
-                ]
-                batch_real_ids.reverse()
+            combined: Iterable[Any]
+            if embeddings:
+                combined = zip(texts, metas_it, ids_it, embeddings)
+            else:
+                combined = zip(texts, metas_it, ids_it)
 
-                real_vec_rows = [
-                    (real_id, ser) for real_id, ser in zip(batch_real_ids, serialized)
-                ]
+            for batch in _batched(combined, batch_size):
+                unzipped = list(zip(*batch))
+                batch_texts = list(unzipped[0])
+                batch_metadatas = list(unzipped[1])
+                batch_ids = list(unzipped[2])
 
-                insert_placeholder = "?"
-                if self.quantization == Quantization.INT8:
-                    insert_placeholder = "vec_int8(?)"
-                elif self.quantization == Quantization.BIT:
-                    insert_placeholder = "vec_bit(?)"
+                batch_embeddings: Sequence[float] | Sequence[list[float]] | Any
+                if embeddings:
+                    batch_embeddings = list(unzipped[3])
+                else:
+                    assert embed_func is not None
+                    batch_embeddings = embed_func(list(batch_texts))
 
-                placeholders = ",".join("?" for _ in batch_real_ids)
-                self.conn.execute(
-                    f"DELETE FROM {self._vec_table_name} WHERE rowid IN ({placeholders})",
-                    tuple(batch_real_ids),
-                )
+                if self._dim is None:
+                    first_emb = batch_embeddings[0]
+                    if isinstance(first_emb, (list, tuple)):
+                        dim = len(first_emb)
+                    elif isinstance(first_emb, np.ndarray):
+                        dim = len(first_emb)
+                    else:
+                        dim = len(list(first_emb))  # type: ignore
+                    self._catalog.ensure_virtual_table(dim)
+                else:
+                    first_emb = batch_embeddings[0]
+                    if isinstance(first_emb, (list, tuple)):
+                        first_dim = len(first_emb)
+                    elif isinstance(first_emb, np.ndarray):
+                        first_dim = len(first_emb)
+                    else:
+                        first_dim = len(list(first_emb))  # type: ignore
+                    if first_dim != self._dim:
+                        raise ValueError(
+                            f"Dimension mismatch: existing {self._dim}, got {first_dim}"
+                        )
 
-                self.conn.executemany(
-                    f"INSERT INTO {self._vec_table_name}(rowid, embedding) VALUES (?, {insert_placeholder})",
-                    real_vec_rows,
-                )
+                emb_np = np.array(batch_embeddings, dtype=np.float32)
+                if self.distance_strategy == DistanceStrategy.COSINE:
+                    norms = np.linalg.norm(emb_np, axis=1, keepdims=True)
+                    emb_np = emb_np / np.maximum(norms, 1e-12)
 
-                self._upsert_fts_rows(batch_real_ids, batch_texts)
-                all_ids.extend(batch_real_ids)
+                serialized = [self._quantizer.serialize(vec) for vec in emb_np]
 
-        return all_ids
+                yield (batch_texts, batch_metadatas, batch_ids, serialized)
+
+        return self._catalog.add_texts(texts, metadatas, embeddings, ids, batch_processor)
 
     def similarity_search(
         self,
@@ -510,56 +376,14 @@ class VectorCollection:
         )
 
     def delete_by_ids(self, ids: Iterable[int]) -> None:
-        ids = list(ids)
-        if not ids:
-            return
-        placeholders = ",".join("?" for _ in ids)
-        params = tuple(ids)
-        with self.conn:
-            self.conn.execute(
-                f"DELETE FROM {self._table_name} WHERE id IN ({placeholders})",
-                params,
-            )
-            self.conn.execute(
-                f"DELETE FROM {self._vec_table_name} WHERE rowid IN ({placeholders})",
-                params,
-            )
-            self._delete_fts_rows(ids)
-        self.conn.execute("VACUUM")
+        self._catalog.delete_by_ids(ids)
 
     def remove_texts(
         self,
         texts: Sequence[str] | None = None,
         filter: dict[str, Any] | None = None,
     ) -> int:
-        if texts is None and filter is None:
-            raise ValueError("Must provide either texts or filter to remove")
-
-        ids_to_delete: list[int] = []
-
-        if texts:
-            placeholders = ",".join("?" for _ in texts)
-            rows = self.conn.execute(
-                f"SELECT id FROM {self._table_name} WHERE text IN ({placeholders})",
-                tuple(texts),
-            ).fetchall()
-            ids_to_delete.extend(r[0] for r in rows)
-
-        if filter:
-            filter_clause, filter_params = self._build_filter_clause(filter)
-            filter_clause = filter_clause.replace("AND ", "", 1)
-            where_clause = f"WHERE {filter_clause}" if filter_clause else ""
-            rows = self.conn.execute(
-                f"SELECT id FROM {self._table_name} {where_clause}",
-                tuple(filter_params),
-            ).fetchall()
-            ids_to_delete.extend(r[0] for r in rows)
-
-        unique_ids = list(set(ids_to_delete))
-        if unique_ids:
-            self.delete_by_ids(unique_ids)
-
-        return len(unique_ids)
+        return self._catalog.remove_texts(texts, filter, self._build_filter_clause)
 
 
 class VectorDB:
