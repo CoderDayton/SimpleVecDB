@@ -5,6 +5,49 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 11-23-2025
+
+### 🏗️ Architecture Refactoring
+
+Major internal restructuring for better maintainability and extensibility while preserving backward compatibility.
+
+### Changed
+
+- **Refactored core.py** (879→216 lines, 75% reduction)
+  - Extracted search operations to `engine/search.py` (SearchEngine)
+  - Extracted quantization logic to `engine/quantization.py` (QuantizationStrategy)
+  - Extracted catalog management to `engine/catalog.py` (CatalogManager)
+  - Core now uses clean facade pattern with delegation
+- **Improved documentation**
+  - Added comprehensive Google-style docstrings to all public API methods
+  - Reorganized MkDocs navigation with dedicated Engine section
+  - Updated architecture documentation in AGENTS.md and CONTRIBUTING.md
+  - Simplified CODE_OF_CONDUCT.md to be more approachable
+
+### Added
+
+- **Security infrastructure**
+  - GitHub Actions workflow for weekly security scans (Bandit, Safety, Semgrep)
+  - Dependabot configuration for automated dependency updates
+  - Bandit configuration with validated false-positive suppressions
+- **Automated publishing**
+  - GitHub Actions workflow for PyPI publishing on releases
+- **Test coverage improvements**
+  - Added 11 new tests covering edge cases in search engine
+  - Maintained 97% overall coverage across refactored modules
+
+### Fixed
+
+- Fixed unused `filter_builder` parameter in `_brute_force_search` method
+- Simplified brute-force filtering to use proper filter builder delegation
+- Fixed import paths for embeddings module in search engine
+
+### Internal
+
+- All modules now follow consistent interface patterns
+- Engine components properly isolated with clear responsibilities
+- No breaking changes to public API
+
 ## [1.0.0] - 11-23-2025
 
 ### 🎉 Initial Release
