@@ -19,7 +19,7 @@ dev = [
     "pytest>=8.0",
     "pytest-cov",
     "jupyterlab",
-    "sentence-transformers[onnx]==3.3.1",
+    "sentence-transformers[onnx]==5.1.2",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "onnxruntime>=1.16.0",
@@ -43,7 +43,7 @@ dev = [
 server = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "sentence-transformers[onnx]==3.3.1",
+    "sentence-transformers[onnx]==5.1.2",
 ]
 examples = ["ollama"]
 
