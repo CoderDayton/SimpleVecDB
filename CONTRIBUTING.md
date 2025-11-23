@@ -28,9 +28,14 @@ pip install -e ".[dev]"
 ```
 simplevecdb/
 ├── src/simplevecdb/
-│   ├── core.py              # Main VectorDB class
-│   ├── types.py             # Document, DistanceStrategy types
+│   ├── core.py              # Main VectorDB and VectorCollection classes
+│   ├── types.py             # Document, DistanceStrategy, Quantization types
 │   ├── config.py            # Configuration management
+│   ├── utils.py             # Optional import utilities
+│   ├── engine/              # Internal implementation modules
+│   │   ├── catalog.py       # Schema and CRUD operations
+│   │   ├── search.py        # Vector and keyword search
+│   │   └── quantization.py  # Vector encoding/compression
 │   ├── embeddings/
 │   │   ├── models.py        # Local embedding models
 │   │   └── server.py        # FastAPI embedding server

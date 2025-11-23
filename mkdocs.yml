@@ -36,6 +36,10 @@ nav:
   - Home: index.md
   - API:
       - VectorDB: api/core.md
+      - Engine:
+          - Catalog: api/engine/catalog.md
+          - Search: api/engine/search.md
+          - Quantization: api/engine/quantization.md
       - Embeddings: api/embeddings.md
       - Integrations: api/integrations.md
       - Configuration: api/config.md

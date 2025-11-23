@@ -45,6 +45,18 @@ class SearchEngine:
         filter: dict[str, Any] | None = None,
         filter_builder: Callable | None = None,
     ) -> list[tuple[Document, float]]:
+        """
+        Perform vector similarity search.
+
+        Args:
+            query: Query vector or text (auto-embedded if string)
+            k: Number of results to return
+            filter: Optional metadata filter
+            filter_builder: Function to build SQL WHERE clause
+
+        Returns:
+            List of (Document, distance_score) tuples sorted by distance
+        """
         candidates = self._vector_search_candidates(query, k, filter, filter_builder)
         return self._hydrate_documents(candidates)
 
@@ -55,6 +67,21 @@ class SearchEngine:
         filter: dict[str, Any] | None = None,
         filter_builder: Callable | None = None,
     ) -> list[tuple[Document, float]]:
+        """
+        Perform BM25 keyword search using FTS5.
+
+        Args:
+            query: Text query (supports FTS5 syntax)
+            k: Maximum number of results
+            filter: Optional metadata filter
+            filter_builder: Function to build SQL WHERE clause
+
+        Returns:
+            List of (Document, bm25_score) tuples sorted by relevance
+
+        Raises:
+            RuntimeError: If FTS5 not available
+        """
         candidates = self._keyword_search_candidates(query, k, filter, filter_builder)
         return self._hydrate_documents(candidates)
 
@@ -70,6 +97,25 @@ class SearchEngine:
         rrf_k: int = 60,
         filter_builder: Callable | None = None,
     ) -> list[tuple[Document, float]]:
+        """
+        Combine vector and keyword search using Reciprocal Rank Fusion.
+
+        Args:
+            query: Text query for keyword search
+            k: Final number of results after fusion
+            filter: Optional metadata filter
+            query_vector: Optional pre-computed query embedding
+            vector_k: Number of vector search candidates
+            keyword_k: Number of keyword search candidates
+            rrf_k: RRF constant parameter (default: 60)
+            filter_builder: Function to build SQL WHERE clause
+
+        Returns:
+            List of (Document, rrf_score) tuples sorted by fused score
+
+        Raises:
+            RuntimeError: If FTS5 not available
+        """
         if not self._fts_enabled:
             raise RuntimeError(
                 "hybrid_search requires SQLite compiled with FTS5 support"
@@ -108,6 +154,19 @@ class SearchEngine:
         filter: dict[str, Any] | None = None,
         filter_builder: Callable | None = None,
     ) -> list[Document]:
+        """
+        Search with diversity using Max Marginal Relevance algorithm.
+
+        Args:
+            query: Query vector or text (auto-embedded if string)
+            k: Number of diverse results to return
+            fetch_k: Number of candidates to consider (should be >= k)
+            filter: Optional metadata filter
+            filter_builder: Function to build SQL WHERE clause
+
+        Returns:
+            List of Documents ordered by MMR selection (no scores)
+        """
         candidates_with_scores = self.similarity_search(
             query, k=fetch_k, filter=filter, filter_builder=filter_builder
         )

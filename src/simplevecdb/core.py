@@ -155,6 +155,13 @@ def get_optimal_batch_size() -> int:
 class VectorCollection:
     """
     Represents a single vector collection within the database.
+
+    Handles vector storage, search, and metadata management for a named
+    collection. Uses a facade pattern to delegate operations to specialized
+    engine components (catalog, search, quantization).
+
+    Note:
+        Collections are created via `VectorDB.collection()`. Do not instantiate directly.
     """
 
     def __init__(
@@ -243,6 +250,32 @@ class VectorCollection:
         embeddings: Sequence[Sequence[float]] | None = None,
         ids: Sequence[int | None] | None = None,
     ) -> list[int]:
+        """
+        Add texts with optional embeddings and metadata to the collection.
+
+        Automatically infers vector dimension from first batch. Supports upsert
+        (update on conflict) when providing existing IDs. For COSINE distance,
+        vectors are L2-normalized automatically. Processes in batches for
+        memory efficiency.
+
+        Args:
+            texts: Document text content to store.
+            metadatas: Optional metadata dicts (one per text). Must be JSON-serializable.
+                If None, uses empty dict for all documents.
+            embeddings: Optional pre-computed embeddings (one per text).
+                If None, attempts to use local embedding model (requires `[server]` extras).
+                All embeddings must have identical dimension.
+            ids: Optional document IDs for upsert behavior. If None, auto-increments.
+                To update existing document, provide its ID.
+
+        Returns:
+            List of inserted/updated document IDs in same order as input texts.
+
+        Raises:
+            ValueError: If embedding dimensions don't match collection dimension,
+                or if no embeddings provided and local embedder not available.
+        """
+
         def batch_processor(texts, metadatas, embeddings, ids):
             embed_func = None
             if embeddings is None:
@@ -323,6 +356,27 @@ class VectorCollection:
         k: int = 5,
         filter: dict[str, Any] | None = None,
     ) -> list[tuple[Document, float]]:
+        """
+        Search for most similar vectors using distance metric.
+
+        Performs approximate nearest neighbor (ANN) search using sqlite-vec's
+        vector index. For COSINE distance, returns 1 - cosine_similarity
+        (range 0-2, lower is more similar). Supports metadata filtering via
+        JSON path queries.
+
+        Args:
+            query: Query vector or text string.
+                If string, auto-embeds using local model (requires `[server]` extras).
+                If vector, must match collection dimension.
+            k: Number of nearest neighbors to return.
+            filter: Optional metadata filter using JSON path syntax.
+                Supports equality (int/float), substring match (str), and list membership.
+                Multiple filters combined with AND logic.
+
+        Returns:
+            List of (Document, distance_score) tuples, sorted by ascending distance.
+            Document contains `page_content` (text) and `metadata` (dict).
+        """
         return self._search.similarity_search(
             query, k, filter, filter_builder=self._build_filter_clause
         )
@@ -330,6 +384,26 @@ class VectorCollection:
     def keyword_search(
         self, query: str, k: int = 5, filter: dict[str, Any] | None = None
     ) -> list[tuple[Document, float]]:
+        """
+        Search using BM25 keyword ranking (full-text search).
+
+        Uses SQLite's FTS5 (Full-Text Search) extension for BM25-based ranking.
+        Best for exact phrase matching, keyword queries, and complementing
+        vector search. Requires SQLite compiled with FTS5 support.
+
+        Args:
+            query: Text query using FTS5 syntax.
+                Supports: "exact phrase", term1 OR term2, term1 NOT term2, prefix*
+            k: Maximum number of results to return.
+            filter: Optional metadata filter (same syntax as similarity_search).
+
+        Returns:
+            List of (Document, bm25_score) tuples, sorted by descending relevance.
+            Higher BM25 scores indicate better matches.
+
+        Raises:
+            RuntimeError: If FTS5 is not available (SQLite not compiled with FTS5).
+        """
         return self._search.keyword_search(
             query, k, filter, filter_builder=self._build_filter_clause
         )
@@ -345,6 +419,35 @@ class VectorCollection:
         keyword_k: int | None = None,
         rrf_k: int = 60,
     ) -> list[tuple[Document, float]]:
+        """
+        Combine BM25 keyword search with vector similarity using Reciprocal Rank Fusion.
+
+        Hybrid search fetches candidates from both keyword (BM25) and vector search,
+        then merges rankings using RRF algorithm. This provides best-of-both-worlds:
+        exact phrase matching (keyword) + semantic similarity (vector). Particularly
+        effective for queries with specific terms AND semantic intent.
+
+        Args:
+            query: Text query for keyword search. Required (cannot be empty).
+            k: Final number of results after fusion.
+            filter: Optional metadata filter applied to both search methods.
+            query_vector: Optional pre-computed query embedding.
+                If None, auto-embeds `query` using local model.
+            vector_k: Number of vector search candidates (default: max(k, 10)).
+                Higher values improve recall at cost of latency.
+            keyword_k: Number of keyword search candidates (default: max(k, 10)).
+            rrf_k: RRF constant parameter (default: 60).
+                Lower values favor top-ranked results, higher values distribute scores evenly.
+                Typical range: 10-100.
+
+        Returns:
+            List of (Document, rrf_score) tuples, sorted by descending RRF score.
+            RRF score combines rankings from both methods (higher is better).
+
+        Raises:
+            RuntimeError: If FTS5 is not available.
+            ValueError: If query is empty string.
+        """
         return self._search.hybrid_search(
             query,
             k,
@@ -363,6 +466,31 @@ class VectorCollection:
         fetch_k: int = 20,
         filter: dict[str, Any] | None = None,
     ) -> list[Document]:
+        """
+        Search with diversity - return relevant but non-redundant results.
+
+        Max Marginal Relevance (MMR) balances relevance to query with diversity
+        among results. Prevents returning many near-duplicate documents by
+        penalizing selections similar to already-selected results. Useful for
+        exploratory search, summarization, and reducing redundancy.
+
+        Algorithm:
+        1. Fetch `fetch_k` most relevant candidates
+        2. Iteratively select documents maximizing: 0.5*relevance - 0.5*max_similarity_to_selected
+        3. Continue until `k` documents selected
+
+        Args:
+            query: Query vector or text string (auto-embedded if string).
+            k: Number of diverse results to return.
+            fetch_k: Number of relevant candidates to consider (should be >= k).
+                Higher values increase diversity at cost of latency.
+                Typical: 2-5x larger than k.
+            filter: Optional metadata filter.
+
+        Returns:
+            List of Documents (no scores), ordered by MMR selection.
+            First result is most relevant, subsequent results balance relevance + diversity.
+        """
         return self._search.max_marginal_relevance_search(
             query, k, fetch_k, filter, filter_builder=self._build_filter_clause
         )
@@ -378,6 +506,14 @@ class VectorCollection:
         )
 
     def delete_by_ids(self, ids: Iterable[int]) -> None:
+        """
+        Delete documents by their IDs.
+
+        Removes documents from all tables and runs VACUUM to reclaim space.
+
+        Args:
+            ids: Document IDs to delete
+        """
         self._catalog.delete_by_ids(ids)
 
     def remove_texts(
@@ -385,13 +521,28 @@ class VectorCollection:
         texts: Sequence[str] | None = None,
         filter: dict[str, Any] | None = None,
     ) -> int:
+        """
+        Remove documents by text content or metadata filter.
+
+        Args:
+            texts: Optional list of exact text strings to remove
+            filter: Optional metadata filter dict
+
+        Returns:
+            Number of documents deleted
+
+        Raises:
+            ValueError: If neither texts nor filter provided
+        """
         return self._catalog.remove_texts(texts, filter, self._build_filter_clause)
 
 
 class VectorDB:
     """
     Dead-simple local vector database powered by sqlite-vec.
-    One SQLite file = multiple collections. Chroma-style API with quantization.
+
+    A single SQLite file can contain multiple isolated vector collections.
+    Provides Chroma-like API with built-in quantization for storage efficiency.
     """
 
     def __init__(
@@ -400,6 +551,20 @@ class VectorDB:
         distance_strategy: DistanceStrategy = DistanceStrategy.COSINE,
         quantization: Quantization = Quantization.FLOAT,
     ):
+        """Initialize the vector database.
+
+        Args:
+            path: Database file path or ":memory:" for in-memory database.
+                Creates file if it doesn't exist.
+            distance_strategy: Default distance metric for similarity search.
+                COSINE: Normalized dot product (range: 0-2, lower is more similar).
+                L2: Euclidean distance (unbounded, lower is more similar).
+                L1: Manhattan distance (unbounded, lower is more similar).
+            quantization: Default vector compression strategy.
+                FLOAT: Full 32-bit precision, no compression.
+                INT8: 8-bit quantization, ~4x storage reduction.
+                BIT: 1-bit quantization, ~32x storage reduction.
+        """
         self.path = str(path)
         self.distance_strategy = distance_strategy
         self.quantization = quantization
@@ -424,13 +589,26 @@ class VectorDB:
         """
         Get or create a named collection.
 
+        Collections provide isolated namespaces within a single database file.
+        Each collection has its own vector index and can use different
+        quantization/distance settings. Collection names must be alphanumeric
+        with underscores only (validates against SQL injection).
+
         Args:
-            name: Collection name (alphanumeric + underscores).
-            distance_strategy: Override default distance strategy.
-            quantization: Override default quantization.
+            name: Collection name. Must match pattern `^[a-zA-Z0-9_]+$`.
+                Special name "default" uses legacy table names for backward
+                compatibility.
+            distance_strategy: Override database-level distance metric for this
+                collection only. If None, uses database default.
+            quantization: Override database-level quantization for this collection.
+                If None, uses database default. Note: Cannot change quantization
+                after first insert.
 
         Returns:
-            VectorCollection instance.
+            VectorCollection instance ready for add/search operations.
+
+        Raises:
+            ValueError: If collection name contains invalid characters.
         """
         return VectorCollection(
             self.conn,
@@ -449,11 +627,11 @@ class VectorDB:
         Return a LangChain-compatible vector store interface.
 
         Args:
-            embeddings: LangChain Embeddings model (optional).
-            collection_name: Name of the collection to use.
+            embeddings: Optional LangChain Embeddings model
+            collection_name: Name of the collection to use
 
         Returns:
-            SimpleVecDBVectorStore instance.
+            SimpleVecDBVectorStore instance
         """
         from .integrations.langchain import SimpleVecDBVectorStore
 
@@ -466,10 +644,10 @@ class VectorDB:
         Return a LlamaIndex-compatible vector store interface.
 
         Args:
-            collection_name: Name of the collection to use.
+            collection_name: Name of the collection to use
 
         Returns:
-            SimpleVecDBLlamaStore instance.
+            SimpleVecDBLlamaStore instance
         """
         from .integrations.llamaindex import SimpleVecDBLlamaStore
 
@@ -479,7 +657,11 @@ class VectorDB:
     # Convenience
     # ------------------------------------------------------------------ #
     def close(self) -> None:
-        """Close the database connection."""
+        """
+        Close the database connection.
+
+        Flushes any pending writes and releases database locks.
+        """
         self.conn.close()
 
     def __del__(self):

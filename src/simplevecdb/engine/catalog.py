@@ -10,7 +10,26 @@ if TYPE_CHECKING:
 
 
 class CatalogManager:
-    """Handles collection schema and CRUD operations."""
+    """
+    Handles collection schema and CRUD operations.
+
+    This manager is responsible for:
+    - Creating and managing SQLite tables (metadata and FTS)
+    - Creating and managing sqlite-vec virtual tables
+    - Adding, deleting, and removing documents
+    - Building filter clauses for metadata queries
+
+    Args:
+        conn: SQLite database connection
+        table_name: Name of the metadata table
+        vec_table_name: Name of the vector index table
+        fts_table_name: Name of the full-text search table
+        quantization: Vector quantization strategy
+        distance_strategy: Distance metric for similarity
+        quantizer: QuantizationStrategy instance
+        dim_getter: Callable to get current dimension
+        dim_setter: Callable to set dimension
+    """
 
     def __init__(
         self,
@@ -36,6 +55,7 @@ class CatalogManager:
         self._fts_enabled = False
 
     def create_tables(self) -> None:
+        """Create metadata and FTS tables if they don't exist."""
         self.conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {self._table_name} (
@@ -62,6 +82,12 @@ class CatalogManager:
             self._fts_enabled = False
 
     def upsert_fts_rows(self, ids: Sequence[int], texts: Sequence[str]) -> None:
+        """Update FTS index for given document IDs.
+
+        Args:
+            ids: Document IDs to update
+            texts: Corresponding text content
+        """
         if not self._fts_enabled or not ids:
             return
         placeholders = ",".join("?" for _ in ids)
@@ -75,6 +101,11 @@ class CatalogManager:
         )
 
     def delete_fts_rows(self, ids: Sequence[int]) -> None:
+        """Remove documents from FTS index.
+
+        Args:
+            ids: Document IDs to remove
+        """
         if not self._fts_enabled or not ids:
             return
         placeholders = ",".join("?" for _ in ids)
@@ -84,6 +115,14 @@ class CatalogManager:
         )
 
     def ensure_virtual_table(self, dim: int) -> None:
+        """Create or verify sqlite-vec virtual table with given dimension.
+
+        Args:
+            dim: Vector dimension
+
+        Raises:
+            ValueError: If dimension doesn't match existing table
+        """
         from ..types import Quantization, DistanceStrategy
 
         current_dim = self._get_dim()
@@ -121,6 +160,22 @@ class CatalogManager:
         ids: Sequence[int | None] | None,
         batch_processor: Callable,
     ) -> list[int]:
+        """
+        Insert or update documents in the collection.
+
+        Handles batched insertion into metadata, vector, and FTS tables.
+        Supports upsert behavior when IDs are provided.
+
+        Args:
+            texts: Document text content
+            metadatas: Optional metadata dicts
+            embeddings: Optional pre-computed embeddings
+            ids: Optional document IDs for upsert
+            batch_processor: Generator yielding (texts, metadatas, ids, serialized_vectors)
+
+        Returns:
+            List of inserted/updated document IDs
+        """
         if not texts:
             return []
 
@@ -179,6 +234,15 @@ class CatalogManager:
         return all_ids
 
     def delete_by_ids(self, ids: Iterable[int]) -> None:
+        """
+        Delete documents by their IDs.
+
+        Removes documents from metadata, vector index, and FTS tables.
+        Automatically runs VACUUM to reclaim disk space.
+
+        Args:
+            ids: Document IDs to delete
+        """
         ids = list(ids)
         if not ids:
             return
@@ -202,6 +266,20 @@ class CatalogManager:
         filter: dict[str, Any] | None,
         filter_builder: Callable,
     ) -> int:
+        """
+        Remove documents by text content or metadata filter.
+
+        Args:
+            texts: Optional list of exact text strings to remove
+            filter: Optional metadata filter dict
+            filter_builder: Function to build SQL WHERE clause from filter
+
+        Returns:
+            Number of documents deleted
+
+        Raises:
+            ValueError: If neither texts nor filter provided
+        """
         if texts is None and filter is None:
             raise ValueError("Must provide either texts or filter to remove")
 
@@ -234,6 +312,19 @@ class CatalogManager:
     def build_filter_clause(
         self, filter_dict: dict[str, Any] | None, metadata_column: str = "metadata"
     ) -> tuple[str, list[Any]]:
+        """
+        Build SQL WHERE clause from metadata filter dictionary.
+
+        Args:
+            filter_dict: Metadata key-value pairs to filter by
+            metadata_column: Name of JSON metadata column
+
+        Returns:
+            Tuple of (where_clause, parameters) for SQL query
+
+        Raises:
+            ValueError: If filter value type is unsupported
+        """
         if not filter_dict:
             return "", []
         clauses = []
