@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-from typing import Dict, Set
 from dotenv import load_dotenv
 
 from .core import get_optimal_batch_size
@@ -12,9 +11,9 @@ env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 
-def _parse_registry(raw: str | None, default_model: str) -> Dict[str, str]:
+def _parse_registry(raw: str | None, default_model: str) -> dict[str, str]:
     """Convert comma-separated alias=repo entries into a registry dict."""
-    registry: Dict[str, str] = {}
+    registry: dict[str, str] = {}
     if raw:
         for entry in raw.split(","):
             entry = entry.strip()
@@ -29,7 +28,7 @@ def _parse_registry(raw: str | None, default_model: str) -> Dict[str, str]:
     return registry
 
 
-def _parse_api_keys(raw: str | None) -> Set[str]:
+def _parse_api_keys(raw: str | None) -> set[str]:
     """Return a sanitized set of API keys from comma-separated env values."""
     if not raw:
         return set()
@@ -52,7 +51,7 @@ class Config:
         "EMBEDDING_CACHE_DIR", str(Path.home() / ".cache" / "tinyvecdb")
     )
     _registry_env = os.getenv("EMBEDDING_MODEL_REGISTRY")
-    EMBEDDING_MODEL_REGISTRY: Dict[str, str] = _parse_registry(
+    EMBEDDING_MODEL_REGISTRY: dict[str, str] = _parse_registry(
         _registry_env, EMBEDDING_MODEL
     )
     EMBEDDING_MODEL_REGISTRY_LOCKED: bool = _parse_bool_env(
@@ -71,7 +70,7 @@ class Config:
     EMBEDDING_SERVER_MAX_REQUEST_ITEMS: int = (
         int(_request_limit_env) if _request_limit_env else max(32, EMBEDDING_BATCH_SIZE)
     )
-    EMBEDDING_SERVER_API_KEYS: Set[str] = _parse_api_keys(
+    EMBEDDING_SERVER_API_KEYS: set[str] = _parse_api_keys(
         os.getenv("EMBEDDING_SERVER_API_KEYS")
     )
 
