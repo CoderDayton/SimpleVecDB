@@ -22,6 +22,7 @@ build/
 *.sqlite
 
 # Project specific
+.coverage
 tinyvecdb_plan.md
 AGENTS.md
 exploration/
