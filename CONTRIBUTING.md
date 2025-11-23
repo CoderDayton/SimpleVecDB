@@ -1,6 +1,6 @@
 # Contributing to TinyVecDB
 
-Thanks for your interest in contributing to TinyVecDB! We're excited to have you help build a better local-first vector database.
+Thanks for considering a contribution to TinyVecDB; your help steadily improves this local-first vector database.
 
 ## Getting Started
 
@@ -30,13 +30,14 @@ tinyvecdb/
 ├── src/tinyvecdb/
 │   ├── core.py              # Main VectorDB class
 │   ├── types.py             # Document, DistanceStrategy types
+│   ├── config.py            # Configuration management
 │   ├── embeddings/
 │   │   ├── models.py        # Local embedding models
 │   │   └── server.py        # FastAPI embedding server
 │   └── integrations/
 │       ├── langchain.py     # LangChain VectorStore wrapper
 │       └── llamaindex.py    # LlamaIndex VectorStore wrapper
-├── tests/                   # Unit & integration tests
+├── tests/                   # Unitm integration and performance tests
 ├── examples/                # RAG notebooks, demos
 └── docs/                    # Documentation
 ```
@@ -149,7 +150,7 @@ Run the embedding server locally for testing:
 
 ```bash
 tinyvecdb-server
-# Server runs at http://localhost:8000
+# Server runs at http://localhost:53287 by default
 ```
 
 ## Submitting a Pull Request

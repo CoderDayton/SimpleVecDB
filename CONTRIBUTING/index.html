@@ -712,7 +712,7 @@
     </div>
   </div>
   <div class="typography w-full flex-1 *:data-[slot=alert]:first:mt-0">
-    <p>Thanks for your interest in contributing to TinyVecDB! We're excited to have you help build a better local-first vector database.</p>
+    <p>Thanks for considering a contribution to TinyVecDB; your help steadily improves this local-first vector database.</p>
 <h2 id="getting-started">Getting Started</h2>
 <h3 id="prerequisites">Prerequisites</h3>
 <ul>
@@ -736,13 +736,14 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <span class="err">├──</span><span class="w"> </span><span class="nx">src</span><span class="o">/</span><span class="nx">tinyvecdb</span><span class="o">/</span>
 <span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">core</span><span class="p">.</span><span class="nx">py</span><span class="w">              </span><span class="err">#</span><span class="w"> </span><span class="nx">Main</span><span class="w"> </span><span class="nx">VectorDB</span><span class="w"> </span><span class="kd">class</span>
 <span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">types</span><span class="p">.</span><span class="nx">py</span><span class="w">             </span><span class="err">#</span><span class="w"> </span><span class="nx">Document</span><span class="p">,</span><span class="w"> </span><span class="nx">DistanceStrategy</span><span class="w"> </span><span class="nx">types</span>
+<span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">config</span><span class="p">.</span><span class="nx">py</span><span class="w">            </span><span class="err">#</span><span class="w"> </span><span class="nx">Configuration</span><span class="w"> </span><span class="nx">management</span>
 <span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">embeddings</span><span class="o">/</span>
 <span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">├──</span><span class="w"> </span><span class="nx">models</span><span class="p">.</span><span class="nx">py</span><span class="w">        </span><span class="err">#</span><span class="w"> </span><span class="nx">Local</span><span class="w"> </span><span class="nx">embedding</span><span class="w"> </span><span class="nx">models</span>
 <span class="err">│</span><span class="w">   </span><span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">server</span><span class="p">.</span><span class="nx">py</span><span class="w">        </span><span class="err">#</span><span class="w"> </span><span class="nx">FastAPI</span><span class="w"> </span><span class="nx">embedding</span><span class="w"> </span><span class="nx">server</span>
 <span class="err">│</span><span class="w">   </span><span class="err">└──</span><span class="w"> </span><span class="nx">integrations</span><span class="o">/</span>
 <span class="err">│</span><span class="w">       </span><span class="err">├──</span><span class="w"> </span><span class="nx">langchain</span><span class="p">.</span><span class="nx">py</span><span class="w">     </span><span class="err">#</span><span class="w"> </span><span class="nx">LangChain</span><span class="w"> </span><span class="nx">VectorStore</span><span class="w"> </span><span class="nx">wrapper</span>
 <span class="err">│</span><span class="w">       </span><span class="err">└──</span><span class="w"> </span><span class="nx">llamaindex</span><span class="p">.</span><span class="nx">py</span><span class="w">    </span><span class="err">#</span><span class="w"> </span><span class="nx">LlamaIndex</span><span class="w"> </span><span class="nx">VectorStore</span><span class="w"> </span><span class="nx">wrapper</span>
-<span class="err">├──</span><span class="w"> </span><span class="nx">tests</span><span class="o">/</span><span class="w">                   </span><span class="err">#</span><span class="w"> </span><span class="nx">Unit</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="nx">integration</span><span class="w"> </span><span class="nx">tests</span>
+<span class="err">├──</span><span class="w"> </span><span class="nx">tests</span><span class="o">/</span><span class="w">                   </span><span class="err">#</span><span class="w"> </span><span class="nx">Unitm</span><span class="w"> </span><span class="nx">integration</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="nx">performance</span><span class="w"> </span><span class="nx">tests</span>
 <span class="err">├──</span><span class="w"> </span><span class="nx">examples</span><span class="o">/</span><span class="w">                </span><span class="err">#</span><span class="w"> </span><span class="nx">RAG</span><span class="w"> </span><span class="nx">notebooks</span><span class="p">,</span><span class="w"> </span><span class="nx">demos</span>
 <span class="err">└──</span><span class="w"> </span><span class="nx">docs</span><span class="o">/</span><span class="w">                    </span><span class="err">#</span><span class="w"> </span><span class="nx">Documentation</span>
 </code></pre></div>
@@ -846,7 +847,7 @@ pytest<span class="w"> </span>tests/unit/test_search.py
 
 <p>Run the embedding server locally for testing:</p>
 <div class="codehilite"><pre><span></span><code>tinyvecdb-server
-<span class="c1"># Server runs at http://localhost:8000</span>
+<span class="c1"># Server runs at http://localhost:53287 by default</span>
 </code></pre></div>
 
 <h2 id="submitting-a-pull-request">Submitting a Pull Request</h2>

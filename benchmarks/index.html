@@ -712,7 +712,107 @@
     </div>
   </div>
   <div class="typography w-full flex-1 *:data-[slot=alert]:first:mt-0">
-    <h2 id="m2-macbook-pro-sqlite-vec-v012">M2 MacBook Pro, sqlite-vec v0.1.2</h2>
+    <h2 id="13900k-4090-sqlite-vec-v016">13900k &amp; 4090, sqlite-vec v0.1.6</h2>
+<p><strong>Model</strong>: Snowflake/snowflake-arctic-embed-xs<br>
+<strong>Batch Size</strong>: Auto (512 on GPU)<br>
+<strong>Vector Count</strong>: 10,000</p>
+<div class="table-wrapper"><table>
+<thead>
+<tr>
+<th>Quantization</th>
+<th>Vectors</th>
+<th>Dimensions</th>
+<th>File Size</th>
+<th>Insert Speed</th>
+<th>Avg Query (k=10)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FLOAT</td>
+<td>10,000</td>
+<td>384</td>
+<td>15.50 MB</td>
+<td>15,585 vec/s</td>
+<td>3.55 ms</td>
+</tr>
+<tr>
+<td>INT8</td>
+<td>10,000</td>
+<td>384</td>
+<td>4.23 MB</td>
+<td>27,893 vec/s</td>
+<td>3.93 ms</td>
+</tr>
+<tr>
+<td>BIT</td>
+<td>10,000</td>
+<td>384</td>
+<td>0.95 MB</td>
+<td>32,321 vec/s</td>
+<td>0.27 ms</td>
+</tr>
+<tr>
+<td>FLOAT</td>
+<td>10,000</td>
+<td>1536</td>
+<td>60.55 MB</td>
+<td>2,537 vec/s</td>
+<td>15.71 ms</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="13900k-4090-sqlite-vec-v016_1">13900k &amp; 4090, sqlite-vec v0.1.6</h2>
+<p><strong>Model</strong>: Snowflake/snowflake-arctic-embed-xs<br>
+<strong>Batch Size</strong>: Auto (512 on GPU)<br>
+<strong>Vector Count</strong>: 100,000</p>
+<div class="table-wrapper"><table>
+<thead>
+<tr>
+<th>Quantization</th>
+<th>Vectors</th>
+<th>Dimensions</th>
+<th>File Size</th>
+<th>Insert Speed</th>
+<th>Avg Query (k=10)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FLOAT</td>
+<td>100,000</td>
+<td>384</td>
+<td>151.83 MB</td>
+<td>9,513 vec/s</td>
+<td>38.73 ms</td>
+</tr>
+<tr>
+<td>INT8</td>
+<td>100,000</td>
+<td>384</td>
+<td>41.44 MB</td>
+<td>13,213 vec/s</td>
+<td>39.08 ms</td>
+</tr>
+<tr>
+<td>BIT</td>
+<td>100,000</td>
+<td>384</td>
+<td>9.28 MB</td>
+<td>14,334 vec/s</td>
+<td>1.96 ms</td>
+</tr>
+<tr>
+<td>FLOAT</td>
+<td>100,000</td>
+<td>1536</td>
+<td>593.40 MB</td>
+<td>2,258 vec/s</td>
+<td>146.67 ms</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="m2-macbook-pro-sqlite-vec-v012">M2 MacBook Pro, sqlite-vec v0.1.2</h2>
 <div class="table-wrapper"><table>
 <thead>
 <tr>
@@ -751,53 +851,6 @@
 <td>1536</td>
 <td>59.2 MB</td>
 <td>2.4 ms</td>
-</tr>
-</tbody>
-</table></div>
-<h2 id="13900k-4090-batch_size512-sqlite-vec-v012">13900k &amp; 4090, batch_size=512, sqlite-vec v0.1.2</h2>
-<div class="table-wrapper"><table>
-<thead>
-<tr>
-<th>Quantization</th>
-<th>Vectors</th>
-<th>Dimensions</th>
-<th>File Size</th>
-<th>Insert Speed</th>
-<th>Avg Query (k=10)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>FLOAT</td>
-<td>10,000</td>
-<td>384</td>
-<td>15.50 MB</td>
-<td>13,241 vec/s</td>
-<td>4.29 ms</td>
-</tr>
-<tr>
-<td>INT8</td>
-<td>10,000</td>
-<td>384</td>
-<td>4.23 MB</td>
-<td>23,472 vec/s</td>
-<td>4.33 ms</td>
-</tr>
-<tr>
-<td>BIT</td>
-<td>10,000</td>
-<td>384</td>
-<td>0.95 MB</td>
-<td>25,299 vec/s</td>
-<td>0.30 ms</td>
-</tr>
-<tr>
-<td>FLOAT</td>
-<td>10,000</td>
-<td>1536</td>
-<td>60.55 MB</td>
-<td>2,276 vec/s</td>
-<td>16.74 ms</td>
 </tr>
 </tbody>
 </table></div>
@@ -925,18 +978,26 @@
         
         
         
-        <a href="#m2-macbook-pro-sqlite-vec-v012"
+        <a href="#13900k-4090-sqlite-vec-v016"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            M2 MacBook Pro, sqlite-vec v0.1.2
+            13900k &amp; 4090, sqlite-vec v0.1.6
         </a>
         
 
         
-        <a href="#13900k-4090-batch_size512-sqlite-vec-v012"
+        <a href="#13900k-4090-sqlite-vec-v016_1"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            13900k &amp; 4090, batch_size=512, sqlite-vec v0.1.2
+            13900k &amp; 4090, sqlite-vec v0.1.6
+        </a>
+        
+
+        
+        <a href="#m2-macbook-pro-sqlite-vec-v012"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            M2 MacBook Pro, sqlite-vec v0.1.2
         </a>
         
 

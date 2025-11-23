@@ -679,7 +679,7 @@
 <script>
     const updatedAt = document.getElementById("updated_at");
     if (updatedAt) {
-        const date = new Date('2025-11-22T11:58:35-06:00');
+        const date = new Date('2025-11-23T02:11:03-06:00');
         updatedAt.textContent = date.toLocaleDateString();
     }
 </script>
@@ -772,7 +772,7 @@
 <tr>
 <td><code>SERVER_PORT</code></td>
 <td>Port to bind the server to.</td>
-<td><code>8000</code> (Code default) / <code>53287</code> (Example)</td>
+<td><code>53287</code> (Code default) / <code>8000</code> (Example)</td>
 </tr>
 </tbody>
 </table></div>
@@ -784,8 +784,8 @@
 
 <p>Popular embedding models:</p>
 <ul>
-<li><code>TaylorAI/bge-micro-v2</code> - 384 dims, 17M params (default, very fast)</li>
-<li><code>Snowflake/snowflake-arctic-embed-xs</code> - 384 dims, 22M params (best overall, fast)</li>
+<li><code>Snowflake/snowflake-arctic-embed-xs</code> - 384 dims, 22M params (default, best balance, fast)</li>
+<li><code>TaylorAI/bge-micro-v2</code> - 384 dims, 17M params (fast, slightly lower quality)</li>
 <li><code>BAAI/bge-small-en-v1.5</code> - 384 dims, 33M params</li>
 <li><code>BAAI/bge-m3</code> - 1024 dims, ~568M params (best quality, multilingual, slower)</li>
 </ul>

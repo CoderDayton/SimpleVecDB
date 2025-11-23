@@ -49,7 +49,7 @@ Configuration for `tinyvecdb-server`.
 | Variable      | Description                 | Default                                   |
 | ------------- | --------------------------- | ----------------------------------------- |
 | `SERVER_HOST` | Host to bind the server to. | `0.0.0.0`                                 |
-| `SERVER_PORT` | Port to bind the server to. | `8000` (Code default) / `53287` (Example) |
+| `SERVER_PORT` | Port to bind the server to. | `53287` (Code default) / `8000` (Example) |
 
 ## Using with Custom Embedding Models
 
@@ -62,7 +62,7 @@ EMBEDDING_CACHE_DIR=~/.cache/my_embeddings
 
 Popular embedding models:
 
-- `TaylorAI/bge-micro-v2` - 384 dims, 17M params (default, very fast)
-- `Snowflake/snowflake-arctic-embed-xs` - 384 dims, 22M params (best overall, fast)
+- `Snowflake/snowflake-arctic-embed-xs` - 384 dims, 22M params (default, best balance, fast)
+- `TaylorAI/bge-micro-v2` - 384 dims, 17M params (fast, slightly lower quality)
 - `BAAI/bge-small-en-v1.5` - 384 dims, 33M params
 - `BAAI/bge-m3` - 1024 dims, ~568M params (best quality, multilingual, slower)

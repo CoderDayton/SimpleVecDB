@@ -149,13 +149,13 @@ For complete RAG workflows with Ollama, LangChain, and LlamaIndex, see the **[Ex
 
 ## 📊 Benchmarks
 
-_Tested on i9-13900K & RTX 4090 with `sqlite-vec` v0.1.2 (10k vectors, 384-dim)_
+_Tested on i9-13900K & RTX 4090 with `sqlite-vec` v0.1.6 (10k vectors, 384-dim)_
 
 | Type      | Storage  | Insert Speed | Query Time (k=10) |
 | :-------- | :------- | :----------- | :---------------- |
-| **FLOAT** | 15.50 MB | 13,241 vec/s | 4.29 ms           |
-| **INT8**  | 4.23 MB  | 23,472 vec/s | 4.33 ms           |
-| **BIT**   | 0.95 MB  | 25,299 vec/s | 0.30 ms           |
+| **FLOAT** | 15.50 MB | 15,585 vec/s | 3.55 ms           |
+| **INT8**  | 4.23 MB  | 27,893 vec/s | 3.93 ms           |
+| **BIT**   | 0.95 MB  | 32,321 vec/s | 0.27 ms           |
 
 ## 📚 Documentation
 
@@ -193,7 +193,7 @@ _Join the list of supporters! [Support me on GitHub](https://github.com/sponsors
 **Want to support the project?**
 
 - 🍵 [Buy me a coffee](https://www.buymeacoffee.com/coderdayton) (One-time donation)
-- 💎 [Get the Pro Pack](https://tinyvecdb.gumroad.com/l/pro-pack) (Deployment templates & production recipes)
+- 💎 [Get the Pro Pack](https://tinyvecdb.lemonsqueezy.com/) (Deployment templates & production recipes)
 - 💖 [GitHub Sponsors](https://github.com/sponsors/coderdayton) (Monthly support)
 
 ## 📄 License
