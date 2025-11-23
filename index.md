@@ -7,80 +7,132 @@
 
 **The dead-simple, local-first vector database.**
 
-TinyVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built on `sqlite-vec`, it offers high-performance vector search, quantization, and zero infrastructure headaches. Perfect for local RAG, offline agents, and indie hackers.
+TinyVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built on `sqlite-vec`, it offers high-performance vector search, quantization, and zero infrastructure headaches. Perfect for local RAG, offline agents, and indie hackers who need production-grade vector search without the operational overhead.
 
 ---
 
-## 🚀 Why TinyVecDB?
+## Why TinyVecDB?
 
-- **Zero Infra**: Just a `.db` file. No Docker, no Redis, no cloud bills.
-- **Fast**: ~2ms queries on consumer hardware.
-- **Efficient**: 4x-32x storage reduction with INT8/BIT quantization.
-- **Universal**: Runs anywhere SQLite runs (Linux, macOS, Windows, WASM).
-- **Batteries Included**: Optional FastAPI embeddings server & LangChain/LlamaIndex integrations.
+- **Zero Infrastructure** — Just a `.db` file. No Docker, no Redis, no cloud bills.
+- **Blazing Fast** — ~2ms queries on consumer hardware with 32x storage efficiency via quantization.
+- **Truly Portable** — Runs anywhere SQLite runs: Linux, macOS, Windows, even WASM.
+- **Batteries Included** — Optional FastAPI embeddings server + LangChain/LlamaIndex integrations.
+- **Production Ready** — Hybrid search (BM25 + vector), metadata filtering, multi-collection support, and automatic hardware acceleration.
 
-## 📦 Installation
+### When to Choose TinyVecDB
+
+| Use Case                       | TinyVecDB             | Cloud Vector DB          |
+| :----------------------------- | :-------------------- | :----------------------- |
+| **Local RAG applications**     | ✅ Perfect fit        | ❌ Overkill + latency    |
+| **Offline-first agents**       | ✅ No internet needed | ❌ Requires connectivity |
+| **Prototyping \& MVPs**        | ✅ Zero config        | ⚠️ Setup overhead        |
+| **Multi-tenant SaaS at scale** | ⚠️ Consider sharding  | ✅ Built for this        |
+| **Budget-conscious projects**  | ✅ \$0/month          | ❌ \$50-500+/month       |
+
+---
+
+## Prerequisites
+
+**System Requirements:**
+
+- Python 3.10+
+- SQLite 3.35+ with FTS5 support (included in Python 3.8+ standard library)
+- 50MB+ disk space for core library, 500MB+ with `[server]` extras
+
+**Optional for GPU Acceleration:**
+
+- CUDA 11.8+ for NVIDIA GPUs
+- Metal Performance Shaders (MPS) for Apple Silicon
+
+> **Note:** If using custom-compiled SQLite, ensure `-DSQLITE_ENABLE_FTS5` is enabled for full-text search support.
+
+---
+
+## Installation
 
 ```bash
-# Core only (lightweight)
+# Core library only (lightweight, 50MB)
 pip install tinyvecdb
 
-# With server & local models
+# With local embeddings server + HuggingFace models (500MB+)
 pip install "tinyvecdb[server]"
 ```
 
-## ⚡ Quickstart
+**Verify Installation:**
 
-TinyVecDB is **just a vector storage layer**—it doesn't include an LLM or generate embeddings for you. You can use it in three ways:
+```bash
+python -c "from tinyvecdb import VectorDB; print('TinyVecDB installed successfully!')"
+```
+
+---
+
+## Quickstart
+
+TinyVecDB is **just a vector storage layer**—it doesn't include an LLM or generate embeddings. This design keeps it lightweight and flexible. Choose your integration path:
 
 ### Option 1: With OpenAI (Simplest)
+
+Best for: Quick prototypes, production apps with OpenAI subscriptions.
 
 ```python
 from tinyvecdb import VectorDB
 from openai import OpenAI
 
-# Initialize TinyVecDB
+# Initialize database
 db = VectorDB("knowledge.db")
 collection = db.collection("knowledge_base")
 
 # Generate embeddings using OpenAI
 client = OpenAI()
-texts = ["Paris is the capital of France.", "The mitochondria is the powerhouse of the cell."]
+texts = [
+    "Paris is the capital of France.",
+    "The mitochondria is the powerhouse of the cell."
+]
 
 embeddings = [
-    client.embeddings.create(model="text-embedding-3-small", input=t).data[0].embedding
+    client.embeddings.create(
+        model="text-embedding-3-small",
+        input=t
+    ).data[0].embedding
     for t in texts
 ]
 
-# Store in TinyVecDB
+# Store vectors with metadata
 collection.add_texts(
     texts=texts,
     embeddings=embeddings,
-    metadatas=[{"category": "geography"}, {"category": "biology"}]
+    metadatas=[
+        {"category": "geography", "verified": True},
+        {"category": "biology", "verified": True}
+    ]
 )
 
-# Search (you still need to embed your query)
+# Semantic search
 query_embedding = client.embeddings.create(
     model="text-embedding-3-small",
     input="capital of France"
 ).data[0].embedding
 
 results = collection.similarity_search(query_embedding, k=1)
-print(f"Result: {results[0][0].page_content}")
+print(f"Top result: {results[0][0].page_content}")
+# Output: Top result: Paris is the capital of France.
 
-# Search with metadata filter
+# Filter by metadata
 geo_results = collection.similarity_search(
     query_embedding,
-    k=3,
-    filter={"category": "geography"},
+    k=10,
+    filter={"category": "geography"}
 )
 print(f"Geography results: {len(geo_results)}")
 ```
 
-### Option 2: Fully Local (with `[server]` extras)
+---
+
+### Option 2: Fully Local (Privacy-First)
+
+Best for: Offline apps, sensitive data, zero API costs.
 
 ```bash
-# Install with local embedding support
 pip install "tinyvecdb[server]"
 ```
 
@@ -91,9 +143,12 @@ from tinyvecdb.embeddings.models import embed_texts
 db = VectorDB("local.db")
 collection = db.collection("local_docs")
 
-texts = ["Paris is the capital of France.", "The mitochondria is the powerhouse of the cell."]
+texts = [
+    "Paris is the capital of France.",
+    "The mitochondria is the powerhouse of the cell."
+]
 
-# Generate embeddings locally using HuggingFace models
+# Generate embeddings locally (uses HuggingFace models)
 embeddings = embed_texts(texts)
 
 collection.add_texts(
@@ -102,134 +157,277 @@ collection.add_texts(
     metadatas=[{"category": "geography"}, {"category": "biology"}]
 )
 
-# Search
+# Search locally
 query_embeddings = embed_texts(["capital of France"])
 results = collection.similarity_search(query_embeddings[0], k=1)
 print(f"Result: {results[0][0].page_content}")
 
-# Hybrid BM25 + Vector search
-hybrid_results = collection.hybrid_search("yellow fruit", k=2)
+# Hybrid search (BM25 + vector fusion)
+hybrid_results = collection.hybrid_search("powerhouse cell", k=2)
 for doc, score in hybrid_results:
-    print(doc.page_content, score)
+    print(f"{doc.page_content} (score: {score:.3f})")
 ```
 
-**Local Embeddings Server** (Optional):
+**Optional: Local Embeddings Server**
 
-If you prefer an OpenAI-compatible API running 100% locally:
+Run an OpenAI-compatible API endpoint locally:
 
 ```bash
 tinyvecdb-server --port 8000
-# Now use http://localhost:8000/v1/embeddings with any OpenAI-compatible client
+# Use http://localhost:8000/v1/embeddings with any OpenAI SDK
 ```
 
-See the [Setup Guide](ENV_SETUP.md) for advanced configuration, including model registry locking, throughput limits, and API key authentication.
+See the [Setup Guide](ENV_SETUP.md) for advanced configuration: model registry locking, rate limits, API key authentication, and CUDA optimization.
+
+---
 
 ### Option 3: With LangChain or LlamaIndex
 
-TinyVecDB integrates directly with popular frameworks:
+Best for: Existing RAG pipelines, framework-based workflows.
 
 ```python
 from tinyvecdb.integrations.langchain import TinyVecDBVectorStore
 from langchain_openai import OpenAIEmbeddings
 
-# Use LangChain's embedding models
+# Use any LangChain embedding model
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-store = TinyVecDBVectorStore(db_path="langchain.db", embedding=embeddings)
+store = TinyVecDBVectorStore(
+    db_path="langchain.db",
+    embedding=embeddings
+)
 
-# Now use standard LangChain methods
+# Standard LangChain interface
 store.add_texts(["Paris is the capital of France."])
 results = store.similarity_search("capital of France", k=1)
+print(results[0].page_content)
+
+# Hybrid search available too
+hybrid_results = store.hybrid_search("France capital", k=3)
 ```
 
-For complete RAG workflows with Ollama, LangChain, and LlamaIndex, see the **[Examples](https://coderdayton.github.io/tinyvecdb/examples/)** page.
-
-## Multi-Collection Support
-
-TinyVecDB supports multiple collections within a single database file.
+**For LlamaIndex:**
 
 ```python
-# Create/Get a named collection
-users = db.collection("users", quantization=Quantization.INT8)
-products = db.collection("products", quantization=Quantization.FLOAT)
+from tinyvecdb.integrations.llamaindex import TinyVecDBVectorStore
+from llama_index.embeddings.openai import OpenAIEmbedding
 
-users.add_texts(["User A"], embeddings=[[0.1]*384])
-products.add_texts(["Product X"], embeddings=[[0.9]*384])
+embedding = OpenAIEmbedding(model="text-embedding-3-small")
+store = TinyVecDBVectorStore(db_path="llamaindex.db", embedding=embedding)
+# Use with LlamaIndex's VectorStoreIndex
 ```
 
-## 🔍 Search Features
+See complete RAG workflows with Ollama, LangChain, and LlamaIndex in the **[Examples](https://coderdayton.github.io/tinyvecdb/examples/)** page.
 
-### Keyword & Hybrid Search
+---
 
-TinyVecDB ships with first-class sparse search. Call `keyword_search("exact term")` for BM25/FTS-only scoring or `hybrid_search("concept", k=10)` to blend BM25 scores with vector distances using Reciprocal Rank Fusion—all inside a single SQLite file. Metadata filters still work, and no extra services are required.
+## Core Features
 
-> **Note:** If you compile SQLite yourself, ensure `-DSQLITE_ENABLE_FTS5` is enabled so the FTS virtual table is available.
+### Multi-Collection Support
 
-Already have your own embeddings? Pass `query_vector=my_vector` to `hybrid_search` to reuse them (saves a second embedding pass and keeps dimensions aligned).
+Organize vectors by domain within a single database file:
 
-> Both integrations surface `keyword_search(...)` and `hybrid_search(...)`, so you can rerank sparse + dense results without leaving your favorite framework.
+```python
+from tinyvecdb import VectorDB, Quantization
 
-## 🛠️ Features
+db = VectorDB("multi_tenant.db")
 
-| Feature           | Status | Description                                                 |
-| :---------------- | :----- | :---------------------------------------------------------- |
-| **Storage**       | ✅     | Single SQLite file or in-memory.                            |
-| **Collections**   | ✅     | Multiple named collections per database file.               |
-| **Search**        | ✅     | Cosine, Euclidean, and IP distance metrics.                 |
-| **Hybrid Search** | ✅     | BM25 keyword search + dense fusion via `hybrid_search`.     |
-| **Quantization**  | ✅     | FLOAT32, INT8, and BIT (1-bit) support.                     |
-| **Filtering**     | ✅     | Metadata filtering with SQL `WHERE` clauses.                |
-| **Integrations**  | ✅     | LangChain/LlamaIndex shims expose keyword + hybrid helpers. |
-| **Hardware**      | ✅     | Auto-detects CUDA/MPS/CPU for optimal batching.             |
+# Different collections can have different quantization strategies
+users = db.collection("user_profiles", quantization=Quantization.INT8)
+products = db.collection("product_catalog", quantization=Quantization.FLOAT)
+documents = db.collection("knowledge_base", quantization=Quantization.BIT)
 
-## 📊 Benchmarks
+# Isolated namespaces
+users.add_texts(["Alice likes hiking"], embeddings=[[0.1]*384])
+products.add_texts(["Hiking boots"], embeddings=[[0.9]*384])
 
-_Tested on i9-13900K & RTX 4090 with `sqlite-vec` v0.1.6 (10k vectors, 384-dim)_
+# Collections don't interfere with each other
+assert len(users.similarity_search([0.1]*384, k=10)) == 1
+assert len(products.similarity_search([0.9]*384, k=10)) == 1
+```
 
-| Type      | Storage  | Insert Speed | Query Time (k=10) |
-| :-------- | :------- | :----------- | :---------------- |
-| **FLOAT** | 15.50 MB | 15,585 vec/s | 3.55 ms           |
-| **INT8**  | 4.23 MB  | 27,893 vec/s | 3.93 ms           |
-| **BIT**   | 0.95 MB  | 32,321 vec/s | 0.27 ms           |
+---
 
-## 📚 Documentation
+### Search Capabilities
 
-- **[Setup Guide](ENV_SETUP.md)**: Configuration and environment variables.
-- **[API Reference](api/core/)**: Full class and method documentation.
-- **[Benchmarks](benchmarks/)**: Performance comparisons.
-- **[Examples](examples/)**: RAG notebooks and integration demos.
-- **[Contributing](CONTRIBUTING.md)**: How to build and test.
+**Vector Similarity Search**
 
-## 🗺️ Roadmap
+```python
+# Cosine similarity (default)
+results = collection.similarity_search(query_vector, k=10)
+```
+
+**Keyword Search (BM25 + FTS5)**
+
+```python
+# Full-text search with BM25 ranking
+keyword_results = collection.keyword_search("exact phrase matching", k=10)
+```
+
+**Hybrid Search (Best of Both Worlds)**
+
+```python
+# Combines BM25 + vector similarity via Reciprocal Rank Fusion
+hybrid_results = collection.hybrid_search(
+    query_text="machine learning concepts",
+    k=10
+)
+
+# Reuse your own embeddings (skips re-encoding)
+hybrid_results = collection.hybrid_search(
+    query_text="machine learning concepts",
+    query_vector=my_precomputed_vector,
+    k=10
+)
+```
+
+**Metadata Filtering**
+
+```python
+# SQL WHERE clause syntax
+filtered = collection.similarity_search(
+    query_vector,
+    k=10,
+    filter={"category": "technical", "verified": True}
+)
+```
+
+> **Pro tip:** Both LangChain and LlamaIndex integrations expose `keyword_search()` and `hybrid_search()` methods for framework-native hybrid retrieval.
+
+---
+
+## Feature Matrix
+
+| Feature                   | Status | Description                                                |
+| :------------------------ | :----- | :--------------------------------------------------------- |
+| **Single-File Storage**   | ✅     | SQLite `.db` file or in-memory mode                        |
+| **Multi-Collection**      | ✅     | Isolated namespaces per database                           |
+| **Vector Search**         | ✅     | Cosine, Euclidean, Inner Product metrics                   |
+| **Hybrid Search**         | ✅     | BM25 + vector fusion (Reciprocal Rank Fusion)              |
+| **Quantization**          | ✅     | FLOAT32, INT8, BIT (1-bit) for 4-32x compression           |
+| **Metadata Filtering**    | ✅     | SQL `WHERE` clause support                                 |
+| **Framework Integration** | ✅     | LangChain \& LlamaIndex adapters                           |
+| **Hardware Acceleration** | ✅     | Auto-detects CUDA/MPS/CPU                                  |
+| **Local Embeddings**      | ✅     | HuggingFace models via `[server]` extras                   |
+| **HNSW Indexing**         | 🔜     | Approximate nearest neighbor (pending `sqlite-vec` update) |
+| **Built-in Encryption**   | 🔜     | SQLCipher integration for at-rest encryption               |
+
+---
+
+## Performance Benchmarks
+
+**Test Environment:** Intel i9-13900K, NVIDIA RTX 4090, `sqlite-vec` v0.1.6
+**Dataset:** 10,000 vectors × 384 dimensions
+
+| Quantization | Storage Size | Insert Speed | Query Latency (k=10) | Compression Ratio |
+| :----------- | :----------- | :----------- | :------------------- | :---------------- |
+| **FLOAT32**  | 15.50 MB     | 15,585 vec/s | 3.55 ms              | 1x (baseline)     |
+| **INT8**     | 4.23 MB      | 27,893 vec/s | 3.93 ms              | 3.7x smaller      |
+| **BIT**      | 0.95 MB      | 32,321 vec/s | 0.27 ms              | 16.3x smaller     |
+
+**Key Takeaways:**
+
+- BIT quantization delivers 13x faster queries with 16x storage reduction
+- INT8 offers balanced performance (79% faster inserts, minimal query overhead)
+- Sub-4ms query latency on consumer hardware
+
+See detailed benchmarks across different hardware configurations in the **[Benchmarks](benchmarks.md)** section.
+
+---
+
+## Documentation
+
+- **[Setup Guide](ENV_SETUP.md)** — Environment variables, server configuration, authentication
+- **[API Reference](api/core.md)** — Complete class/method documentation with type signatures
+- **[Benchmarks](benchmarks.md)** — Quantization strategies, batch sizes, hardware optimization
+- **[Integration Examples](examples.md)** — RAG notebooks, Ollama workflows, production patterns
+- **[Contributing Guide](CONTRIBUTING.md)** — Development setup, testing, PR guidelines
+
+---
+
+## Troubleshooting
+
+**Import Error: `sqlite3.OperationalError: no such module: fts5`**
+
+```bash
+# Your Python's SQLite was compiled without FTS5
+# Solution: Install Python from python.org (includes FTS5) or compile SQLite with:
+# -DSQLITE_ENABLE_FTS5
+```
+
+**Dimension Mismatch Error**
+
+```python
+# Ensure all vectors in a collection have identical dimensions
+collection = db.collection("docs", dim=384)  # Explicit dimension
+```
+
+**CUDA Not Detected (GPU Available)**
+
+```bash
+# Verify CUDA installation
+python -c "import torch; print(torch.cuda.is_available())"
+
+# Reinstall PyTorch with CUDA support
+pip install torch --index-url https://download.pytorch.org/whl/cu118
+```
+
+**Slow Queries on Large Datasets**
+
+- Enable quantization: `collection = db.collection("docs", quantization=Quantization.INT8)`
+- Consider HNSW indexing when available (roadmap item)
+- Use metadata filtering to reduce search space
+
+## Roadmap
 
 - [x] Hybrid Search (BM25 + Vector)
 - [x] Multi-collection support
-- [ ] HNSW Indexing (via sqlite-vec updates)
-- [ ] Built-in Encryption (SQLCipher)
+- [ ] HNSW indexing (pending `sqlite-vec` upstream)
+- [ ] SQLCipher encryption (at-rest data protection)
+- [ ] Streaming insert API for large-scale ingestion
+- [ ] Graph-based metadata relationships
 
-## 🤝 Contributing
+Vote on features or propose new ones in [GitHub Discussions](https://github.com/coderdayton/tinyvecdb/discussions).
 
-I welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on setting up your development environment.
+## Contributing
 
-## ❤️ Sponsors
+Contributions are welcome! Whether you're fixing bugs, improving documentation, or proposing new features:
 
-TinyVecDB is an independent, open‑source project, built and maintained transparently. If it’s useful to you and you’d like to support it, there are a few simple ways to contribute.
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md) for development setup
+2. Check existing [Issues](https://github.com/coderdayton/tinyvecdb/issues) and [Discussions](https://github.com/coderdayton/tinyvecdb/discussions)
+3. Open a PR with clear description and tests
 
-### Company Sponsors
+**Need help?** Join the conversation in [GitHub Discussions](https://github.com/coderdayton/tinyvecdb/discussions).
 
-_Become my first company sponsor! [Support me on GitHub](https://github.com/sponsors/coderdayton)_
+## Community & Support
 
-### Individual Supporters
+**Get Help:**
 
-_Join the list of supporters! [Support me on GitHub](https://github.com/sponsors/coderdayton)_
+- [GitHub Discussions](https://github.com/coderdayton/tinyvecdb/discussions) — Q\&A and feature requests
+- [GitHub Issues](https://github.com/coderdayton/tinyvecdb/issues) — Bug reports
+
+**Stay Updated:**
+
+- [GitHub Releases](https://github.com/coderdayton/tinyvecdb/releases) — Changelog and updates
+- [Examples Gallery](https://coderdayton.github.io/tinyvecdb/examples/) — Community-contributed notebooks
+
+## Sponsors
+
+TinyVecDB is an independent open-source project. If it's useful to you, consider supporting its development:
+
+**Company Sponsors**
+_Become the first company sponsor!_ [Support on GitHub →](https://github.com/sponsors/coderdayton)
+
+**Individual Supporters**
+_Join the list of supporters!_ [Support on GitHub →](https://github.com/sponsors/coderdayton)
 
 <!-- sponsors --><!-- sponsors -->
 
-**Want to support the project?**
+## Other Ways to Support
 
-- 🍵 [Buy me a coffee](https://www.buymeacoffee.com/coderdayton) (One-time donation)
-- 💎 [Get the Pro Pack](https://tinyvecdb.lemonsqueezy.com/) (Deployment templates & production recipes) (Coming Soon)
-- 💖 [GitHub Sponsors](https://github.com/sponsors/coderdayton) (Monthly support)
+- ☕ [Buy me a coffee](https://www.buymeacoffee.com/coderdayton) (one-time donation)
+- 💎 [Get the Pro Pack](https://tinyvecdb.lemonsqueezy.com/) — Deployment templates \& production recipes (coming soon)
+- 💖 [GitHub Sponsors](https://github.com/sponsors/coderdayton) (monthly support)
 
-## 📄 License
+## License
 
-[MIT](LICENSE)
+[MIT License](LICENSE) — Free for personal and commercial use.

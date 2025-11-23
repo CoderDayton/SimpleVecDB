@@ -753,6 +753,14 @@
     <span id="updated_at" class="text-sm opacity-50 hover:opacity-100 transition-opacity duration-200"
         title="last update (local time)"></span>
 </div>
+
+<script>
+    const updatedAt = document.getElementById("updated_at");
+    if (updatedAt) {
+        const date = new Date('2025-11-23T08:06:53-06:00');
+        updatedAt.textContent = date.toLocaleDateString();
+    }
+</script>
  
     </div>
   </div>
