@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from simplevecdb.types import Quantization
-from simplevecdb.quantization import QuantizationStrategy, normalize_l2
+from simplevecdb.engine.quantization import QuantizationStrategy, normalize_l2
 
 
 def test_dequantize_bit_vector():

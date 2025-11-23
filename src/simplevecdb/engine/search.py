@@ -5,12 +5,12 @@ import numpy as np
 from typing import Any, TYPE_CHECKING, Callable
 from collections.abc import Sequence
 
-from .types import Document, DistanceStrategy
+from ..types import Document, DistanceStrategy
 from .quantization import normalize_l2
 
 if TYPE_CHECKING:
     import sqlite3
-    from .types import Quantization
+    from ..types import Quantization
 
 
 class SearchEngine:
@@ -156,7 +156,7 @@ class SearchEngine:
 
         if isinstance(query, str):
             try:
-                from .embeddings.models import embed_texts
+                from ..embeddings.models import embed_texts
 
                 query_embedding = embed_texts([query])[0]
                 query_vec = np.array(query_embedding, dtype=np.float32)
@@ -203,7 +203,7 @@ class SearchEngine:
             ).fetchall()
         except Exception:
             # Fall back to brute force
-            from .core import get_optimal_batch_size
+            from ..core import get_optimal_batch_size
 
             rows = self._brute_force_search(
                 query_vec, k, filter, filter_builder, get_optimal_batch_size()
@@ -273,7 +273,7 @@ class SearchEngine:
         filter_builder: Callable | None,
         batch_size: int,
     ) -> list[tuple[int, float]]:
-        from .core import _batched
+        from ..core import _batched
         import sqlite3
 
         try:

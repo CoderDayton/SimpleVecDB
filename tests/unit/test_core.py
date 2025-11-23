@@ -136,7 +136,7 @@ def test_recover_dim(tmp_path):
 def test_dequantize_fallback():
     """Test dequantization logic directly."""
     from simplevecdb.types import Quantization
-    from simplevecdb.quantization import QuantizationStrategy
+    from simplevecdb.engine.quantization import QuantizationStrategy
     import numpy as np
 
     vec = np.array([0.1, 0.5, -0.5], dtype=np.float32)
@@ -360,7 +360,7 @@ def test_metadata_json_filtering(populated_db):
 
 def test_normalize_l2():
     """Test L2 normalization helper function."""
-    from simplevecdb.quantization import normalize_l2
+    from simplevecdb.engine.quantization import normalize_l2
 
     vec = np.array([3.0, 4.0])
     normalized = normalize_l2(vec)
@@ -401,7 +401,7 @@ def test_dimension_mismatch_on_add(populated_db):
 
 def test_unsupported_quantization():
     """Test that invalid quantization mode raises error."""
-    from simplevecdb.quantization import QuantizationStrategy
+    from simplevecdb.engine.quantization import QuantizationStrategy
 
     with pytest.raises(ValueError, match="Unsupported quantization"):
         strategy = QuantizationStrategy("invalid")  # type: ignore

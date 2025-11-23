@@ -6,7 +6,7 @@ from collections.abc import Iterable, Sequence
 
 if TYPE_CHECKING:
     import sqlite3
-    from .types import Quantization, DistanceStrategy
+    from ..types import Quantization, DistanceStrategy
 
 
 class CatalogManager:
@@ -84,7 +84,7 @@ class CatalogManager:
         )
 
     def ensure_virtual_table(self, dim: int) -> None:
-        from .types import Quantization, DistanceStrategy
+        from ..types import Quantization, DistanceStrategy
 
         current_dim = self._get_dim()
         if current_dim is not None and current_dim != dim:

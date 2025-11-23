@@ -103,7 +103,7 @@ def test_brute_force_l1_distance(tmp_path):
     collection = db.collection("test", distance_strategy=DistanceStrategy.L1)
 
     # Add docs but use small dimension for faster test
-    from simplevecdb.quantization import QuantizationStrategy
+    from simplevecdb.engine.quantization import QuantizationStrategy
 
     collection._search._quantizer = QuantizationStrategy(collection.quantization)
 

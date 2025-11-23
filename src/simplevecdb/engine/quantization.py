@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 import numpy as np
-from .core import Quantization
+from ..types import Quantization
 
 
 def normalize_l2(vector: np.ndarray) -> np.ndarray:

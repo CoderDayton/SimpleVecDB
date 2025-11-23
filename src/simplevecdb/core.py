@@ -13,9 +13,9 @@ import itertools
 
 from .types import Document, DistanceStrategy, Quantization
 from .utils import _import_optional
-from .quantization import QuantizationStrategy
-from .search import SearchEngine
-from .catalog import CatalogManager
+from .engine.quantization import QuantizationStrategy
+from .engine.search import SearchEngine
+from .engine.catalog import CatalogManager
 
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
