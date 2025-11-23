@@ -86,16 +86,16 @@ pytest tests/unit/test_search.py
 
 ### High Priority
 
-- **Hybrid search**: BM25 + vector combined search
-- **HNSW indexing**: Faster approximate nearest neighbor search
-- **Metadata filtering**: Enhanced WHERE clause support
+- **Hybrid search**: BM25 + vector combined search (FTS5 + vec0)
+- **HNSW indexing**: Faster approximate nearest neighbor search (waiting on sqlite-vec)
+- **Advanced Metadata filtering**: Complex WHERE clause support (AND, OR, IN)
 - **Documentation**: Docstrings, guides, API docs
 
 ### Medium Priority
 
 - **Multi-collection support**: Handle multiple vector collections per database
-- **Quantization improvements**: int8, binary vector optimizations
-- **Performance benchmarks**: Add more comprehensive benchmarks
+- **Custom Quantization**: Support for custom quantization tables/centroids
+- **Performance benchmarks**: Add more comprehensive benchmarks (1M+ vectors)
 - **Integration tests**: Expand test coverage for LangChain/LlamaIndex
 
 ### Lower Priority

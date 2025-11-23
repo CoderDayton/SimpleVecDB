@@ -174,24 +174,26 @@ _Tested on i9-13900K & RTX 4090 with `sqlite-vec` v0.1.2 (10k vectors, 384-dim)_
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on setting up your development environment.
+I welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on setting up your development environment.
 
 ## ❤️ Sponsors
 
-TinyVecDB is an independent, open‑source project, built and maintained transparently in public. If it’s useful to you and you’d like to support it, there are a few simple ways to contribute.
+TinyVecDB is an independent, open‑source project, built and maintained transparently. If it’s useful to you and you’d like to support it, there are a few simple ways to contribute.
 
 ### Company Sponsors
 
-_Become our first company sponsor! [Support us on GitHub](https://github.com/sponsors/coderdayton)_
+_Become my first company sponsor! [Support me on GitHub](https://github.com/sponsors/coderdayton)_
 
 ### Individual Supporters
 
-_Join the list of supporters! [Support us on GitHub](https://github.com/sponsors/coderdayton)_
+_Join the list of supporters! [Support me on GitHub](https://github.com/sponsors/coderdayton)_
+
+<!-- sponsors --><!-- sponsors -->
 
 **Want to support the project?**
 
 - 🍵 [Buy me a coffee](https://www.buymeacoffee.com/coderdayton) (One-time donation)
-- 💎 [Get the Pro Pack](https://tinyvecdb.gumroad.com/l/pro-pack) (Deployment templates & production recipes)
+- 💎 [Get the Pro Pack](https://tinyvecdb.lemonsqueezy.com/) (Deployment templates & production recipes)
 - 💖 [GitHub Sponsors](https://github.com/sponsors/coderdayton) (Monthly support)
 
 ## 📄 License

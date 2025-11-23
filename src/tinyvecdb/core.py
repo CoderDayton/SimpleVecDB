@@ -11,6 +11,7 @@ import sqlite_vec  # type: ignore
 from pathlib import Path
 import platform
 import multiprocessing
+import itertools
 
 from .types import Document, DistanceStrategy, StrEnum
 
@@ -64,6 +65,21 @@ def _dequantize_vector(blob: bytes, dim: int | None, quant: Quantization) -> np.
 def _normalize_l2(vector: np.ndarray) -> np.ndarray:
     norm = np.linalg.norm(vector)
     return vector if norm == 0 else vector / norm
+
+
+def _batched(iterable: Iterable[Any], n: int) -> Iterable[Sequence[Any]]:
+    """Batch data into lists of length n. The last batch may be shorter."""
+    if isinstance(iterable, Sequence):
+        for i in range(0, len(iterable), n):
+            yield iterable[i : i + n]
+    else:
+        it = iter(iterable)
+        while True:
+            batch = list(itertools.islice(it, n))
+            if not batch:
+                return
+            yield batch
+
 
 
 def get_optimal_batch_size() -> int:
@@ -351,17 +367,26 @@ class VectorDB:
         n_total = len(texts)
         batch_size = config.EMBEDDING_BATCH_SIZE
 
-        for start_idx in range(0, n_total, batch_size):
-            end_idx = min(start_idx + batch_size, n_total)
+        # Prepare iterables
+        metas_it = metadatas if metadatas else ({} for _ in range(n_total))
+        ids_it = ids if ids else (None for _ in range(n_total))
 
-            batch_texts = texts[start_idx:end_idx]
-            batch_metadatas = (
-                metadatas[start_idx:end_idx] if metadatas else [{} for _ in batch_texts]
-            )
-            batch_ids = ids[start_idx:end_idx] if ids else [None] * len(batch_texts)
+        combined: Iterable[Any]
+        if embeddings:
+            combined = zip(texts, metas_it, ids_it, embeddings)
+        else:
+            combined = zip(texts, metas_it, ids_it)
 
-            if embeddings is not None:
-                batch_embeddings = embeddings[start_idx:end_idx]
+        for batch in _batched(combined, batch_size):
+            # Unzip
+            unzipped = list(zip(*batch))
+            batch_texts = unzipped[0]
+            batch_metadatas = unzipped[1]
+            batch_ids = unzipped[2]
+
+            batch_embeddings: Sequence[float] | Sequence[list[float]] | Any
+            if embeddings:
+                batch_embeddings = list(unzipped[3])
             else:
                 assert embed_func is not None
                 batch_embeddings = embed_func(list(batch_texts))
@@ -574,64 +599,66 @@ class VectorDB:
         filter: dict[str, Any] | None,
     ) -> list[tuple[int, float]]:
         """Perform brute-force search using NumPy when sqlite-vec is unavailable."""
-        # Fetch embeddings from vec_index since we don't store them in main table
+        # Use batched processing to avoid OOM
+        batch_size = get_optimal_batch_size()
+
         try:
-            rows = self.conn.execute("SELECT rowid, embedding FROM vec_index").fetchall()
+            cursor = self.conn.execute("SELECT rowid, embedding FROM vec_index")
         except sqlite3.OperationalError:
             return []
 
-        if not rows:
-            return []
+        top_k_candidates: list[tuple[int, float]] = []
 
-        ids, blobs = zip(*rows)
+        for batch in _batched(cursor, batch_size):
+            if not batch:
+                continue
 
-        # Fetch metadata only if needed for filtering
-        metas = []
-        if filter:
-            # This might be slow for large DBs, but it's brute force fallback anyway
-            placeholders = ",".join("?" for _ in ids)
-            meta_rows = self.conn.execute(
-                f"SELECT id, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
-                ids,
-            ).fetchall()
-            meta_map = {r[0]: r[1] for r in meta_rows}
-            metas = [meta_map.get(i) for i in ids]
-        else:
-            metas = [None] * len(ids)
+            ids, blobs = zip(*batch)
 
-        vectors = np.array(
-            [_dequantize_vector(b, self._dim, self.quantization) for b in blobs]
-        )
+            # Fetch metadata only if needed for filtering
+            metas = []
+            if filter:
+                placeholders = ",".join("?" for _ in ids)
+                meta_rows = self.conn.execute(
+                    f"SELECT id, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
+                    ids,
+                ).fetchall()
+                meta_map = {r[0]: r[1] for r in meta_rows}
+                metas = [meta_map.get(i) for i in ids]
+            else:
+                metas = [None] * len(ids)
 
-        if self.distance_strategy == DistanceStrategy.COSINE:
-            dots = np.dot(vectors, query_vec)
-            norms = np.linalg.norm(vectors, axis=1)
-            similarities = dots / (norms * np.linalg.norm(query_vec) + 1e-12)
-            distances = 1 - similarities
-        elif self.distance_strategy == DistanceStrategy.L2:
-            distances = np.linalg.norm(vectors - query_vec, axis=1)
-        else:  # IP
-            distances = -np.dot(vectors, query_vec)
+            vectors = np.array(
+                [_dequantize_vector(b, self._dim, self.quantization) for b in blobs]
+            )
 
-        # Apply filter if any
-        if filter:
-            filtered = []
+            if self.distance_strategy == DistanceStrategy.COSINE:
+                dots = np.dot(vectors, query_vec)
+                norms = np.linalg.norm(vectors, axis=1)
+                similarities = dots / (norms * np.linalg.norm(query_vec) + 1e-12)
+                distances = 1 - similarities
+            elif self.distance_strategy == DistanceStrategy.L2:
+                distances = np.linalg.norm(vectors - query_vec, axis=1)
+            else:  # IP
+                distances = -np.dot(vectors, query_vec)
+
+            # Apply filter if any
+            batch_candidates = []
             for i, (cid, dist, meta_json) in enumerate(zip(ids, distances, metas)):
-                meta = json.loads(meta_json) if meta_json else {}
-                if all(
-                    meta.get(k) == v if not isinstance(v, list) else meta.get(k) in v
-                    for k, v in filter.items()
-                ):
-                    filtered.append((cid, dist))
-            distances = np.array([d for _, d in filtered])
-            filtered_ids = [i for i, _ in filtered]
-        else:
-            filtered_ids = list(ids)
-            filtered = list(zip(ids, distances))
+                if filter:
+                    meta = json.loads(meta_json) if meta_json else {}
+                    if not all(
+                        meta.get(k) == v if not isinstance(v, list) else meta.get(k) in v
+                        for k, v in filter.items()
+                    ):
+                        continue
+                batch_candidates.append((int(cid), float(dist)))
 
-        indices = np.argsort(distances)[:k]
-        # Ensure pure Python primitives (int, float) for type compatibility
-        return [(int(filtered_ids[i]), float(distances[i])) for i in indices]
+            top_k_candidates.extend(batch_candidates)
+            top_k_candidates.sort(key=lambda x: x[1])
+            top_k_candidates = top_k_candidates[:k]
+
+        return top_k_candidates
 
     def delete_by_ids(self, ids: Iterable[int]) -> None:
         """

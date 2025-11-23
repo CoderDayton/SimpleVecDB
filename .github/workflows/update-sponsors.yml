@@ -1,0 +1,27 @@
+name: Update Sponsors
+on:
+  schedule:
+    - cron: "0 0 * * *" # daily
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+
+      - name: Update Sponsors ❤️
+        uses: JamesIves/github-sponsors-readme-action@v1
+        with:
+          file: README.md
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Commit changes 📝
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "Update sponsors list" || echo "No changes to commit"
+          git push origin HEAD:main
