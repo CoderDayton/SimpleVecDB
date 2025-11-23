@@ -19,9 +19,13 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
 
+      - name: Create venv and install dependencies
+        run: |
+          uv venv
+          uv pip install safety pip-audit
+
       - name: Scan dependencies
         run: |
-          uv pip install safety pip-audit
           uv run safety check --json || true
           uv run pip-audit --requirement pyproject.toml || true
 
@@ -36,10 +40,13 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
 
-      - name: Run Bandit
+      - name: Create venv and install Bandit
         run: |
+          uv venv
           uv pip install bandit
-          uv run bandit -r src/ -ll -c .bandit
+
+      - name: Run Bandit
+        run: uv run bandit -r src/ -ll -c .bandit
 
       - name: Run Semgrep
         uses: returntocorp/semgrep-action@v1
