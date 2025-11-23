@@ -1,0 +1,45 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 0 * * 0" # Weekly
+
+jobs:
+  dependency-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Scan dependencies
+        run: |
+          uv pip install safety pip-audit
+          uv run safety check --json || true
+          uv run pip-audit --requirement pyproject.toml || true
+
+  code-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Run Bandit
+        run: |
+          uv pip install bandit
+          uv run bandit -r src/ -ll -c .bandit
+
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
