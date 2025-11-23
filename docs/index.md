@@ -9,8 +9,6 @@
 
 SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built on `sqlite-vec`, it offers high-performance vector search, quantization, and zero infrastructure headaches. Perfect for local RAG, offline agents, and indie hackers who need production-grade vector search without the operational overhead.
 
----
-
 ## Why SimpleVecDB?
 
 - **Zero Infrastructure** — Just a `.db` file. No Docker, no Redis, no cloud bills.
@@ -21,15 +19,13 @@ SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built
 
 ### When to Choose SimpleVecDB
 
-| Use Case                       | SimpleVecDB             | Cloud Vector DB          |
+| Use Case                       | SimpleVecDB           | Cloud Vector DB          |
 | :----------------------------- | :-------------------- | :----------------------- |
 | **Local RAG applications**     | ✅ Perfect fit        | ❌ Overkill + latency    |
 | **Offline-first agents**       | ✅ No internet needed | ❌ Requires connectivity |
-| **Prototyping \& MVPs**        | ✅ Zero config        | ⚠️ Setup overhead        |
+| **Prototyping & MVPs**         | ✅ Zero config        | ⚠️ Setup overhead        |
 | **Multi-tenant SaaS at scale** | ⚠️ Consider sharding  | ✅ Built for this        |
-| **Budget-conscious projects**  | ✅ \$0/month          | ❌ \$50-500+/month       |
-
----
+| **Budget-conscious projects**  | ✅ $0/month           | ❌ $50-500+/month        |
 
 ## Prerequisites
 
@@ -45,8 +41,6 @@ SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built
 - Metal Performance Shaders (MPS) for Apple Silicon
 
 > **Note:** If using custom-compiled SQLite, ensure `-DSQLITE_ENABLE_FTS5` is enabled for full-text search support.
-
----
 
 ## Installation
 
@@ -64,8 +58,6 @@ pip install "simplevecdb[server]"
 python -c "from simplevecdb import VectorDB; print('SimpleVecDB installed successfully!')"
 ```
 
----
-
 ## Quickstart
 
 SimpleVecDB is **just a vector storage layer**—it doesn't include an LLM or generate embeddings. This design keeps it lightweight and flexible. Choose your integration path:
@@ -78,55 +70,34 @@ Best for: Quick prototypes, production apps with OpenAI subscriptions.
 from simplevecdb import VectorDB
 from openai import OpenAI
 
-# Initialize database
 db = VectorDB("knowledge.db")
-collection = db.collection("knowledge_base")
-
-# Generate embeddings using OpenAI
+collection = db.collection("docs")
 client = OpenAI()
-texts = [
-    "Paris is the capital of France.",
-    "The mitochondria is the powerhouse of the cell."
-]
 
+texts = ["Paris is the capital of France.", "Mitochondria powers cells."]
 embeddings = [
-    client.embeddings.create(
-        model="text-embedding-3-small",
-        input=t
-    ).data[0].embedding
+    client.embeddings.create(model="text-embedding-3-small", input=t).data[0].embedding
     for t in texts
 ]
 
-# Store vectors with metadata
 collection.add_texts(
     texts=texts,
     embeddings=embeddings,
-    metadatas=[
-        {"category": "geography", "verified": True},
-        {"category": "biology", "verified": True}
-    ]
+    metadatas=[{"category": "geography"}, {"category": "biology"}]
 )
 
-# Semantic search
-query_embedding = client.embeddings.create(
+# Search
+query_emb = client.embeddings.create(
     model="text-embedding-3-small",
     input="capital of France"
 ).data[0].embedding
 
-results = collection.similarity_search(query_embedding, k=1)
-print(f"Top result: {results[0][0].page_content}")
-# Output: Top result: Paris is the capital of France.
+results = collection.similarity_search(query_emb, k=1)
+print(results[0][0].page_content)  # "Paris is the capital of France."
 
 # Filter by metadata
-geo_results = collection.similarity_search(
-    query_embedding,
-    k=10,
-    filter={"category": "geography"}
-)
-print(f"Geography results: {len(geo_results)}")
+filtered = collection.similarity_search(query_emb, k=10, filter={"category": "geography"})
 ```
-
----
 
 ### Option 2: Fully Local (Privacy-First)
 
@@ -141,45 +112,28 @@ from simplevecdb import VectorDB
 from simplevecdb.embeddings.models import embed_texts
 
 db = VectorDB("local.db")
-collection = db.collection("local_docs")
+collection = db.collection("docs")
 
-texts = [
-    "Paris is the capital of France.",
-    "The mitochondria is the powerhouse of the cell."
-]
+texts = ["Paris is the capital of France.", "Mitochondria powers cells."]
+embeddings = embed_texts(texts)  # Local HuggingFace models
 
-# Generate embeddings locally (uses HuggingFace models)
-embeddings = embed_texts(texts)
+collection.add_texts(texts=texts, embeddings=embeddings)
 
-collection.add_texts(
-    texts=texts,
-    embeddings=embeddings,
-    metadatas=[{"category": "geography"}, {"category": "biology"}]
-)
+# Search
+query_emb = embed_texts(["capital of France"])[0]
+results = collection.similarity_search(query_emb, k=1)
 
-# Search locally
-query_embeddings = embed_texts(["capital of France"])
-results = collection.similarity_search(query_embeddings[0], k=1)
-print(f"Result: {results[0][0].page_content}")
-
-# Hybrid search (BM25 + vector fusion)
-hybrid_results = collection.hybrid_search("powerhouse cell", k=2)
-for doc, score in hybrid_results:
-    print(f"{doc.page_content} (score: {score:.3f})")
+# Hybrid search (BM25 + vector)
+hybrid = collection.hybrid_search("powerhouse cell", k=2)
 ```
 
-**Optional: Local Embeddings Server**
-
-Run an OpenAI-compatible API endpoint locally:
+**Optional: Run embeddings server (OpenAI-compatible)**
 
 ```bash
 simplevecdb-server --port 8000
-# Use http://localhost:8000/v1/embeddings with any OpenAI SDK
 ```
 
-See the [Setup Guide](ENV_SETUP.md) for advanced configuration: model registry locking, rate limits, API key authentication, and CUDA optimization.
-
----
+See [ENV_SETUP.md](ENV_SETUP.md) for configuration: model registry, rate limits, API keys, CUDA optimization.
 
 ### Option 3: With LangChain or LlamaIndex
 
@@ -189,36 +143,29 @@ Best for: Existing RAG pipelines, framework-based workflows.
 from simplevecdb.integrations.langchain import SimpleVecDBVectorStore
 from langchain_openai import OpenAIEmbeddings
 
-# Use any LangChain embedding model
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 store = SimpleVecDBVectorStore(
     db_path="langchain.db",
-    embedding=embeddings
+    embedding=OpenAIEmbeddings(model="text-embedding-3-small")
 )
 
-# Standard LangChain interface
 store.add_texts(["Paris is the capital of France."])
 results = store.similarity_search("capital of France", k=1)
-print(results[0].page_content)
-
-# Hybrid search available too
-hybrid_results = store.hybrid_search("France capital", k=3)
+hybrid = store.hybrid_search("France capital", k=3)  # BM25 + vector
 ```
 
-**For LlamaIndex:**
+**LlamaIndex:**
 
 ```python
-from simplevecdb.integrations.llamaindex import SimpleVecDBVectorStore
+from simplevecdb.integrations.llamaindex import SimpleVecDBLlamaStore
 from llama_index.embeddings.openai import OpenAIEmbedding
 
-embedding = OpenAIEmbedding(model="text-embedding-3-small")
-store = SimpleVecDBVectorStore(db_path="llamaindex.db", embedding=embedding)
-# Use with LlamaIndex's VectorStoreIndex
+store = SimpleVecDBLlamaStore(
+    db_path="llama.db",
+    embedding=OpenAIEmbedding(model="text-embedding-3-small")
+)
 ```
 
-See complete RAG workflows with Ollama, LangChain, and LlamaIndex in the **[Examples](https://coderdayton.github.io/simplevecdb/examples/)** page.
-
----
+See **[Examples](examples.md)** for complete RAG workflows with Ollama.
 
 ## Core Features
 
@@ -229,71 +176,37 @@ Organize vectors by domain within a single database file:
 ```python
 from simplevecdb import VectorDB, Quantization
 
-db = VectorDB("multi_tenant.db")
-
-# Different collections can have different quantization strategies
-users = db.collection("user_profiles", quantization=Quantization.INT8)
-products = db.collection("product_catalog", quantization=Quantization.FLOAT)
-documents = db.collection("knowledge_base", quantization=Quantization.BIT)
+db = VectorDB("app.db")
+users = db.collection("users", quantization=Quantization.INT8)
+products = db.collection("products", quantization=Quantization.BIT)
 
 # Isolated namespaces
 users.add_texts(["Alice likes hiking"], embeddings=[[0.1]*384])
 products.add_texts(["Hiking boots"], embeddings=[[0.9]*384])
-
-# Collections don't interfere with each other
-assert len(users.similarity_search([0.1]*384, k=10)) == 1
-assert len(products.similarity_search([0.9]*384, k=10)) == 1
 ```
-
----
 
 ### Search Capabilities
 
-**Vector Similarity Search**
-
 ```python
-# Cosine similarity (default)
+# Vector similarity (cosine/L2/inner product)
 results = collection.similarity_search(query_vector, k=10)
-```
 
-**Keyword Search (BM25 + FTS5)**
+# Keyword search (BM25)
+results = collection.keyword_search("exact phrase", k=10)
 
-```python
-# Full-text search with BM25 ranking
-keyword_results = collection.keyword_search("exact phrase matching", k=10)
-```
+# Hybrid (BM25 + vector fusion)
+results = collection.hybrid_search("machine learning", k=10)
+results = collection.hybrid_search("ML concepts", query_vector=my_vector, k=10)
 
-**Hybrid Search (Best of Both Worlds)**
-
-```python
-# Combines BM25 + vector similarity via Reciprocal Rank Fusion
-hybrid_results = collection.hybrid_search(
-    query_text="machine learning concepts",
-    k=10
-)
-
-# Reuse your own embeddings (skips re-encoding)
-hybrid_results = collection.hybrid_search(
-    query_text="machine learning concepts",
-    query_vector=my_precomputed_vector,
-    k=10
-)
-```
-
-**Metadata Filtering**
-
-```python
-# SQL WHERE clause syntax
-filtered = collection.similarity_search(
+# Metadata filtering
+results = collection.similarity_search(
     query_vector,
     k=10,
     filter={"category": "technical", "verified": True}
 )
 ```
 
-> **Pro tip:** Both LangChain and LlamaIndex integrations expose `keyword_search()` and `hybrid_search()` methods for framework-native hybrid retrieval.
-
----
+> **Tip:** LangChain and LlamaIndex integrations support all search methods.
 
 ## Feature Matrix
 
@@ -310,8 +223,6 @@ filtered = collection.similarity_search(
 | **Local Embeddings**      | ✅     | HuggingFace models via `[server]` extras                   |
 | **HNSW Indexing**         | 🔜     | Approximate nearest neighbor (pending `sqlite-vec` update) |
 | **Built-in Encryption**   | 🔜     | SQLCipher integration for at-rest encryption               |
-
----
 
 ## Performance Benchmarks
 
@@ -330,10 +241,6 @@ filtered = collection.similarity_search(
 - INT8 offers balanced performance (79% faster inserts, minimal query overhead)
 - Sub-4ms query latency on consumer hardware
 
-See detailed benchmarks across different hardware configurations in the **[Benchmarks](benchmarks.md)** section.
-
----
-
 ## Documentation
 
 - **[Setup Guide](ENV_SETUP.md)** — Environment variables, server configuration, authentication
@@ -341,8 +248,6 @@ See detailed benchmarks across different hardware configurations in the **[Bench
 - **[Benchmarks](benchmarks.md)** — Quantization strategies, batch sizes, hardware optimization
 - **[Integration Examples](examples.md)** — RAG notebooks, Ollama workflows, production patterns
 - **[Contributing Guide](CONTRIBUTING.md)** — Development setup, testing, PR guidelines
-
----
 
 ## Troubleshooting
 
@@ -412,21 +317,27 @@ Contributions are welcome! Whether you're fixing bugs, improving documentation, 
 
 ## Sponsors
 
-SimpleVecDB is an independent open-source project. If it's useful to you, consider supporting its development:
+SimpleVecDB is independently developed and maintained. If you or your company use it in production, please consider sponsoring to ensure its continued development and support.
 
 **Company Sponsors**
+
 _Become the first company sponsor!_ [Support on GitHub →](https://github.com/sponsors/coderdayton)
 
 **Individual Supporters**
+
 _Join the list of supporters!_ [Support on GitHub →](https://github.com/sponsors/coderdayton)
 
 <!-- sponsors --><!-- sponsors -->
 
-## Other Ways to Support
+### Other Ways to Support
 
-- ☕ [Buy me a coffee](https://www.buymeacoffee.com/coderdayton) (one-time donation)
-- 💎 [Get the Pro Pack](https://simplevecdb.lemonsqueezy.com/) — Deployment templates \& production recipes (coming soon)
-- 💖 [GitHub Sponsors](https://github.com/sponsors/coderdayton) (monthly support)
+- 🍵 **[Buy me a coffee](https://www.buymeacoffee.com/coderdayton)** - One-time donation
+- 💎 **[Get the Pro Pack](https://simplevecdb.lemonsqueezy.com/)** - Production deployment templates & recipes
+- ⭐ **Star the repo** - Helps with visibility
+- 🐛 **Report bugs** - Improve the project for everyone
+- 📝 **Contribute** - See [CONTRIBUTING.md](CONTRIBUTING.md)
+
+**Why sponsor?** Your support ensures SimpleVecDB stays maintained, secure, and compatible with the latest Python/SQLite versions.
 
 ## License
 
