@@ -1,7 +1,9 @@
 exclude_dirs:
-  - /tests
-  - /examples
+
+- /tests
+- /examples
 
 skips:
-  - B104
-  - B608
+
+- B104
+- B608
