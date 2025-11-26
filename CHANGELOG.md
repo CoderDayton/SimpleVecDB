@@ -5,7 +5,38 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.1] - 11-23-2025
+## [1.2.0] - 2025-11-25
+
+### Added
+
+- **Async API Support** - New `AsyncVectorDB` and `AsyncVectorCollection` classes
+  - Full async/await support for all collection operations
+  - Uses ThreadPoolExecutor to avoid blocking event loops
+  - Async context manager support (`async with AsyncVectorDB(...)`)
+  - All methods mirror sync API: `add_texts`, `similarity_search`, `keyword_search`, `hybrid_search`, `max_marginal_relevance_search`, `delete_by_ids`, `remove_texts`
+  - Configurable thread pool size via `max_workers` parameter
+
+### Changed
+
+- Added `pytest-asyncio` to dev dependencies for async test support
+
+### Example
+
+```python
+import asyncio
+from simplevecdb import AsyncVectorDB
+
+async def main():
+    async with AsyncVectorDB("data.db") as db:
+        collection = db.collection("docs")
+        await collection.add_texts(["Hello"], embeddings=[[0.1]*384])
+        results = await collection.similarity_search([0.1]*384, k=5)
+        return results
+
+asyncio.run(main())
+```
+
+## [1.1.1] - 2025-11-23
 
 ### Changed
 
@@ -20,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Bumped `sentence-transformers[onnx]` from 3.3.1 to 5.1.2
   - All embeddings/server tests passing with new version
 
-## [1.1.0] - 11-23-2025
+## [1.1.0] - 2025-11-23
 
 ### 🏗️ Architecture Refactoring
 
@@ -63,7 +94,7 @@ Major internal restructuring for better maintainability and extensibility while 
 - Engine components properly isolated with clear responsibilities
 - No breaking changes to public API
 
-## [1.0.0] - 11-23-2025
+## [1.0.0] - 2025-11-23
 
 ### 🎉 Initial Release
 
@@ -179,4 +210,7 @@ Benchmarks on i9-13900K & RTX 4090 with 10k vectors (384-dim):
 - **Documentation**: https://coderdayton.github.io/simplevecdb/
 - **License**: MIT
 
+[1.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.2.0
+[1.1.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.1
+[1.1.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.0
 [1.0.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.0.0

@@ -1,6 +1,6 @@
 [project]
 name = "simplevecdb"
-version = "1.1.1"
+version = "1.2.0"
 description = "Dead-simple local vector database powered by sqlite-vec."
 authors = [{ name = "Dayton Dunbar", email = "coderdayton14@gmail.com" }]
 license = { text = "MIT" }
@@ -18,6 +18,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-cov",
+    "pytest-asyncio>=0.23.0",
     "jupyterlab",
     "sentence-transformers[onnx]==5.1.2",
     "fastapi>=0.115",

@@ -14,6 +14,7 @@ SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built
 - **Zero Infrastructure** — Just a `.db` file. No Docker, no Redis, no cloud bills.
 - **Blazing Fast** — ~2ms queries on consumer hardware with 32x storage efficiency via quantization.
 - **Truly Portable** — Runs anywhere SQLite runs: Linux, macOS, Windows, even WASM.
+- **Async Ready** — Full async/await support for web servers and concurrent workloads.
 - **Batteries Included** — Optional FastAPI embeddings server + LangChain/LlamaIndex integrations.
 - **Production Ready** — Hybrid search (BM25 + vector), metadata filtering, multi-collection support, and automatic hardware acceleration.
 

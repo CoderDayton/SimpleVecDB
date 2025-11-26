@@ -41,6 +41,7 @@ nav:
   - Setup: ENV_SETUP.md
   - API:
       - VectorDB: api/core.md
+      - Async API: api/async.md
       - Embeddings: api/embeddings.md
       - Integrations: api/integrations.md
       - Configuration: api/config.md
