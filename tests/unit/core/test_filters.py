@@ -30,7 +30,7 @@ def test_build_filter_clause_unsupported_type():
     db = VectorDB(":memory:")
     collection = db.collection("default")
     filter_dict = {"key": {"nested": "dict"}}  # Dict is not supported
-    with pytest.raises(ValueError, match="Unsupported filter value type"):
+    with pytest.raises(ValueError, match="must be int, float, str, or list"):
         collection._build_filter_clause(filter_dict)
 
 
