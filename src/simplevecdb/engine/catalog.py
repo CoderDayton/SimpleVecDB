@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, TYPE_CHECKING, Callable
 from collections.abc import Iterable, Sequence
+
+from ..utils import validate_filter, retry_on_lock
 
 if TYPE_CHECKING:
     import sqlite3
     from ..types import Quantization, DistanceStrategy
+
+_logger = logging.getLogger("simplevecdb.engine.catalog")
 
 
 class CatalogManager:
@@ -164,7 +169,8 @@ class CatalogManager:
         Insert or update documents in the collection.
 
         Handles batched insertion into metadata, vector, and FTS tables.
-        Supports upsert behavior when IDs are provided.
+        Supports upsert behavior when IDs are provided. Automatically retries
+        on database lock errors with exponential backoff.
 
         Args:
             texts: Document text content
@@ -179,66 +185,107 @@ class CatalogManager:
         if not texts:
             return []
 
+        _logger.debug(
+            "Adding %d texts to collection",
+            len(texts),
+            extra={"table": self._table_name, "count": len(texts)},
+        )
+
         all_ids = []
         for batch_data in batch_processor(texts, metadatas, embeddings, ids):
             batch_texts, batch_metadatas, batch_ids, serialized = batch_data
+            batch_real_ids = self._insert_batch(
+                batch_texts, batch_metadatas, batch_ids, serialized
+            )
+            all_ids.extend(batch_real_ids)
 
-            rows = []
-            for txt, meta, uid in zip(batch_texts, batch_metadatas, batch_ids):
-                rows.append((uid, txt, json.dumps(meta)))
-
-            with self.conn:
-                self.conn.executemany(
-                    f"""
-                    INSERT INTO {self._table_name}(id, text, metadata)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        text=excluded.text,
-                        metadata=excluded.metadata
-                    """,
-                    rows,
-                )
-                batch_real_ids = [
-                    r[0]
-                    for r in self.conn.execute(
-                        f"SELECT id FROM {self._table_name} ORDER BY id DESC LIMIT ?",
-                        (len(batch_texts),),
-                    )
-                ]
-                batch_real_ids.reverse()
-
-                real_vec_rows = [
-                    (real_id, ser) for real_id, ser in zip(batch_real_ids, serialized)
-                ]
-
-                insert_placeholder = "?"
-                if self.quantization.value == "int8":
-                    insert_placeholder = "vec_int8(?)"
-                elif self.quantization.value == "bit":
-                    insert_placeholder = "vec_bit(?)"
-
-                placeholders = ",".join("?" for _ in batch_real_ids)
-                self.conn.execute(
-                    f"DELETE FROM {self._vec_table_name} WHERE rowid IN ({placeholders})",
-                    tuple(batch_real_ids),
-                )
-
-                self.conn.executemany(
-                    f"INSERT INTO {self._vec_table_name}(rowid, embedding) VALUES (?, {insert_placeholder})",
-                    real_vec_rows,
-                )
-
-                self.upsert_fts_rows(batch_real_ids, batch_texts)
-                all_ids.extend(batch_real_ids)
-
+        _logger.debug(
+            "Added %d documents successfully",
+            len(all_ids),
+            extra={"table": self._table_name, "ids": all_ids[:10]},
+        )
         return all_ids
 
+    @retry_on_lock(max_retries=5, base_delay=0.1)
+    def _insert_batch(
+        self,
+        batch_texts: Sequence[str],
+        batch_metadatas: Sequence[dict],
+        batch_ids: Sequence[int | None],
+        serialized: Sequence[bytes],
+    ) -> list[int]:
+        """
+        Insert a single batch of documents with retry on lock.
+
+        Internal method that handles the actual database writes for a batch.
+        Decorated with @retry_on_lock for automatic retry on lock contention.
+
+        Args:
+            batch_texts: Text content for the batch
+            batch_metadatas: Metadata dicts for the batch
+            batch_ids: Document IDs (may be None for auto-increment)
+            serialized: Serialized vector data
+
+        Returns:
+            List of document IDs for the inserted batch
+        """
+        rows = []
+        for txt, meta, uid in zip(batch_texts, batch_metadatas, batch_ids):
+            rows.append((uid, txt, json.dumps(meta)))
+
+        with self.conn:
+            self.conn.executemany(
+                f"""
+                INSERT INTO {self._table_name}(id, text, metadata)
+                VALUES (?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    text=excluded.text,
+                    metadata=excluded.metadata
+                """,
+                rows,
+            )
+            batch_real_ids = [
+                r[0]
+                for r in self.conn.execute(
+                    f"SELECT id FROM {self._table_name} ORDER BY id DESC LIMIT ?",
+                    (len(batch_texts),),
+                )
+            ]
+            batch_real_ids.reverse()
+
+            real_vec_rows = [
+                (real_id, ser) for real_id, ser in zip(batch_real_ids, serialized)
+            ]
+
+            insert_placeholder = "?"
+            if self.quantization.value == "int8":
+                insert_placeholder = "vec_int8(?)"
+            elif self.quantization.value == "bit":
+                insert_placeholder = "vec_bit(?)"
+
+            placeholders = ",".join("?" for _ in batch_real_ids)
+            self.conn.execute(
+                f"DELETE FROM {self._vec_table_name} WHERE rowid IN ({placeholders})",
+                tuple(batch_real_ids),
+            )
+
+            self.conn.executemany(
+                f"INSERT INTO {self._vec_table_name}(rowid, embedding) VALUES (?, {insert_placeholder})",
+                real_vec_rows,
+            )
+
+            self.upsert_fts_rows(batch_real_ids, batch_texts)
+
+        return batch_real_ids
+
+    @retry_on_lock(max_retries=5, base_delay=0.1)
     def delete_by_ids(self, ids: Iterable[int]) -> None:
         """
         Delete documents by their IDs.
 
         Removes documents from metadata, vector index, and FTS tables.
-        Automatically runs VACUUM to reclaim disk space.
+        Automatically runs VACUUM to reclaim disk space. Retries on
+        database lock errors with exponential backoff.
 
         Args:
             ids: Document IDs to delete
@@ -246,6 +293,13 @@ class CatalogManager:
         ids = list(ids)
         if not ids:
             return
+
+        _logger.debug(
+            "Deleting %d documents",
+            len(ids),
+            extra={"table": self._table_name, "ids": ids[:10]},
+        )
+
         placeholders = ",".join("?" for _ in ids)
         params = tuple(ids)
         with self.conn:
@@ -259,6 +313,12 @@ class CatalogManager:
             )
             self.delete_fts_rows(ids)
         self.conn.execute("VACUUM")
+
+        _logger.debug(
+            "Deleted %d documents successfully",
+            len(ids),
+            extra={"table": self._table_name},
+        )
 
     def remove_texts(
         self,
@@ -323,10 +383,14 @@ class CatalogManager:
             Tuple of (where_clause, parameters) for SQL query
 
         Raises:
-            ValueError: If filter value type is unsupported
+            ValueError: If filter keys are not strings or values are unsupported types
         """
         if not filter_dict:
             return "", []
+
+        # Validate filter structure before processing
+        validate_filter(filter_dict)
+
         clauses = []
         params = []
         for key, value in filter_dict.items():

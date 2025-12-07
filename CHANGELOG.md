@@ -5,6 +5,72 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-12-07
+
+### Added
+
+- **Structured Logging Module** - New `simplevecdb.logging` module for production-grade observability
+  - `get_logger(name)` - Get namespaced loggers under `simplevecdb.*`
+  - `configure_logging(level, format, handler)` - One-call logging setup
+  - `log_operation(name, **context)` - Context manager for operation timing and error tracking
+  - `log_error(operation, error, **context)` - Consistent error logging with context
+
+- **SQLite Lock Retry Logic** - Automatic retry with exponential backoff for database lock contention
+  - `@retry_on_lock(max_retries, base_delay, max_delay, jitter)` decorator
+  - `DatabaseLockedError` exception for exhausted retries with attempt/wait metrics
+  - Applied to `add_texts()` and `delete_by_ids()` operations in CatalogManager
+
+- **Filter Validation** - Early validation of metadata filter dictionaries
+  - `validate_filter(filter_dict)` - Validates keys are strings, values are supported types
+  - Clear error messages for invalid filter structures
+  - Automatically called in `build_filter_clause()` before SQL generation
+
+- **New Exports** - Added to `simplevecdb.__all__`:
+  - `get_logger`, `configure_logging`, `log_operation`
+  - `DatabaseLockedError`, `retry_on_lock`, `validate_filter`
+
+### Changed
+
+- **CatalogManager** internal refactoring:
+  - `add_texts()` now delegates to `_insert_batch()` which has retry logic
+  - `delete_by_ids()` now has retry logic for lock contention
+  - `build_filter_clause()` validates filters before processing
+
+### Testing
+
+- Added 25 new tests in `tests/unit/test_error_handling.py`:
+  - 7 tests for `retry_on_lock` decorator behavior
+  - 2 tests for `DatabaseLockedError` exception
+  - 4 tests for `validate_filter` function
+  - 8 tests for logging utilities
+  - 4 integration tests for error handling in VectorDB operations
+
+### Example
+
+```python
+import logging
+from simplevecdb import (
+    VectorDB,
+    configure_logging,
+    get_logger,
+    log_operation,
+    DatabaseLockedError,
+)
+
+# Enable debug logging
+configure_logging(level=logging.DEBUG)
+
+logger = get_logger(__name__)
+
+try:
+    with log_operation("bulk_insert", collection="docs", count=1000):
+        db = VectorDB("data.db")
+        collection = db.collection("docs")
+        collection.add_texts(texts, embeddings=embeddings)
+except DatabaseLockedError as e:
+    logger.error(f"Insert failed after {e.attempts} attempts")
+```
+
 ## [1.2.0] - 2025-11-25
 
 ### Added
@@ -210,6 +276,7 @@ Benchmarks on i9-13900K & RTX 4090 with 10k vectors (384-dim):
 - **Documentation**: https://coderdayton.github.io/simplevecdb/
 - **License**: MIT
 
+[1.3.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.3.0
 [1.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.2.0
 [1.1.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.1
 [1.1.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.0
