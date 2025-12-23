@@ -51,6 +51,8 @@ class SearchEngine:
         query: str | Sequence[float],
         k: int = constants.DEFAULT_K,
         filter: dict[str, Any] | None = None,
+        *,
+        exact: bool | None = None,
     ) -> list[tuple[Document, float]]:
         """
         Perform vector similarity search.
@@ -59,6 +61,8 @@ class SearchEngine:
             query: Query vector or text (auto-embedded if string)
             k: Number of results to return
             filter: Optional metadata filter
+            exact: Force search mode. None=adaptive (brute-force for <10k vectors),
+                   True=always brute-force (perfect recall), False=always HNSW.
 
         Returns:
             List of (Document, distance) tuples sorted by distance (lower = more similar)
@@ -71,7 +75,7 @@ class SearchEngine:
         # Over-fetch for filtering
         fetch_k = k * constants.USEARCH_FILTER_OVERFETCH_MULTIPLIER if filter else k
 
-        keys, distances = self._index.search(query_vec, fetch_k)
+        keys, distances = self._index.search(query_vec, fetch_k, exact=exact)
 
         if len(keys) == 0:
             return []

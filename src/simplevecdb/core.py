@@ -360,6 +360,8 @@ class VectorCollection:
         query: str | Sequence[float],
         k: int = 5,
         filter: dict[str, Any] | None = None,
+        *,
+        exact: bool | None = None,
     ) -> list[tuple[Document, float]]:
         """
         Search for most similar vectors using HNSW approximate nearest neighbor.
@@ -371,11 +373,13 @@ class VectorCollection:
             query: Query vector or text string (auto-embedded if string).
             k: Number of nearest neighbors to return.
             filter: Optional metadata filter.
+            exact: Force search mode. None=adaptive (brute-force for <10k vectors),
+                   True=always brute-force (perfect recall), False=always HNSW.
 
         Returns:
             List of (Document, distance) tuples, sorted by ascending distance.
         """
-        return self._search.similarity_search(query, k, filter)
+        return self._search.similarity_search(query, k, filter, exact=exact)
 
     def keyword_search(
         self, query: str, k: int = 5, filter: dict[str, Any] | None = None
