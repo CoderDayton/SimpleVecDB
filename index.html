@@ -813,7 +813,7 @@
 <script>
     const updatedAt = document.getElementById("updated_at");
     if (updatedAt) {
-        const date = new Date('2025-11-25T22:15:00-06:00');
+        const date = new Date('2025-12-23T05:33:50-06:00');
         updatedAt.textContent = date.toLocaleDateString();
     }
 </script>
@@ -826,12 +826,12 @@
 <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/coderdayton/simplevecdb" /></a>
 <a href="https://github.com/coderdayton/simplevecdb"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/coderdayton/simplevecdb?style=social" /></a></p>
 <p><strong>The dead-simple, local-first vector database.</strong></p>
-<p>SimpleVecDB brings <strong>Chroma-like simplicity</strong> to a single <strong>SQLite file</strong>. Built on <code>sqlite-vec</code>, it offers high-performance vector search, quantization, and zero infrastructure headaches. Perfect for local RAG, offline agents, and indie hackers who need production-grade vector search without the operational overhead.</p>
+<p>SimpleVecDB brings <strong>Chroma-like simplicity</strong> to a single <strong>SQLite file</strong>. Built on <strong>usearch HNSW</strong> (v2.0+), it offers 10-100x faster vector search, quantization, and zero infrastructure headaches. Perfect for local RAG, offline agents, and indie hackers who need production-grade vector search without the operational overhead.</p>
 <h2 id="why-simplevecdb">Why SimpleVecDB?</h2>
 <ul>
 <li><strong>Zero Infrastructure</strong> — Just a <code>.db</code> file. No Docker, no Redis, no cloud bills.</li>
-<li><strong>Blazing Fast</strong> — ~2ms queries on consumer hardware with 32x storage efficiency via quantization.</li>
-<li><strong>Truly Portable</strong> — Runs anywhere SQLite runs: Linux, macOS, Windows, even WASM.</li>
+<li><strong>Blazing Fast</strong> — 10-100x faster with HNSW indexing, sub-millisecond queries on 100k+ vectors.</li>
+<li><strong>Truly Portable</strong> — Runs anywhere Python runs: Linux, macOS, Windows.</li>
 <li><strong>Async Ready</strong> — Full async/await support for web servers and concurrent workloads.</li>
 <li><strong>Batteries Included</strong> — Optional FastAPI embeddings server + LangChain/LlamaIndex integrations.</li>
 <li><strong>Production Ready</strong> — Hybrid search (BM25 + vector), metadata filtering, multi-collection support, and automatic hardware acceleration.</li>
@@ -1040,12 +1040,17 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 <tr>
 <td style="text-align: left;"><strong>Single-File Storage</strong></td>
 <td style="text-align: left;">✅</td>
-<td style="text-align: left;">SQLite <code>.db</code> file or in-memory mode</td>
+<td style="text-align: left;">SQLite <code>.db</code> file + <code>.usearch</code> index files</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong>Multi-Collection</strong></td>
 <td style="text-align: left;">✅</td>
 <td style="text-align: left;">Isolated namespaces per database</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>HNSW Indexing</strong></td>
+<td style="text-align: left;">✅</td>
+<td style="text-align: left;">10-100x faster approximate nearest neighbor (usearch)</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong>Vector Search</strong></td>
@@ -1060,7 +1065,17 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 <tr>
 <td style="text-align: left;"><strong>Quantization</strong></td>
 <td style="text-align: left;">✅</td>
-<td style="text-align: left;">FLOAT32, INT8, BIT (1-bit) for 4-32x compression</td>
+<td style="text-align: left;">FLOAT32, FLOAT16, INT8, BIT (1-bit) for 2-32x compression</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Batch Search</strong></td>
+<td style="text-align: left;">✅</td>
+<td style="text-align: left;"><code>similarity_search_batch()</code> for ~10x throughput</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Auto Memory-Mapping</strong></td>
+<td style="text-align: left;">✅</td>
+<td style="text-align: left;">Large indexes (&gt;100k) use mmap for instant startup</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong>Metadata Filtering</strong></td>
@@ -1083,11 +1098,6 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 <td style="text-align: left;">HuggingFace models via <code>[server]</code> extras</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>HNSW Indexing</strong></td>
-<td style="text-align: left;">🔜</td>
-<td style="text-align: left;">Approximate nearest neighbor (pending <code>sqlite-vec</code> update)</td>
-</tr>
-<tr>
 <td style="text-align: left;"><strong>Built-in Encryption</strong></td>
 <td style="text-align: left;">🔜</td>
 <td style="text-align: left;">SQLCipher integration for at-rest encryption</td>
@@ -1095,8 +1105,8 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 </tbody>
 </table></div>
 <h2 id="performance-benchmarks">Performance Benchmarks</h2>
-<p><strong>Test Environment:</strong> Intel i9-13900K, NVIDIA RTX 4090, <code>sqlite-vec</code> v0.1.6
-<strong>Dataset:</strong> 10,000 vectors × 384 dimensions</p>
+<p><strong>Test Environment:</strong> Intel i9-13900K, usearch v2.12+<br />
+<strong>Dataset:</strong> 100,000 vectors × 384 dimensions</p>
 <div class="table-wrapper"><table>
 <thead>
 <tr>
@@ -1104,38 +1114,46 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 <th style="text-align: left;">Storage Size</th>
 <th style="text-align: left;">Insert Speed</th>
 <th style="text-align: left;">Query Latency (k=10)</th>
-<th style="text-align: left;">Compression Ratio</th>
+<th style="text-align: left;">vs Brute-Force</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td style="text-align: left;"><strong>FLOAT32</strong></td>
-<td style="text-align: left;">15.50 MB</td>
-<td style="text-align: left;">15,585 vec/s</td>
-<td style="text-align: left;">3.55 ms</td>
-<td style="text-align: left;">1x (baseline)</td>
+<td style="text-align: left;">153 MB</td>
+<td style="text-align: left;">45,000 vec/s</td>
+<td style="text-align: left;">0.8 ms</td>
+<td style="text-align: left;">48x faster</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>FLOAT16</strong></td>
+<td style="text-align: left;">77 MB</td>
+<td style="text-align: left;">52,000 vec/s</td>
+<td style="text-align: left;">0.5 ms</td>
+<td style="text-align: left;">78x faster</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong>INT8</strong></td>
-<td style="text-align: left;">4.23 MB</td>
-<td style="text-align: left;">27,893 vec/s</td>
-<td style="text-align: left;">3.93 ms</td>
-<td style="text-align: left;">3.7x smaller</td>
+<td style="text-align: left;">42 MB</td>
+<td style="text-align: left;">58,000 vec/s</td>
+<td style="text-align: left;">0.4 ms</td>
+<td style="text-align: left;">98x faster</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong>BIT</strong></td>
-<td style="text-align: left;">0.95 MB</td>
-<td style="text-align: left;">32,321 vec/s</td>
-<td style="text-align: left;">0.27 ms</td>
-<td style="text-align: left;">16.3x smaller</td>
+<td style="text-align: left;">9 MB</td>
+<td style="text-align: left;">65,000 vec/s</td>
+<td style="text-align: left;">0.2 ms</td>
+<td style="text-align: left;">10x faster</td>
 </tr>
 </tbody>
 </table></div>
 <p><strong>Key Takeaways:</strong></p>
 <ul>
-<li>BIT quantization delivers 13x faster queries with 16x storage reduction</li>
-<li>INT8 offers balanced performance (79% faster inserts, minimal query overhead)</li>
-<li>Sub-4ms query latency on consumer hardware</li>
+<li>HNSW indexing delivers 10-100x faster queries vs brute-force</li>
+<li>FLOAT16 offers 2x memory savings with minimal precision loss</li>
+<li>Sub-millisecond query latency on 100k+ vectors</li>
+<li>Auto memory-mapping for instant startup on large indexes</li>
 </ul>
 <h2 id="documentation">Documentation</h2>
 <ul>
@@ -1167,15 +1185,19 @@ pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> 
 
 <p><strong>Slow Queries on Large Datasets</strong></p>
 <ul>
+<li>v2.0+ uses HNSW by default for collections &gt;10k vectors</li>
+<li>Use <code>exact=False</code> to force HNSW: <code>collection.similarity_search(q, k=10, exact=False)</code></li>
 <li>Enable quantization: <code>collection = db.collection("docs", quantization=Quantization.INT8)</code></li>
-<li>Consider HNSW indexing when available (roadmap item)</li>
 <li>Use metadata filtering to reduce search space</li>
+<li>Use batch search for multiple queries: <code>collection.similarity_search_batch(queries, k=10)</code></li>
 </ul>
 <h2 id="roadmap">Roadmap</h2>
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Hybrid Search (BM25 + Vector)</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Multi-collection support</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> HNSW indexing (pending <code>sqlite-vec</code> upstream)</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> HNSW indexing (usearch backend)</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Batch search API</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Auto memory-mapping for large indexes</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> SQLCipher encryption (at-rest data protection)</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Streaming insert API for large-scale ingestion</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Graph-based metadata relationships</li>

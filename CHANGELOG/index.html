@@ -838,7 +838,7 @@
 <script>
     const updatedAt = document.getElementById("updated_at");
     if (updatedAt) {
-        const date = new Date('2025-11-23T09:41:13-06:00');
+        const date = new Date('2025-12-23T05:33:50-06:00');
         updatedAt.textContent = date.toLocaleDateString();
     }
 </script>
@@ -849,10 +849,294 @@
     <p>All notable changes to SimpleVecDB will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.0.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="100-11-23-2025"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.0.0">1.0.0</a> - 11-23-2025</h2>
+<h2 id="200-2025-12-23">[2.0.0] - 2025-12-23</h2>
+<h3 id="breaking-changes">Breaking Changes</h3>
+<ul>
+<li><strong>Backend Migration: sqlite-vec → usearch HNSW</strong></li>
+<li>Vector search now uses usearch's high-performance HNSW algorithm</li>
+<li>10-100x faster similarity search for large collections</li>
+<li>Vector data stored in separate <code>.usearch</code> files per collection (e.g., <code>mydb.db.default.usearch</code>)</li>
+<li>
+<p>SQLite still stores metadata, text, and FTS5 index</p>
+</li>
+<li>
+<p><strong>Removed <code>DistanceStrategy.L1</code></strong> - Manhattan distance not supported by usearch</p>
+</li>
+<li>
+<p><strong>Storage Format Change</strong></p>
+</li>
+<li>Embeddings now stored in both usearch index AND SQLite (for MMR support)</li>
+<li>Existing sqlite-vec databases will auto-migrate on first open</li>
+<li>Migration is one-way; backup before upgrading</li>
+</ul>
+<h3 id="added">Added</h3>
+<ul>
+<li><strong><code>usearch_index.py</code></strong> - New UsearchIndex wrapper class:</li>
+<li>Thread-safe HNSW index operations (lock on writes, lock-free reads)</li>
+<li>Automatic persistence to <code>.usearch</code> files</li>
+<li>Upsert support (removes existing keys before add)</li>
+<li>BIT quantization using Hamming metric with bit packing</li>
+<li>
+<p>Configurable HNSW parameters (connectivity, expansion_add, expansion_search)</p>
+</li>
+<li>
+<p><strong>Proper MMR Implementation</strong> - Max Marginal Relevance now computes actual pairwise similarity between candidates and selected documents using stored embeddings</p>
+</li>
+<li>
+<p><strong>Embedding Storage in SQLite</strong> - Embeddings stored as BLOB for:</p>
+</li>
+<li>Accurate MMR diversity computation</li>
+<li>Future index rebuild from SQLite backup</li>
+<li>
+<p>Schema auto-migrates existing tables</p>
+</li>
+<li>
+<p><strong><code>VectorCollection.rebuild_index()</code></strong> - Reconstruct usearch HNSW index from SQLite embeddings:</p>
+</li>
+<li>Useful for index corruption recovery</li>
+<li>Tune HNSW parameters (connectivity, expansion_add, expansion_search)</li>
+<li>
+<p>Reclaim space after many deletions</p>
+</li>
+<li>
+<p><strong><code>VectorDB.check_migration(path)</code></strong> - Dry-run migration check:</p>
+</li>
+<li>Reports which collections need migration</li>
+<li>Shows total vector count and estimated storage</li>
+<li>
+<p>Provides detailed rollback instructions</p>
+</li>
+<li>
+<p><strong>Adaptive Search</strong> - Automatically optimizes search strategy based on collection size:</p>
+</li>
+<li>Collections &lt; 10k vectors use brute-force (<code>exact=True</code>) for perfect recall</li>
+<li>Collections ≥ 10k vectors use HNSW for faster approximate search</li>
+<li>
+<p>Threshold configurable via <code>constants.USEARCH_BRUTEFORCE_THRESHOLD</code></p>
+</li>
+<li>
+<p><strong><code>exact</code> parameter</strong> - Force search mode in <code>similarity_search()</code>:</p>
+</li>
+<li><code>None</code> (default): adaptive based on collection size</li>
+<li><code>True</code>: force brute-force for perfect recall</li>
+<li>
+<p><code>False</code>: force HNSW approximate search</p>
+</li>
+<li>
+<p><strong><code>Quantization.FLOAT16</code></strong> - Half-precision floating point:</p>
+</li>
+<li>2x memory savings compared to FLOAT32</li>
+<li>1.5x faster search with minimal precision loss</li>
+<li>
+<p>Ideal for embeddings where full precision isn't needed</p>
+</li>
+<li>
+<p><strong><code>threads</code> parameter</strong> - Parallel execution control:</p>
+</li>
+<li>Added to <code>add_texts()</code> and <code>similarity_search()</code></li>
+<li><code>0</code> (default): auto-detect optimal thread count</li>
+<li>
+<p>Explicit value: control parallelism for batch operations</p>
+</li>
+<li>
+<p><strong>Auto Memory-Mapping</strong> - Large indexes automatically use memory-mapped mode:</p>
+</li>
+<li>Indexes &gt;100k vectors use <code>view=True</code> for instant startup</li>
+<li>Lower memory footprint for large collections</li>
+<li>Transparent upgrade to writable mode on add operations</li>
+<li>
+<p>Configurable via <code>constants.USEARCH_MMAP_THRESHOLD</code></p>
+</li>
+<li>
+<p><strong><code>similarity_search_batch()</code></strong> - Multi-query batch search:</p>
+</li>
+<li>~10x throughput for batch query workloads</li>
+<li>Uses usearch's native batch search under the hood</li>
+<li>
+<p>Same parameters as <code>similarity_search()</code> but accepts list of queries</p>
+</li>
+<li>
+<p><strong><code>examples/backend_benchmark.py</code></strong> - Benchmark script comparing usearch vs brute-force:</p>
+</li>
+<li>Measures speedup, recall, and storage efficiency</li>
+<li>Supports all quantization levels</li>
+<li>Validates 10-100x performance claims</li>
+</ul>
+<h3 id="changed">Changed</h3>
+<ul>
+<li><strong>Dependencies</strong>: Replaced <code>sqlite-vec&gt;=0.1.6</code> with <code>usearch&gt;=2.12</code></li>
+<li><strong>CatalogManager</strong>: Removed vec0 virtual table operations, added embedding column</li>
+<li><strong>SearchEngine</strong>: Rewrote to use UsearchIndex for all vector operations</li>
+<li><strong>VectorCollection</strong>: Creates usearch index at <code>{db_path}.{collection}.usearch</code></li>
+</ul>
+<h3 id="migration-notes">Migration Notes</h3>
+<ol>
+<li><strong>Backup your database</strong> before upgrading</li>
+<li>On first open, existing sqlite-vec data will be migrated automatically</li>
+<li>New <code>.usearch</code> files will be created alongside your <code>.db</code> file</li>
+<li>The legacy sqlite-vec table is dropped after successful migration</li>
+</ol>
+<h2 id="130-2025-12-07"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.3.0">1.3.0</a> - 2025-12-07</h2>
+<h3 id="added_1">Added</h3>
+<ul>
+<li><strong>Structured Logging Module</strong> - New <code>simplevecdb.logging</code> module for production-grade observability</li>
+<li><code>get_logger(name)</code> - Get namespaced loggers under <code>simplevecdb.*</code></li>
+<li><code>configure_logging(level, format, handler)</code> - One-call logging setup</li>
+<li><code>log_operation(name, **context)</code> - Context manager for operation timing and error tracking</li>
+<li>
+<p><code>log_error(operation, error, **context)</code> - Consistent error logging with context</p>
+</li>
+<li>
+<p><strong>SQLite Lock Retry Logic</strong> - Automatic retry with exponential backoff for database lock contention</p>
+</li>
+<li><code>@retry_on_lock(max_retries, base_delay, max_delay, jitter)</code> decorator</li>
+<li><code>DatabaseLockedError</code> exception for exhausted retries with attempt/wait metrics</li>
+<li>
+<p>Applied to <code>add_texts()</code> and <code>delete_by_ids()</code> operations in CatalogManager</p>
+</li>
+<li>
+<p><strong>Filter Validation</strong> - Early validation of metadata filter dictionaries</p>
+</li>
+<li><code>validate_filter(filter_dict)</code> - Validates keys are strings, values are supported types</li>
+<li>Clear error messages for invalid filter structures</li>
+<li>
+<p>Automatically called in <code>build_filter_clause()</code> before SQL generation</p>
+</li>
+<li>
+<p><strong>New Exports</strong> - Added to <code>simplevecdb.__all__</code>:</p>
+</li>
+<li><code>get_logger</code>, <code>configure_logging</code>, <code>log_operation</code></li>
+<li><code>DatabaseLockedError</code>, <code>retry_on_lock</code>, <code>validate_filter</code></li>
+</ul>
+<h3 id="changed_1">Changed</h3>
+<ul>
+<li><strong>CatalogManager</strong> internal refactoring:</li>
+<li><code>add_texts()</code> now delegates to <code>_insert_batch()</code> which has retry logic</li>
+<li><code>delete_by_ids()</code> now has retry logic for lock contention</li>
+<li><code>build_filter_clause()</code> validates filters before processing</li>
+<li><strong><code>delete_by_ids()</code> no longer auto-vacuums</strong> - Call <code>VectorDB.vacuum()</code> separately to reclaim disk space after large deletions. This improves performance for batch deletions.</li>
+<li><strong>RateLimiter</strong> now includes TTL-based cleanup to prevent memory exhaustion on long-running servers with many unique clients (default: 1 hour TTL, 10k max buckets).</li>
+<li><strong>AsyncVectorDB.close()</strong> now guarantees database connection is closed even if executor shutdown fails.</li>
+</ul>
+<h3 id="testing">Testing</h3>
+<ul>
+<li>Added 25 new tests in <code>tests/unit/test_error_handling.py</code>:</li>
+<li>7 tests for <code>retry_on_lock</code> decorator behavior</li>
+<li>2 tests for <code>DatabaseLockedError</code> exception</li>
+<li>4 tests for <code>validate_filter</code> function</li>
+<li>8 tests for logging utilities</li>
+<li>4 integration tests for error handling in VectorDB operations</li>
+</ul>
+<h3 id="example">Example</h3>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">VectorDB</span><span class="p">,</span>
+    <span class="n">configure_logging</span><span class="p">,</span>
+    <span class="n">get_logger</span><span class="p">,</span>
+    <span class="n">log_operation</span><span class="p">,</span>
+    <span class="n">DatabaseLockedError</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Enable debug logging</span>
+<span class="n">configure_logging</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">log_operation</span><span class="p">(</span><span class="s2">&quot;bulk_insert&quot;</span><span class="p">,</span> <span class="n">collection</span><span class="o">=</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="n">count</span><span class="o">=</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;data.db&quot;</span><span class="p">)</span>
+        <span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">)</span>
+        <span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">DatabaseLockedError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Insert failed after </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">attempts</span><span class="si">}</span><span class="s2"> attempts&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="120-2025-11-25"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.2.0">1.2.0</a> - 2025-11-25</h2>
+<h3 id="added_2">Added</h3>
+<ul>
+<li><strong>Async API Support</strong> - New <code>AsyncVectorDB</code> and <code>AsyncVectorCollection</code> classes</li>
+<li>Full async/await support for all collection operations</li>
+<li>Uses ThreadPoolExecutor to avoid blocking event loops</li>
+<li>Async context manager support (<code>async with AsyncVectorDB(...)</code>)</li>
+<li>All methods mirror sync API: <code>add_texts</code>, <code>similarity_search</code>, <code>keyword_search</code>, <code>hybrid_search</code>, <code>max_marginal_relevance_search</code>, <code>delete_by_ids</code>, <code>remove_texts</code></li>
+<li>Configurable thread pool size via <code>max_workers</code> parameter</li>
+</ul>
+<h3 id="changed_2">Changed</h3>
+<ul>
+<li>Added <code>pytest-asyncio</code> to dev dependencies for async test support</li>
+</ul>
+<h3 id="example_1">Example</h3>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncVectorDB</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">AsyncVectorDB</span><span class="p">(</span><span class="s2">&quot;data.db&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">db</span><span class="p">:</span>
+        <span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">)</span>
+        <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">([</span><span class="s2">&quot;Hello&quot;</span><span class="p">],</span> <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.1</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">])</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">([</span><span class="mf">0.1</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">results</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+
+<h2 id="111-2025-11-23"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.1">1.1.1</a> - 2025-11-23</h2>
+<h3 id="changed_3">Changed</h3>
+<ul>
+<li><strong>Refactored configuration constants</strong> into dedicated <code>constants.py</code> module</li>
+<li>Extracted hardware batch size thresholds (VRAM, CPU cores, ARM variants)</li>
+<li>Extracted search defaults (k=5, rrf_k=60, fetch_k=20)</li>
+<li>Improved maintainability and centralized configuration</li>
+</ul>
+<h3 id="fixed">Fixed</h3>
+<ul>
+<li><strong>Updated dependencies</strong></li>
+<li>Bumped <code>sentence-transformers[onnx]</code> from 3.3.1 to 5.1.2</li>
+<li>All embeddings/server tests passing with new version</li>
+</ul>
+<h2 id="110-2025-11-23"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.0">1.1.0</a> - 2025-11-23</h2>
+<h3 id="architecture-refactoring">🏗️ Architecture Refactoring</h3>
+<p>Major internal restructuring for better maintainability and extensibility while preserving backward compatibility.</p>
+<h3 id="changed_4">Changed</h3>
+<ul>
+<li><strong>Refactored core.py</strong> (879→216 lines, 75% reduction)</li>
+<li>Extracted search operations to <code>engine/search.py</code> (SearchEngine)</li>
+<li>Extracted quantization logic to <code>engine/quantization.py</code> (QuantizationStrategy)</li>
+<li>Extracted catalog management to <code>engine/catalog.py</code> (CatalogManager)</li>
+<li>Core now uses clean facade pattern with delegation</li>
+<li><strong>Improved documentation</strong></li>
+<li>Added comprehensive Google-style docstrings to all public API methods</li>
+<li>Reorganized MkDocs navigation with dedicated Engine section</li>
+<li>Updated architecture documentation in AGENTS.md and CONTRIBUTING.md</li>
+<li>Simplified CODE_OF_CONDUCT.md to be more approachable</li>
+</ul>
+<h3 id="added_3">Added</h3>
+<ul>
+<li><strong>Security infrastructure</strong></li>
+<li>GitHub Actions workflow for weekly security scans (Bandit, Safety, Semgrep)</li>
+<li>Dependabot configuration for automated dependency updates</li>
+<li>Bandit configuration with validated false-positive suppressions</li>
+<li><strong>Automated publishing</strong></li>
+<li>GitHub Actions workflow for PyPI publishing on releases</li>
+<li><strong>Test coverage improvements</strong></li>
+<li>Added 11 new tests covering edge cases in search engine</li>
+<li>Maintained 97% overall coverage across refactored modules</li>
+</ul>
+<h3 id="fixed_1">Fixed</h3>
+<ul>
+<li>Fixed unused <code>filter_builder</code> parameter in <code>_brute_force_search</code> method</li>
+<li>Simplified brute-force filtering to use proper filter builder delegation</li>
+<li>Fixed import paths for embeddings module in search engine</li>
+</ul>
+<h3 id="internal">Internal</h3>
+<ul>
+<li>All modules now follow consistent interface patterns</li>
+<li>Engine components properly isolated with clear responsibilities</li>
+<li>No breaking changes to public API</li>
+</ul>
+<h2 id="100-2025-11-23"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.0.0">1.0.0</a> - 2025-11-23</h2>
 <h3 id="initial-release">🎉 Initial Release</h3>
 <p>SimpleVecDB's first stable release brings production-ready local vector search to a single SQLite file.</p>
-<h3 id="added">Added</h3>
+<h3 id="added_4">Added</h3>
 <h4 id="core-features">Core Features</h4>
 <ul>
 <li><strong>Multi-collection catalog system</strong>: Organize documents in named collections within a single database</li>
@@ -956,7 +1240,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </tr>
 </tbody>
 </table></div>
-<h3 id="testing">Testing</h3>
+<h3 id="testing_1">Testing</h3>
 <ul>
 <li>177 unit and integration tests</li>
 <li>97% code coverage</li>
@@ -1157,10 +1441,168 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
         
         
         
-        <a href="#100-11-23-2025"
+        <a href="#200-2025-12-23"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            1.0.0 - 11-23-2025
+            [2.0.0] - 2025-12-23
+        </a>
+        
+        
+        <a href="#breaking-changes"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Breaking Changes
+        </a>
+        
+        <a href="#added"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added
+        </a>
+        
+        <a href="#changed"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed
+        </a>
+        
+        <a href="#migration-notes"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Migration Notes
+        </a>
+        
+        
+
+        
+        <a href="#130-2025-12-07"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            1.3.0 - 2025-12-07
+        </a>
+        
+        
+        <a href="#added_1"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added
+        </a>
+        
+        <a href="#changed_1"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed
+        </a>
+        
+        <a href="#testing"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Testing
+        </a>
+        
+        <a href="#example"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Example
+        </a>
+        
+        
+
+        
+        <a href="#120-2025-11-25"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            1.2.0 - 2025-11-25
+        </a>
+        
+        
+        <a href="#added_2"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added
+        </a>
+        
+        <a href="#changed_2"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed
+        </a>
+        
+        <a href="#example_1"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Example
+        </a>
+        
+        
+
+        
+        <a href="#111-2025-11-23"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            1.1.1 - 2025-11-23
+        </a>
+        
+        
+        <a href="#changed_3"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed
+        </a>
+        
+        <a href="#fixed"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Fixed
+        </a>
+        
+        
+
+        
+        <a href="#110-2025-11-23"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            1.1.0 - 2025-11-23
+        </a>
+        
+        
+        <a href="#architecture-refactoring"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            🏗️ Architecture Refactoring
+        </a>
+        
+        <a href="#changed_4"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed
+        </a>
+        
+        <a href="#added_3"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added
+        </a>
+        
+        <a href="#fixed_1"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Fixed
+        </a>
+        
+        <a href="#internal"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Internal
+        </a>
+        
+        
+
+        
+        <a href="#100-2025-11-23"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            1.0.0 - 2025-11-23
         </a>
         
         
@@ -1170,7 +1612,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
             🎉 Initial Release
         </a>
         
-        <a href="#added"
+        <a href="#added_4"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Added
@@ -1188,7 +1630,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
             Performance
         </a>
         
-        <a href="#testing"
+        <a href="#testing_1"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Testing

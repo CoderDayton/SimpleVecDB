@@ -45,6 +45,7 @@ db = AsyncVectorDB("vectors.db", max_workers=8)
 | --------------------------------- | -------------------------------------------------- |
 | `add_texts()`                     | `await collection.add_texts()`                     |
 | `similarity_search()`             | `await collection.similarity_search()`             |
+| `similarity_search_batch()`       | `await collection.similarity_search_batch()`       |
 | `keyword_search()`                | `await collection.keyword_search()`                |
 | `hybrid_search()`                 | `await collection.hybrid_search()`                 |
 | `max_marginal_relevance_search()` | `await collection.max_marginal_relevance_search()` |
@@ -57,7 +58,7 @@ Synchronous properties remain unchanged:
 
 ## Concurrent Operations
 
-Run multiple searches in parallel with `asyncio.gather`:
+Run multiple searches in parallel with `asyncio.gather` or use batch search for better performance:
 
 ```python
 async def concurrent_search():
@@ -66,7 +67,10 @@ async def concurrent_search():
 
     queries = [[0.1] * 384, [0.2] * 384, [0.3] * 384]
 
-    # Run all searches concurrently
+    # Option 1: Batch search (recommended, ~10x faster)
+    results = await collection.similarity_search_batch(queries, k=5)
+
+    # Option 2: Concurrent individual searches
     results = await asyncio.gather(*[
         collection.similarity_search(q, k=5)
         for q in queries

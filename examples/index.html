@@ -838,7 +838,7 @@
 <script>
     const updatedAt = document.getElementById("updated_at");
     if (updatedAt) {
-        const date = new Date('2025-11-23T09:41:13-06:00');
+        const date = new Date('2025-12-23T05:33:50-06:00');
         updatedAt.textContent = date.toLocaleDateString();
     }
 </script>
@@ -852,23 +852,123 @@
 <p><a href="https://github.com/coderdayton/simplevecdb/blob/main/examples/rag/llama_rag.ipynb">View Notebook</a></p>
 <h2 id="rag-with-ollama-llm">RAG with Ollama LLM</h2>
 <p><a href="https://github.com/coderdayton/simplevecdb/blob/main/examples/rag/ollama_rag.ipynb">View Notebook</a></p>
-<h2 id="keyword-hybrid-search-sqlite-only">Keyword &amp; Hybrid Search (SQLite-only)</h2>
+<h2 id="quick-start-examples">Quick Start Examples</h2>
+<h3 id="basic-usage">Basic Usage</h3>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span><span class="p">,</span> <span class="n">Quantization</span>
+
+<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;vectors.db&quot;</span><span class="p">)</span>
+<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="n">Quantization</span><span class="o">.</span><span class="n">FLOAT16</span><span class="p">)</span>
+
+<span class="c1"># Add documents with embeddings</span>
+<span class="n">texts</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;Paris is the capital of France&quot;</span><span class="p">,</span> <span class="s2">&quot;Berlin is in Germany&quot;</span><span class="p">]</span>
+<span class="n">embeddings</span> <span class="o">=</span> <span class="p">[[</span><span class="mf">0.1</span><span class="p">]</span> <span class="o">*</span> <span class="mi">384</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.2</span><span class="p">]</span> <span class="o">*</span> <span class="mi">384</span><span class="p">]</span>  <span class="c1"># Your embedding model output</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>
+
+<span class="c1"># Search</span>
+<span class="n">query_embedding</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">]</span> <span class="o">*</span> <span class="mi">384</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query_embedding</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">doc</span><span class="p">,</span> <span class="n">score</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">doc</span><span class="o">.</span><span class="n">page_content</span><span class="si">}</span><span class="s2"> (score: </span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="keyword-hybrid-search">Keyword &amp; Hybrid Search</h3>
 <div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
 
 <span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;local.db&quot;</span><span class="p">)</span>
 <span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;default&quot;</span><span class="p">)</span>
-<span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">([</span><span class="s2">&quot;banana is yellow&quot;</span><span class="p">,</span> <span class="s2">&quot;grapes are purple&quot;</span><span class="p">],</span> <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.1</span><span class="p">,</span><span class="mf">0.2</span><span class="p">],[</span><span class="mf">0.3</span><span class="p">,</span><span class="mf">0.4</span><span class="p">]])</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
+    <span class="p">[</span><span class="s2">&quot;banana is yellow&quot;</span><span class="p">,</span> <span class="s2">&quot;grapes are purple&quot;</span><span class="p">],</span>
+    <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">]</span> <span class="o">*</span> <span class="mi">192</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">]</span> <span class="o">*</span> <span class="mi">192</span><span class="p">]</span>
+<span class="p">)</span>
 
-<span class="c1"># BM25</span>
+<span class="c1"># BM25 keyword search</span>
 <span class="n">bm25</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">keyword_search</span><span class="p">(</span><span class="s2">&quot;banana&quot;</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 
-<span class="c1"># Blend BM25 + vectors</span>
+<span class="c1"># Hybrid search (BM25 + vectors with RRF)</span>
 <span class="n">hybrid</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">hybrid_search</span><span class="p">(</span><span class="s2">&quot;yellow fruit&quot;</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
 </code></pre></div>
 
-<blockquote>
-<p>Requires SQLite builds with FTS5 enabled (default in CPython).</p>
-</blockquote>
+<h3 id="batch-search-v20">Batch Search (v2.0+)</h3>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
+
+<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;vectors.db&quot;</span><span class="p">)</span>
+<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">)</span>
+
+<span class="c1"># Add some documents...</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>
+
+<span class="c1"># Search multiple queries at once (~10x faster than sequential)</span>
+<span class="n">queries</span> <span class="o">=</span> <span class="p">[</span><span class="n">embedding1</span><span class="p">,</span> <span class="n">embedding2</span><span class="p">,</span> <span class="n">embedding3</span><span class="p">]</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search_batch</span><span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">query_results</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">results</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Query </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">query_results</span><span class="p">)</span><span class="si">}</span><span class="s2"> results&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="force-exact-search">Force Exact Search</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Adaptive (default): brute-force for &lt;10k, HNSW for larger</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+
+<span class="c1"># Force brute-force for perfect recall</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Force HNSW for speed on small collections</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="metadata-filtering">Metadata Filtering</h3>
+<div class="codehilite"><pre><span></span><code><span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
+    <span class="p">[</span><span class="s2">&quot;doc1&quot;</span><span class="p">,</span> <span class="s2">&quot;doc2&quot;</span><span class="p">,</span> <span class="s2">&quot;doc3&quot;</span><span class="p">],</span>
+    <span class="n">embeddings</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">],</span>
+    <span class="n">metadatas</span><span class="o">=</span><span class="p">[</span>
+        <span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;tech&quot;</span><span class="p">,</span> <span class="s2">&quot;year&quot;</span><span class="p">:</span> <span class="mi">2024</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;science&quot;</span><span class="p">,</span> <span class="s2">&quot;year&quot;</span><span class="p">:</span> <span class="mi">2023</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;tech&quot;</span><span class="p">,</span> <span class="s2">&quot;year&quot;</span><span class="p">:</span> <span class="mi">2023</span><span class="p">},</span>
+    <span class="p">]</span>
+<span class="p">)</span>
+
+<span class="c1"># Filter by metadata</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span>
+    <span class="n">query</span><span class="p">,</span>
+    <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="nb">filter</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;tech&quot;</span><span class="p">}</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<h3 id="async-usage">Async Usage</h3>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncVectorDB</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">AsyncVectorDB</span><span class="p">(</span><span class="s2">&quot;vectors.db&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">db</span><span class="p">:</span>
+        <span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Add documents</span>
+        <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>
+
+        <span class="c1"># Batch search</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search_batch</span><span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">results</span>
+
+<span class="n">results</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+
+<h2 id="benchmark-scripts">Benchmark Scripts</h2>
+<h3 id="backend-benchmark">Backend Benchmark</h3>
+<p>Compare HNSW vs brute-force performance:</p>
+<div class="codehilite"><pre><span></span><code>python<span class="w"> </span>examples/backend_benchmark.py
+</code></pre></div>
+
+<h3 id="quantization-benchmark">Quantization Benchmark</h3>
+<p>Test different quantization levels:</p>
+<div class="codehilite"><pre><span></span><code>python<span class="w"> </span>examples/quant_benchmark.py
+</code></pre></div>
+
+<h3 id="embedding-performance">Embedding Performance</h3>
+<p>Benchmark local embedding generation:</p>
+<div class="codehilite"><pre><span></span><code>python<span class="w"> </span>examples/embeddings/perf_benchmark.py
+</code></pre></div>
   </div>
 </article>
                                 <div class="mx-auto flex flex-wrap h-16 w-full max-w-2xl items-center gap-2 px-4 md:px-0">
@@ -1068,11 +1168,77 @@
         
 
         
-        <a href="#keyword-hybrid-search-sqlite-only"
+        <a href="#quick-start-examples"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            Keyword &amp; Hybrid Search (SQLite-only)
+            Quick Start Examples
         </a>
+        
+        
+        <a href="#basic-usage"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Basic Usage
+        </a>
+        
+        <a href="#keyword-hybrid-search"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Keyword &amp; Hybrid Search
+        </a>
+        
+        <a href="#batch-search-v20"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Batch Search (v2.0+)
+        </a>
+        
+        <a href="#force-exact-search"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Force Exact Search
+        </a>
+        
+        <a href="#metadata-filtering"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Metadata Filtering
+        </a>
+        
+        <a href="#async-usage"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Async Usage
+        </a>
+        
+        
+
+        
+        <a href="#benchmark-scripts"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Benchmark Scripts
+        </a>
+        
+        
+        <a href="#backend-benchmark"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Backend Benchmark
+        </a>
+        
+        <a href="#quantization-benchmark"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Quantization Benchmark
+        </a>
+        
+        <a href="#embedding-performance"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Embedding Performance
+        </a>
+        
         
 
         

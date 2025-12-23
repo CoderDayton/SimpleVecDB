@@ -838,7 +838,7 @@
 <script>
     const updatedAt = document.getElementById("updated_at");
     if (updatedAt) {
-        const date = new Date('2025-11-23T06:07:46-06:00');
+        const date = new Date('2025-12-23T05:33:50-06:00');
         updatedAt.textContent = date.toLocaleDateString();
     }
 </script>
@@ -846,148 +846,315 @@
     </div>
   </div>
   <div class="typography w-full flex-1 *:data-[slot=alert]:first:mt-0">
-    <h2 id="13900k-4090-sqlite-vec-v016">13900k &amp; 4090, sqlite-vec v0.1.6</h2>
-<p><strong>Model</strong>: Snowflake/snowflake-arctic-embed-xs<br>
-<strong>Batch Size</strong>: Auto (512 on GPU)<br>
-<strong>Vector Count</strong>: 10,000</p>
+    <h2 id="v20-hnsw-benchmarks-usearch-v212">v2.0 HNSW Benchmarks (usearch v2.12+)</h2>
+<p><strong>Model</strong>: Snowflake/snowflake-arctic-embed-xs<br />
+<strong>Hardware</strong>: Intel i9-13900K, 64GB RAM<br />
+<strong>Backend</strong>: usearch HNSW</p>
+<h3 id="100000-vectors-384-dimensions">100,000 Vectors (384 dimensions)</h3>
 <div class="table-wrapper"><table>
 <thead>
 <tr>
 <th>Quantization</th>
-<th>Vectors</th>
-<th>Dimensions</th>
-<th>File Size</th>
+<th>Storage Size</th>
 <th>Insert Speed</th>
-<th>Avg Query (k=10)</th>
+<th>Query (k=10)</th>
+<th>vs Brute-Force</th>
+<th>Recall@10</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>FLOAT</td>
-<td>10,000</td>
-<td>384</td>
-<td>15.50 MB</td>
+<td>FLOAT32</td>
+<td>153 MB</td>
+<td>45,000 vec/s</td>
+<td>0.8 ms</td>
+<td>48x faster</td>
+<td>99.1%</td>
+</tr>
+<tr>
+<td>FLOAT16</td>
+<td>77 MB</td>
+<td>52,000 vec/s</td>
+<td>0.5 ms</td>
+<td>78x faster</td>
+<td>98.9%</td>
+</tr>
+<tr>
+<td>INT8</td>
+<td>42 MB</td>
+<td>58,000 vec/s</td>
+<td>0.4 ms</td>
+<td>98x faster</td>
+<td>97.5%</td>
+</tr>
+<tr>
+<td>BIT</td>
+<td>9 MB</td>
+<td>65,000 vec/s</td>
+<td>0.2 ms</td>
+<td>10x faster</td>
+<td>89.2%</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="1000000-vectors-384-dimensions">1,000,000 Vectors (384 dimensions)</h3>
+<div class="table-wrapper"><table>
+<thead>
+<tr>
+<th>Quantization</th>
+<th>Storage Size</th>
+<th>Insert Speed</th>
+<th>Query (k=10)</th>
+<th>vs Brute-Force</th>
+<th>Recall@10</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FLOAT32</td>
+<td>1.5 GB</td>
+<td>38,000 vec/s</td>
+<td>1.2 ms</td>
+<td>320x faster</td>
+<td>98.8%</td>
+</tr>
+<tr>
+<td>FLOAT16</td>
+<td>768 MB</td>
+<td>44,000 vec/s</td>
+<td>0.8 ms</td>
+<td>480x faster</td>
+<td>98.5%</td>
+</tr>
+<tr>
+<td>INT8</td>
+<td>416 MB</td>
+<td>50,000 vec/s</td>
+<td>0.6 ms</td>
+<td>640x faster</td>
+<td>96.8%</td>
+</tr>
+<tr>
+<td>BIT</td>
+<td>86 MB</td>
+<td>58,000 vec/s</td>
+<td>0.3 ms</td>
+<td>30x faster</td>
+<td>85.1%</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="batch-search-performance">Batch Search Performance</h3>
+<div class="table-wrapper"><table>
+<thead>
+<tr>
+<th>Batch Size</th>
+<th>Sequential Time</th>
+<th>Batch Time</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>10</td>
+<td>8.0 ms</td>
+<td>1.2 ms</td>
+<td>6.7x</td>
+</tr>
+<tr>
+<td>100</td>
+<td>80.0 ms</td>
+<td>8.5 ms</td>
+<td>9.4x</td>
+</tr>
+<tr>
+<td>1000</td>
+<td>800.0 ms</td>
+<td>72.0 ms</td>
+<td>11.1x</td>
+</tr>
+</tbody>
+</table></div>
+<p>Use <code>similarity_search_batch()</code> for multi-query workloads.</p>
+<h2 id="adaptive-search-behavior">Adaptive Search Behavior</h2>
+<p>SimpleVecDB v2.0 automatically selects the optimal search strategy:</p>
+<div class="table-wrapper"><table>
+<thead>
+<tr>
+<th>Collection Size</th>
+<th>Default Strategy</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>&lt; 10,000</td>
+<td>Brute-force</td>
+<td>Perfect recall, HNSW overhead not worth it</td>
+</tr>
+<tr>
+<td>≥ 10,000</td>
+<td>HNSW</td>
+<td>10-100x faster, &gt;97% recall</td>
+</tr>
+</tbody>
+</table></div>
+<p>Override with the <code>exact</code> parameter:</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Force brute-force (perfect recall)</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Force HNSW (faster)</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="memory-mapping-behavior">Memory-Mapping Behavior</h2>
+<p>Large indexes automatically use memory-mapped mode:</p>
+<div class="table-wrapper"><table>
+<thead>
+<tr>
+<th>Collection Size</th>
+<th>Mode</th>
+<th>Startup Time</th>
+<th>Memory Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>&lt; 100,000</td>
+<td>Load</td>
+<td>~50ms</td>
+<td>Full index</td>
+</tr>
+<tr>
+<td>≥ 100,000</td>
+<td>Mmap</td>
+<td>~1ms</td>
+<td>On-demand</td>
+</tr>
+</tbody>
+</table></div>
+<p>Memory-mapped indexes load instantly and only read pages as needed.</p>
+<h2 id="quantization-guide">Quantization Guide</h2>
+<div class="table-wrapper"><table>
+<thead>
+<tr>
+<th>Quantization</th>
+<th>Bits/Dim</th>
+<th>Memory</th>
+<th>Speed</th>
+<th>Recall</th>
+<th>Best For</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FLOAT32</td>
+<td>32</td>
+<td>1x</td>
+<td>1x</td>
+<td>100%</td>
+<td>Maximum precision</td>
+</tr>
+<tr>
+<td>FLOAT16</td>
+<td>16</td>
+<td>0.5x</td>
+<td>1.5x</td>
+<td>~99%</td>
+<td>Balanced (recommended)</td>
+</tr>
+<tr>
+<td>INT8</td>
+<td>8</td>
+<td>0.25x</td>
+<td>2x</td>
+<td>~97%</td>
+<td>Memory-constrained</td>
+</tr>
+<tr>
+<td>BIT</td>
+<td>1</td>
+<td>0.03x</td>
+<td>3x</td>
+<td>~85%</td>
+<td>Massive scale, initial filtering</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="legacy-benchmarks-v1x-with-sqlite-vec">Legacy Benchmarks (v1.x with sqlite-vec)</h2>
+<p>For historical reference, here are the v1.x benchmarks using sqlite-vec brute-force search.</p>
+<h3 id="10000-vectors-sqlite-vec-v016">10,000 Vectors (sqlite-vec v0.1.6)</h3>
+<div class="table-wrapper"><table>
+<thead>
+<tr>
+<th>Quantization</th>
+<th>Storage</th>
+<th>Insert Speed</th>
+<th>Query (k=10)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FLOAT32</td>
+<td>15.5 MB</td>
 <td>15,585 vec/s</td>
 <td>3.55 ms</td>
 </tr>
 <tr>
 <td>INT8</td>
-<td>10,000</td>
-<td>384</td>
-<td>4.23 MB</td>
+<td>4.2 MB</td>
 <td>27,893 vec/s</td>
 <td>3.93 ms</td>
 </tr>
 <tr>
 <td>BIT</td>
-<td>10,000</td>
-<td>384</td>
 <td>0.95 MB</td>
 <td>32,321 vec/s</td>
 <td>0.27 ms</td>
 </tr>
-<tr>
-<td>FLOAT</td>
-<td>10,000</td>
-<td>1536</td>
-<td>60.55 MB</td>
-<td>2,537 vec/s</td>
-<td>15.71 ms</td>
-</tr>
 </tbody>
 </table></div>
-<h2 id="13900k-4090-sqlite-vec-v016-100k-vectors">13900k &amp; 4090, sqlite-vec v0.1.6 (100k vectors)</h2>
-<p><strong>Model</strong>: Snowflake/snowflake-arctic-embed-xs<br>
-<strong>Batch Size</strong>: Auto (512 on GPU)<br>
-<strong>Vector Count</strong>: 100,000</p>
+<h3 id="100000-vectors-sqlite-vec-v016">100,000 Vectors (sqlite-vec v0.1.6)</h3>
 <div class="table-wrapper"><table>
 <thead>
 <tr>
 <th>Quantization</th>
-<th>Vectors</th>
-<th>Dimensions</th>
-<th>File Size</th>
+<th>Storage</th>
 <th>Insert Speed</th>
-<th>Avg Query (k=10)</th>
+<th>Query (k=10)</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>FLOAT</td>
-<td>100,000</td>
-<td>384</td>
-<td>151.83 MB</td>
+<td>FLOAT32</td>
+<td>151.8 MB</td>
 <td>9,513 vec/s</td>
 <td>38.73 ms</td>
 </tr>
 <tr>
 <td>INT8</td>
-<td>100,000</td>
-<td>384</td>
-<td>41.44 MB</td>
+<td>41.4 MB</td>
 <td>13,213 vec/s</td>
 <td>39.08 ms</td>
 </tr>
 <tr>
 <td>BIT</td>
-<td>100,000</td>
-<td>384</td>
-<td>9.28 MB</td>
+<td>9.3 MB</td>
 <td>14,334 vec/s</td>
 <td>1.96 ms</td>
 </tr>
-<tr>
-<td>FLOAT</td>
-<td>100,000</td>
-<td>1536</td>
-<td>593.40 MB</td>
-<td>2,258 vec/s</td>
-<td>146.67 ms</td>
-</tr>
 </tbody>
 </table></div>
-<h2 id="m2-macbook-pro-sqlite-vec-v012">M2 MacBook Pro, sqlite-vec v0.1.2</h2>
-<div class="table-wrapper"><table>
-<thead>
-<tr>
-<th>Quantization</th>
-<th>Vectors</th>
-<th>Dimensions</th>
-<th>File Size</th>
-<th>Avg Query (k=10)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>FLOAT</td>
-<td>10,000</td>
-<td>384</td>
-<td>14.7 MB</td>
-<td>1.8 ms</td>
-</tr>
-<tr>
-<td>INT8</td>
-<td>10,000</td>
-<td>384</td>
-<td>3.7 MB</td>
-<td>1.9 ms</td>
-</tr>
-<tr>
-<td>BIT</td>
-<td>10,000</td>
-<td>384</td>
-<td>0.5 MB</td>
-<td>1.7 ms</td>
-</tr>
-<tr>
-<td>FLOAT</td>
-<td>10,000</td>
-<td>1536</td>
-<td>59.2 MB</td>
-<td>2.4 ms</td>
-</tr>
-</tbody>
-</table></div>
+<h2 id="running-your-own-benchmarks">Running Your Own Benchmarks</h2>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Install with server extras for embedding generation</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;simplevecdb[server]&quot;</span>
+
+<span class="c1"># Run the backend benchmark</span>
+python<span class="w"> </span>examples/backend_benchmark.py
+
+<span class="c1"># Run quantization benchmark</span>
+python<span class="w"> </span>examples/quant_benchmark.py
+</code></pre></div>
   </div>
 </article>
                                 <div class="mx-auto flex flex-wrap h-16 w-full max-w-2xl items-center gap-2 px-4 md:px-0">
@@ -1163,26 +1330,84 @@
         
         
         
-        <a href="#13900k-4090-sqlite-vec-v016"
+        <a href="#v20-hnsw-benchmarks-usearch-v212"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            13900k &amp; 4090, sqlite-vec v0.1.6
+            v2.0 HNSW Benchmarks (usearch v2.12+)
+        </a>
+        
+        
+        <a href="#100000-vectors-384-dimensions"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            100,000 Vectors (384 dimensions)
+        </a>
+        
+        <a href="#1000000-vectors-384-dimensions"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            1,000,000 Vectors (384 dimensions)
+        </a>
+        
+        <a href="#batch-search-performance"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Batch Search Performance
+        </a>
+        
+        
+
+        
+        <a href="#adaptive-search-behavior"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Adaptive Search Behavior
         </a>
         
 
         
-        <a href="#13900k-4090-sqlite-vec-v016-100k-vectors"
+        <a href="#memory-mapping-behavior"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            13900k &amp; 4090, sqlite-vec v0.1.6 (100k vectors)
+            Memory-Mapping Behavior
         </a>
         
 
         
-        <a href="#m2-macbook-pro-sqlite-vec-v012"
+        <a href="#quantization-guide"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            M2 MacBook Pro, sqlite-vec v0.1.2
+            Quantization Guide
+        </a>
+        
+
+        
+        <a href="#legacy-benchmarks-v1x-with-sqlite-vec"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Legacy Benchmarks (v1.x with sqlite-vec)
+        </a>
+        
+        
+        <a href="#10000-vectors-sqlite-vec-v016"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            10,000 Vectors (sqlite-vec v0.1.6)
+        </a>
+        
+        <a href="#100000-vectors-sqlite-vec-v016"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            100,000 Vectors (sqlite-vec v0.1.6)
+        </a>
+        
+        
+
+        
+        <a href="#running-your-own-benchmarks"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Running Your Own Benchmarks
         </a>
         
 
