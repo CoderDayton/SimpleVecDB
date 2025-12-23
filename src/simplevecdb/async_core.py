@@ -78,6 +78,9 @@ class AsyncVectorCollection:
         query: str | Sequence[float],
         k: int = 5,
         filter: dict[str, Any] | None = None,
+        *,
+        exact: bool | None = None,
+        threads: int = 0,
     ) -> list[tuple[Document, float]]:
         """
         Search for most similar vectors.
@@ -87,7 +90,31 @@ class AsyncVectorCollection:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
-            lambda: self._collection.similarity_search(query, k, filter),
+            lambda: self._collection.similarity_search(
+                query, k, filter, exact=exact, threads=threads
+            ),
+        )
+
+    async def similarity_search_batch(
+        self,
+        queries: Sequence[Sequence[float]],
+        k: int = 5,
+        filter: dict[str, Any] | None = None,
+        *,
+        exact: bool | None = None,
+        threads: int = 0,
+    ) -> list[list[tuple[Document, float]]]:
+        """
+        Batch search for multiple query vectors.
+
+        See VectorCollection.similarity_search_batch for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.similarity_search_batch(
+                queries, k, filter, exact=exact, threads=threads
+            ),
         )
 
     async def keyword_search(

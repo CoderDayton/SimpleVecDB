@@ -68,6 +68,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `0` (default): auto-detect optimal thread count
   - Explicit value: control parallelism for batch operations
 
+- **Auto Memory-Mapping** - Large indexes automatically use memory-mapped mode:
+  - Indexes >100k vectors use `view=True` for instant startup
+  - Lower memory footprint for large collections
+  - Transparent upgrade to writable mode on add operations
+  - Configurable via `constants.USEARCH_MMAP_THRESHOLD`
+
+- **`similarity_search_batch()`** - Multi-query batch search:
+  - ~10x throughput for batch query workloads
+  - Uses usearch's native batch search under the hood
+  - Same parameters as `similarity_search()` but accepts list of queries
+
 - **`examples/backend_benchmark.py`** - Benchmark script comparing usearch vs brute-force:
   - Measures speedup, recall, and storage efficiency
   - Supports all quantization levels

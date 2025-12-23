@@ -236,3 +236,26 @@ async def test_async_quantization():
 
             results = await collection.similarity_search(emb.tolist(), k=1)
             assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_async_similarity_search_batch(sample_texts, sample_embeddings):
+    """Test batch similarity search asynchronously."""
+    async with AsyncVectorDB(":memory:") as db:
+        collection = db.collection("test")
+        await collection.add_texts(
+            texts=sample_texts,
+            embeddings=sample_embeddings,
+        )
+
+        # Search with first 3 embeddings as batch
+        queries = sample_embeddings[:3]
+        results = await collection.similarity_search_batch(queries, k=2)
+
+        assert len(results) == 3  # 3 queries
+        for i, query_results in enumerate(results):
+            assert len(query_results) == 2  # k=2
+            # First result should be exact match
+            doc, score = query_results[0]
+            assert doc.page_content == sample_texts[i]
+            assert score < 0.01
