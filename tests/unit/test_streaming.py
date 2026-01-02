@@ -228,6 +228,40 @@ class TestAddTextsStreaming:
 
         db.close()
 
+    def test_streaming_with_auto_embedding(self, db_path: Path):
+        """Streaming with None embeddings triggers auto-embedding (lines 487-488)."""
+        from unittest.mock import patch
+
+        dim = 8
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        # Items with None embeddings - should trigger auto-embedding path
+        items = [
+            ("doc1", {"idx": 1}, None),
+            ("doc2", {"idx": 2}, None),
+        ]
+
+        # Mock the embed_texts function
+        mock_embeddings = [
+            [0.1] * dim,
+            [0.2] * dim,
+        ]
+
+        with patch(
+            "simplevecdb.embeddings.models.embed_texts",
+            return_value=mock_embeddings,
+        ):
+            progress_list = list(
+                collection.add_texts_streaming(iter(items), batch_size=10)
+            )
+
+        assert len(progress_list) == 1
+        assert progress_list[0]["docs_processed"] == 2
+        assert collection.count() == 2
+
+        db.close()
+
 
 class TestStreamingWithFilters:
     """Test streaming with metadata filters."""
