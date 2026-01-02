@@ -23,6 +23,7 @@ build/
 
 # OpenCode
 .opencode/
+opencode.json
 
 # Project specific
 simplevecdb_plan.md
