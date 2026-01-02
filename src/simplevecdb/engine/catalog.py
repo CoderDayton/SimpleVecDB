@@ -606,6 +606,9 @@ class CatalogManager:
         Returns:
             List of (id, text, metadata, depth) tuples
         """
+        # Validate max_depth to prevent SQL injection (it's interpolated into query)
+        if max_depth is not None:
+            max_depth = int(max_depth)
         depth_clause = f"AND depth < {max_depth}" if max_depth else ""
 
         sql = f"""
@@ -644,6 +647,9 @@ class CatalogManager:
         Returns:
             List of (id, text, metadata, depth) tuples, from immediate parent to root
         """
+        # Validate max_depth to prevent SQL injection (it's interpolated into query)
+        if max_depth is not None:
+            max_depth = int(max_depth)
         depth_clause = f"AND depth < {max_depth}" if max_depth else ""
 
         sql = f"""
@@ -679,7 +685,21 @@ class CatalogManager:
 
         Returns:
             True if document was updated, False if not found
+
+        Raises:
+            ValueError: If setting parent would create a cycle
         """
+        # Check for cycles: parent_id cannot be doc_id or any of its descendants
+        if parent_id is not None:
+            if parent_id == doc_id:
+                raise ValueError("A document cannot be its own parent")
+            descendants = self.get_descendants(doc_id)
+            descendant_ids = {d[0] for d in descendants}
+            if parent_id in descendant_ids:
+                raise ValueError(
+                    f"Cannot set parent: document {parent_id} is a descendant of {doc_id}"
+                )
+
         with self.conn:
             cursor = self.conn.execute(
                 f"UPDATE {self._table_name} SET parent_id = ? WHERE id = ?",

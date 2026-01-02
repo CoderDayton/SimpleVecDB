@@ -11,18 +11,13 @@ These tests cover:
 from __future__ import annotations
 
 import os
-import tempfile
+import sqlite3
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from simplevecdb import VectorDB, EncryptionError, EncryptionUnavailableError
-
-# Test-only encryption keys - NOT for production use
-# nosec: B105 - hardcoded passwords are intentional for testing
-TEST_ENCRYPTION_KEY = "test-only-key-do-not-use-in-production"  # noqa: S105
-TEST_ENCRYPTION_KEY_ALT = "alternate-test-key-for-wrong-key-tests"  # noqa: S105
 from simplevecdb.encryption import (
     _normalize_key,
     _derive_key,
@@ -36,6 +31,11 @@ from simplevecdb.encryption import (
     AES_KEY_SIZE,
     SALT_SIZE,
 )
+
+# Test-only encryption keys - NOT for production use
+# nosec: B105 - hardcoded passwords are intentional for testing
+TEST_ENCRYPTION_KEY = "test-only-key-do-not-use-in-production"  # noqa: S105
+TEST_ENCRYPTION_KEY_ALT = "alternate-test-key-for-wrong-key-tests"  # noqa: S105
 
 
 # Skip all tests if encryption dependencies are not available
@@ -248,7 +248,7 @@ class TestEncryptedVectorDB:
         db.close()
 
         # Try to open without key - should fail as SQLite can't read it
-        with pytest.raises(Exception):  # sqlite3.DatabaseError
+        with pytest.raises(sqlite3.DatabaseError):
             VectorDB(db_path)
 
     def test_memory_db_encryption_not_allowed(self):

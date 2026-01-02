@@ -16,8 +16,7 @@ from simplevecdb import VectorDB
 
 # Check if encryption is available
 try:
-    import sqlcipher3
-    from simplevecdb.encryption import create_encrypted_connection
+    import sqlcipher3  # type: ignore[import-untyped]  # noqa: F401
 
     HAS_ENCRYPTION = True
 except ImportError:
@@ -121,7 +120,9 @@ def test_encrypted_streaming_hierarchy():
                 # Map this child to its actual parent id based on input ordering:
                 # the parent for any index i is at index (i // 5) * 5.
                 parent_group_idx = i // 5  # 0, 1, 2, ...
-                actual_parent_id = ids[parent_group_idx * 5]  # First id in each group of 5
+                actual_parent_id = ids[
+                    parent_group_idx * 5
+                ]  # First id in each group of 5
                 collection.set_parent(ids[i], actual_parent_id)
 
         db.close()

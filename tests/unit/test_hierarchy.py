@@ -343,6 +343,54 @@ class TestHierarchicalRelationships:
 
         db.close()
 
+    def test_set_parent_self_reference_raises(self, db_path: Path, dim: int):
+        """set_parent() rejects self-reference (doc cannot be its own parent)."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        doc_id = collection.add_texts(
+            ["Document"],
+            embeddings=[self.make_embedding(dim)],
+        )[0]
+
+        with pytest.raises(ValueError, match="cannot be its own parent"):
+            collection.set_parent(doc_id, doc_id)
+
+        db.close()
+
+    def test_set_parent_cycle_detection(self, db_path: Path, dim: int):
+        """set_parent() rejects cycles (descendant cannot become ancestor)."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        # Create chain: grandparent -> parent -> child
+        grandparent_id = collection.add_texts(
+            ["Grandparent"],
+            embeddings=[self.make_embedding(dim)],
+        )[0]
+
+        parent_id = collection.add_texts(
+            ["Parent"],
+            embeddings=[self.make_embedding(dim)],
+            parent_ids=[grandparent_id],
+        )[0]
+
+        child_id = collection.add_texts(
+            ["Child"],
+            embeddings=[self.make_embedding(dim)],
+            parent_ids=[parent_id],
+        )[0]
+
+        # Try to make child the parent of grandparent -> cycle!
+        with pytest.raises(ValueError, match="descendant"):
+            collection.set_parent(grandparent_id, child_id)
+
+        # Try to make child the parent of its own parent -> cycle!
+        with pytest.raises(ValueError, match="descendant"):
+            collection.set_parent(parent_id, child_id)
+
+        db.close()
+
 
 class TestHierarchyMigration:
     """Test that existing databases get parent_id column added."""

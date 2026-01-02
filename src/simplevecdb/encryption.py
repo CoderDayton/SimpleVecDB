@@ -257,7 +257,6 @@ def encrypt_file(
     Encrypt a file using AES-256-GCM.
 
     File format:
-    - 16 bytes: salt
     - 12 bytes: nonce
     - N bytes: ciphertext
     - 16 bytes: GCM auth tag (appended by cryptography)
