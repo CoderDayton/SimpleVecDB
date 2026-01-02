@@ -74,12 +74,22 @@ class CatalogManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 text TEXT NOT NULL,
                 metadata TEXT,
-                embedding BLOB
+                embedding BLOB,
+                parent_id INTEGER REFERENCES {self._table_name}(id) ON DELETE SET NULL
             )
             """
         )
-        # Migrate existing tables that lack the embedding column
+        # Create index for parent_id lookups
+        self.conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{self._table_name}_parent
+            ON {self._table_name}(parent_id)
+            WHERE parent_id IS NOT NULL
+            """
+        )
+        # Migrate existing tables that lack columns
         self._ensure_embedding_column()
+        self._ensure_parent_id_column()
         self._ensure_fts_table()
 
     def _ensure_embedding_column(self) -> None:
@@ -96,6 +106,30 @@ class CatalogManager:
                 )
         except Exception as e:
             _logger.warning("Could not check/add embedding column: %s", e)
+
+    def _ensure_parent_id_column(self) -> None:
+        """Add parent_id column if missing (migration for v2.1.0)."""
+        try:
+            cursor = self.conn.execute(f"PRAGMA table_info({self._table_name})")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "parent_id" not in columns:
+                self.conn.execute(
+                    f"ALTER TABLE {self._table_name} ADD COLUMN parent_id INTEGER "
+                    f"REFERENCES {self._table_name}(id) ON DELETE SET NULL"
+                )
+                # Create index for efficient parent lookups
+                self.conn.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS idx_{self._table_name}_parent
+                    ON {self._table_name}(parent_id)
+                    WHERE parent_id IS NOT NULL
+                    """
+                )
+                _logger.info(
+                    "Migrated table %s: added parent_id column", self._table_name
+                )
+        except Exception as e:
+            _logger.warning("Could not check/add parent_id column: %s", e)
 
     def _ensure_fts_table(self) -> None:
         """Create FTS5 virtual table for full-text search."""
@@ -158,6 +192,7 @@ class CatalogManager:
         metadatas: Sequence[dict],
         ids: Sequence[int | None] | None = None,
         embeddings: Sequence[Sequence[float]] | None = None,
+        parent_ids: Sequence[int | None] | None = None,
     ) -> list[int]:
         """
         Insert or update document metadata.
@@ -167,6 +202,7 @@ class CatalogManager:
             metadatas: Metadata dicts for each document
             ids: Optional document IDs for upsert behavior
             embeddings: Optional embedding vectors to store
+            parent_ids: Optional parent document IDs for hierarchical relationships
 
         Returns:
             List of document IDs (rowids)
@@ -183,6 +219,7 @@ class CatalogManager:
         import numpy as np
 
         ids_list = list(ids) if ids else [None] * len(texts)
+        parent_ids_list = list(parent_ids) if parent_ids else [None] * len(texts)
 
         # Convert embeddings to bytes if provided
         embedding_blobs: list[bytes | None] = []
@@ -194,21 +231,22 @@ class CatalogManager:
             embedding_blobs = [None] * len(texts)
 
         rows = [
-            (uid, txt, json.dumps(meta), emb_blob)
-            for uid, txt, meta, emb_blob in zip(
-                ids_list, texts, metadatas, embedding_blobs
+            (uid, txt, json.dumps(meta), emb_blob, pid)
+            for uid, txt, meta, emb_blob, pid in zip(
+                ids_list, texts, metadatas, embedding_blobs, parent_ids_list
             )
         ]
 
         with self.conn:
             self.conn.executemany(
                 f"""
-                INSERT INTO {self._table_name}(id, text, metadata, embedding)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO {self._table_name}(id, text, metadata, embedding, parent_id)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     text=excluded.text,
                     metadata=excluded.metadata,
-                    embedding=excluded.embedding
+                    embedding=excluded.embedding,
+                    parent_id=excluded.parent_id
                 """,
                 rows,
             )
@@ -495,3 +533,176 @@ class CatalogManager:
             _logger.info("Dropped legacy sqlite-vec table: %s", vec_table_name)
         except Exception as e:
             _logger.warning("Failed to drop legacy table %s: %s", vec_table_name, e)
+
+    # ------------------------------------------------------------------ #
+    # Hierarchical Relationships
+    # ------------------------------------------------------------------ #
+
+    def get_children(self, parent_id: int) -> list[tuple[int, str, dict[str, Any]]]:
+        """
+        Get all direct children of a document.
+
+        Args:
+            parent_id: ID of the parent document
+
+        Returns:
+            List of (id, text, metadata) tuples for child documents
+        """
+        rows = self.conn.execute(
+            f"SELECT id, text, metadata FROM {self._table_name} WHERE parent_id = ?",
+            (parent_id,),
+        ).fetchall()
+
+        return [(int(r[0]), r[1], json.loads(r[2]) if r[2] else {}) for r in rows]
+
+    def get_parent(self, doc_id: int) -> tuple[int, str, dict[str, Any]] | None:
+        """
+        Get the parent document of a given document.
+
+        Args:
+            doc_id: ID of the child document
+
+        Returns:
+            Tuple of (id, text, metadata) for parent, or None if no parent
+        """
+        # First get the parent_id
+        row = self.conn.execute(
+            f"SELECT parent_id FROM {self._table_name} WHERE id = ?",
+            (doc_id,),
+        ).fetchone()
+
+        if not row or row[0] is None:
+            return None
+
+        parent_id = row[0]
+
+        # Then fetch the parent document
+        parent_row = self.conn.execute(
+            f"SELECT id, text, metadata FROM {self._table_name} WHERE id = ?",
+            (parent_id,),
+        ).fetchone()
+
+        if not parent_row:
+            return None
+
+        return (
+            int(parent_row[0]),
+            parent_row[1],
+            json.loads(parent_row[2]) if parent_row[2] else {},
+        )
+
+    def get_descendants(
+        self, root_id: int, max_depth: int | None = None
+    ) -> list[tuple[int, str, dict[str, Any], int]]:
+        """
+        Get all descendants of a document (recursive).
+
+        Uses a recursive CTE for efficient traversal.
+
+        Args:
+            root_id: ID of the root document
+            max_depth: Maximum depth to traverse (None for unlimited)
+
+        Returns:
+            List of (id, text, metadata, depth) tuples
+        """
+        # Validate max_depth to prevent SQL injection (it's interpolated into query)
+        if max_depth is not None:
+            max_depth = int(max_depth)
+        depth_clause = f"AND depth < {max_depth}" if max_depth else ""
+
+        sql = f"""
+            WITH RECURSIVE descendants(id, text, metadata, depth) AS (
+                SELECT id, text, metadata, 1 as depth
+                FROM {self._table_name}
+                WHERE parent_id = ?
+
+                UNION ALL
+
+                SELECT t.id, t.text, t.metadata, d.depth + 1
+                FROM {self._table_name} t
+                JOIN descendants d ON t.parent_id = d.id
+                WHERE 1=1 {depth_clause}
+            )
+            SELECT id, text, metadata, depth FROM descendants
+            ORDER BY depth, id
+        """
+
+        rows = self.conn.execute(sql, (root_id,)).fetchall()
+
+        return [
+            (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows
+        ]
+
+    def get_ancestors(
+        self, doc_id: int, max_depth: int | None = None
+    ) -> list[tuple[int, str, dict[str, Any], int]]:
+        """
+        Get all ancestors of a document (path to root).
+
+        Args:
+            doc_id: ID of the document
+            max_depth: Maximum depth to traverse (None for unlimited)
+
+        Returns:
+            List of (id, text, metadata, depth) tuples, from immediate parent to root
+        """
+        # Validate max_depth to prevent SQL injection (it's interpolated into query)
+        if max_depth is not None:
+            max_depth = int(max_depth)
+        depth_clause = f"AND depth < {max_depth}" if max_depth else ""
+
+        sql = f"""
+            WITH RECURSIVE ancestors(id, text, metadata, parent_id, depth) AS (
+                SELECT id, text, metadata, parent_id, 1 as depth
+                FROM {self._table_name}
+                WHERE id = (SELECT parent_id FROM {self._table_name} WHERE id = ?)
+
+                UNION ALL
+
+                SELECT t.id, t.text, t.metadata, t.parent_id, a.depth + 1
+                FROM {self._table_name} t
+                JOIN ancestors a ON t.id = a.parent_id
+                WHERE a.parent_id IS NOT NULL {depth_clause}
+            )
+            SELECT id, text, metadata, depth FROM ancestors
+            ORDER BY depth
+        """
+
+        rows = self.conn.execute(sql, (doc_id,)).fetchall()
+
+        return [
+            (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows
+        ]
+
+    def set_parent(self, doc_id: int, parent_id: int | None) -> bool:
+        """
+        Set or update the parent of a document.
+
+        Args:
+            doc_id: ID of the document to update
+            parent_id: New parent ID (None to remove parent)
+
+        Returns:
+            True if document was updated, False if not found
+
+        Raises:
+            ValueError: If setting parent would create a cycle
+        """
+        # Check for cycles: parent_id cannot be doc_id or any of its descendants
+        if parent_id is not None:
+            if parent_id == doc_id:
+                raise ValueError("A document cannot be its own parent")
+            descendants = self.get_descendants(doc_id)
+            descendant_ids = {d[0] for d in descendants}
+            if parent_id in descendant_ids:
+                raise ValueError(
+                    f"Cannot set parent: document {parent_id} is a descendant of {doc_id}"
+                )
+
+        with self.conn:
+            cursor = self.conn.execute(
+                f"UPDATE {self._table_name} SET parent_id = ? WHERE id = ?",
+                (parent_id, doc_id),
+            )
+            return cursor.rowcount > 0

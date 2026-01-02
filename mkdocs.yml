@@ -43,6 +43,7 @@ nav:
       - VectorDB: api/core.md
       - Async API: api/async.md
       - Embeddings: api/embeddings.md
+      - Encryption: api/encryption.md
       - Integrations: api/integrations.md
       - Configuration: api/config.md
   - Engine:

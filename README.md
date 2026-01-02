@@ -51,6 +51,9 @@ pip install simplevecdb
 
 # With local embeddings server + HuggingFace models (500MB+)
 pip install "simplevecdb[server]"
+
+# With encryption support (SQLCipher)
+pip install "simplevecdb[encryption]"
 ```
 
 **Verify Installation:**
@@ -222,6 +225,63 @@ results = collection.similarity_search(
 
 > **Tip:** LangChain and LlamaIndex integrations support all search methods.
 
+### Encryption (v2.1+)
+
+Protect sensitive data with AES-256 at-rest encryption:
+
+```bash
+pip install "simplevecdb[encryption]"
+```
+
+```python
+from simplevecdb import VectorDB
+
+# Create encrypted database
+db = VectorDB("secure.db", encryption_key="your-secret-key")
+collection = db.collection("confidential")
+
+collection.add_texts(["sensitive data"], embeddings=[[0.1]*384])
+db.close()
+
+# Reopen requires same key
+db = VectorDB("secure.db", encryption_key="your-secret-key")
+```
+
+### Streaming Insert (v2.1+)
+
+Memory-efficient ingestion for large datasets:
+
+```python
+def load_documents():
+    for line in open("large_file.jsonl"):
+        doc = json.loads(line)
+        yield (doc["text"], doc.get("metadata"), doc.get("embedding"))
+
+for progress in collection.add_texts_streaming(load_documents(), batch_size=1000):
+    print(f"Processed {progress['docs_processed']} documents")
+```
+
+### Document Hierarchies (v2.1+)
+
+Organize documents in parent-child relationships:
+
+```python
+# Add parent document
+parent_ids = collection.add_texts(["Main document"], embeddings=[[0.1]*384])
+
+# Add children
+child_ids = collection.add_texts(
+    ["Chunk 1", "Chunk 2"],
+    embeddings=[[0.11]*384, [0.12]*384],
+    parent_ids=[parent_ids[0], parent_ids[0]]
+)
+
+# Navigate hierarchy
+children = collection.get_children(parent_ids[0])
+parent = collection.get_parent(child_ids[0])
+descendants = collection.get_descendants(parent_ids[0])
+```
+
 ## Feature Matrix
 
 | Feature                   | Status | Description                                                  |
@@ -238,7 +298,9 @@ results = collection.similarity_search(
 | **Framework Integration** | ✅     | LangChain \& LlamaIndex adapters                             |
 | **Hardware Acceleration** | ✅     | Auto-detects CUDA/MPS/CPU + SIMD via usearch                 |
 | **Local Embeddings**      | ✅     | HuggingFace models via `[server]` extras                     |
-| **Built-in Encryption**   | 🔜     | SQLCipher integration for at-rest encryption                 |
+| **Built-in Encryption**   | ✅     | SQLCipher AES-256 at-rest encryption via `[encryption]` extras |
+| **Streaming Insert**      | ✅     | Memory-efficient large-scale ingestion with progress callbacks |
+| **Document Hierarchies**  | ✅     | Parent/child relationships for chunked docs                  |
 
 ## Performance Benchmarks
 
@@ -304,9 +366,11 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 - [x] Multi-collection support
 - [x] HNSW indexing (usearch backend)
 - [x] Adaptive search (brute-force/HNSW)
-- [ ] SQLCipher encryption (at-rest data protection)
-- [ ] Streaming insert API for large-scale ingestion
-- [ ] Graph-based metadata relationships
+- [x] SQLCipher encryption (at-rest data protection)
+- [x] Streaming insert API for large-scale ingestion
+- [x] Hierarchical document relationships (parent/child)
+- [ ] Cross-collection search
+- [ ] Vector clustering and auto-tagging
 
 Vote on features or propose new ones in [GitHub Discussions](https://github.com/coderdayton/simplevecdb/discussions).
 

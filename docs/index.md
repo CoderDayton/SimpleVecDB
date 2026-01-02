@@ -51,6 +51,9 @@ pip install simplevecdb
 
 # With local embeddings server + HuggingFace models (500MB+)
 pip install "simplevecdb[server]"
+
+# With encryption support (SQLCipher)
+pip install "simplevecdb[encryption]"
 ```
 
 **Verify Installation:**
@@ -209,6 +212,41 @@ results = collection.similarity_search(
 
 > **Tip:** LangChain and LlamaIndex integrations support all search methods.
 
+### Encryption (v2.1+)
+
+Protect sensitive data with AES-256 at-rest encryption:
+
+```python
+from simplevecdb import VectorDB
+
+db = VectorDB("secure.db", encryption_key="your-secret-key")
+collection = db.collection("confidential")
+collection.add_texts(["sensitive data"], embeddings=[[0.1]*384])
+```
+
+### Streaming Insert (v2.1+)
+
+Memory-efficient ingestion for large datasets:
+
+```python
+for progress in collection.add_texts_streaming(documents, batch_size=1000):
+    print(f"Processed {progress['docs_processed']} documents")
+```
+
+### Document Hierarchies (v2.1+)
+
+Organize documents in parent-child relationships:
+
+```python
+parent_ids = collection.add_texts(["Main doc"], embeddings=[[0.1]*384])
+child_ids = collection.add_texts(
+    ["Chunk 1", "Chunk 2"],
+    embeddings=[[0.11]*384, [0.12]*384],
+    parent_ids=[parent_ids[0], parent_ids[0]]
+)
+children = collection.get_children(parent_ids[0])
+```
+
 ## Feature Matrix
 
 | Feature                   | Status | Description                                                |
@@ -225,7 +263,9 @@ results = collection.similarity_search(
 | **Framework Integration** | ✅     | LangChain \& LlamaIndex adapters                           |
 | **Hardware Acceleration** | ✅     | Auto-detects CUDA/MPS/CPU                                  |
 | **Local Embeddings**      | ✅     | HuggingFace models via `[server]` extras                   |
-| **Built-in Encryption**   | 🔜     | SQLCipher integration for at-rest encryption               |
+| **Built-in Encryption**   | ✅     | SQLCipher AES-256 at-rest encryption via `[encryption]`    |
+| **Streaming Insert**      | ✅     | Memory-efficient large-scale ingestion with progress       |
+| **Document Hierarchies**  | ✅     | Parent/child relationships for chunked docs                |
 
 ## Performance Benchmarks
 
@@ -296,9 +336,11 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 - [x] HNSW indexing (usearch backend)
 - [x] Batch search API
 - [x] Auto memory-mapping for large indexes
-- [ ] SQLCipher encryption (at-rest data protection)
-- [ ] Streaming insert API for large-scale ingestion
-- [ ] Graph-based metadata relationships
+- [x] SQLCipher encryption (at-rest data protection)
+- [x] Streaming insert API for large-scale ingestion
+- [x] Hierarchical document relationships (parent/child)
+- [ ] Cross-collection search
+- [ ] Vector clustering and auto-tagging
 
 Vote on features or propose new ones in [GitHub Discussions](https://github.com/coderdayton/simplevecdb/discussions).
 

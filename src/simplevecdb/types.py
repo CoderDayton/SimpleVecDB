@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import field
 from enum import Enum
+from typing import Callable, TypedDict
 
 
 class StrEnum(str, Enum):
@@ -18,6 +19,20 @@ class Document:
 
     page_content: str
     metadata: dict = field(default_factory=dict)
+
+
+class StreamingProgress(TypedDict):
+    """Progress info yielded during streaming insert."""
+
+    batch_num: int
+    total_batches: int | None  # None if unknown (infinite iterator)
+    docs_processed: int
+    docs_in_batch: int
+    batch_ids: list[int]
+
+
+# Type alias for progress callback
+ProgressCallback = Callable[[StreamingProgress], None]
 
 
 class DistanceStrategy(StrEnum):

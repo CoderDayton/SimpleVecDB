@@ -5,6 +5,49 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-01-01
+
+### Added
+
+- **SQLCipher Encryption Support** - Full at-rest encryption for sensitive data:
+  - `VectorDB(path, encryption_key="...")` enables AES-256 page-level database encryption
+  - Uses SQLCipher for transparent SQLite encryption (PRAGMA key)
+  - Usearch index files encrypted with AES-256-GCM (`.usearch.enc`)
+  - Zero performance overhead during search (decrypt on load, encrypt on save only)
+  - Key derivation: PBKDF2-SHA256 with 480,000 iterations for passphrases
+  - Install with `pip install simplevecdb[encryption]`
+
+- **New encryption module** (`simplevecdb.encryption`):
+  - `create_encrypted_connection()` - SQLCipher connection factory
+  - `is_database_encrypted()` - Check if a database file is encrypted
+  - `encrypt_index_file()` / `decrypt_index_file()` - Index file encryption
+  - `EncryptionError` / `EncryptionUnavailableError` - New exception types
+
+- **Streaming Insert API** - Memory-efficient large-scale ingestion:
+  - `collection.add_texts_streaming(iterable)` - Process from any iterator/generator
+  - Configurable `batch_size` parameter (default: config.EMBEDDING_BATCH_SIZE)
+  - Yields `StreamingProgress` after each batch for monitoring
+  - Optional `on_progress` callback for custom logging/UI updates
+  - New types: `StreamingProgress`, `ProgressCallback`
+
+- **Hierarchical Document Relationships** - Parent/child document structure:
+  - `parent_ids` parameter in `add_texts()` to link documents
+  - `get_children(doc_id)` - Get direct child documents
+  - `get_parent(doc_id)` - Get parent document
+  - `get_descendants(doc_id, max_depth)` - Recursive children traversal
+  - `get_ancestors(doc_id, max_depth)` - Path to root
+  - `set_parent(doc_id, parent_id)` - Update relationships
+  - Uses SQLite recursive CTE for efficient traversal
+  - Auto-migrates existing databases (adds `parent_id` column)
+
+### Changed
+
+- `check_migration()` now gracefully handles encrypted databases (returns `needs_migration=False`)
+
+### Dependencies
+
+- New optional dependency group `[encryption]`: `sqlcipher3-binary>=0.5.0`, `cryptography>=41.0`
+
 ## [2.0.0] - 2025-12-23
 
 ### Breaking Changes
