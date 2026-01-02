@@ -29,6 +29,11 @@ A named collection of vectors within a database.
         - delete_by_ids
         - remove_texts
         - rebuild_index
+        - get_children
+        - get_parent
+        - get_descendants
+        - get_ancestors
+        - set_parent
 
 ## Quick Reference
 
@@ -99,3 +104,44 @@ def log_progress(p):
 
 list(collection.add_texts_streaming(items, batch_size=500, on_progress=log_progress))
 ```
+
+### Hierarchical Relationships
+
+Organize documents in parent-child hierarchies for chunked documents, threaded conversations, or nested content:
+
+```python
+# Add documents with parent relationships
+parent_ids = collection.add_texts(["Main document"], metadatas=[{"type": "parent"}])
+parent_id = parent_ids[0]
+
+# Add children referencing the parent
+child_ids = collection.add_texts(
+    ["Chunk 1", "Chunk 2", "Chunk 3"],
+    parent_ids=[parent_id, parent_id, parent_id]
+)
+
+# Navigate the hierarchy
+children = collection.get_children(parent_id)         # Direct children
+parent = collection.get_parent(child_ids[0])          # Get parent document
+descendants = collection.get_descendants(parent_id)   # All nested children
+ancestors = collection.get_ancestors(child_ids[0])    # Path to root
+
+# Reparent or orphan documents
+collection.set_parent(child_ids[0], new_parent_id)    # Move to new parent
+collection.set_parent(child_ids[0], None)             # Make root document
+
+# Search within a subtree
+results = collection.similarity_search(
+    query_embedding,
+    k=5,
+    filter={"parent_id": parent_id}  # Only search children
+)
+```
+
+| Method | Description |
+|--------|-------------|
+| `get_children(doc_id)` | Direct children of a document |
+| `get_parent(doc_id)` | Parent document (or None if root) |
+| `get_descendants(doc_id, max_depth)` | All nested children recursively |
+| `get_ancestors(doc_id)` | Path from document to root |
+| `set_parent(doc_id, parent_id)` | Move document to new parent (or None to orphan) |

@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Optional `on_progress` callback for custom logging/UI updates
   - New types: `StreamingProgress`, `ProgressCallback`
 
+- **Hierarchical Document Relationships** - Parent/child document structure:
+  - `parent_ids` parameter in `add_texts()` to link documents
+  - `get_children(doc_id)` - Get direct child documents
+  - `get_parent(doc_id)` - Get parent document
+  - `get_descendants(doc_id, max_depth)` - Recursive children traversal
+  - `get_ancestors(doc_id, max_depth)` - Path to root
+  - `set_parent(doc_id, parent_id)` - Update relationships
+  - Uses SQLite recursive CTE for efficient traversal
+  - Auto-migrates existing databases (adds `parent_id` column)
+
 ### Changed
 
 - `check_migration()` now gracefully handles encrypted databases (returns `needs_migration=False`)

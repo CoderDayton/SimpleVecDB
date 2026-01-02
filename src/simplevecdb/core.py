@@ -333,6 +333,7 @@ class VectorCollection:
         embeddings: Sequence[Sequence[float]] | None = None,
         ids: Sequence[int | None] | None = None,
         *,
+        parent_ids: Sequence[int | None] | None = None,
         threads: int = 0,
     ) -> list[int]:
         """
@@ -348,6 +349,7 @@ class VectorCollection:
             embeddings: Optional pre-computed embeddings (one per text).
                 If None, attempts to use local embedding model.
             ids: Optional document IDs for upsert behavior.
+            parent_ids: Optional parent document IDs for hierarchical relationships.
             threads: Number of threads for parallel insertion (0=auto).
 
         Returns:
@@ -388,10 +390,15 @@ class VectorCollection:
             batch_metas = metadatas[batch_start:batch_end]
             batch_embeds = embeddings[batch_start:batch_end]
             batch_ids = ids[batch_start:batch_end] if ids else None
+            batch_parent_ids = parent_ids[batch_start:batch_end] if parent_ids else None
 
             # Add to SQLite metadata store (with embeddings for MMR support)
             doc_ids = self._catalog.add_documents(
-                batch_texts, list(batch_metas), batch_ids, embeddings=batch_embeds
+                batch_texts,
+                list(batch_metas),
+                batch_ids,
+                embeddings=batch_embeds,
+                parent_ids=batch_parent_ids,
             )
 
             # Prepare vectors
@@ -880,6 +887,100 @@ class VectorCollection:
 
         _logger.info("Rebuilt index with %d vectors", len(keys))
         return len(keys)
+
+    # ------------------------------------------------------------------ #
+    # Hierarchical Relationships
+    # ------------------------------------------------------------------ #
+
+    def get_children(self, doc_id: int) -> list[Document]:
+        """
+        Get all direct children of a document.
+
+        Args:
+            doc_id: ID of the parent document
+
+        Returns:
+            List of child Documents
+
+        Example:
+            >>> # Add parent and children
+            >>> parent_id = collection.add_texts(["Parent doc"], embeddings=[emb])[0]
+            >>> collection.add_texts(
+            ...     ["Child 1", "Child 2"],
+            ...     embeddings=[emb1, emb2],
+            ...     parent_ids=[parent_id, parent_id]
+            ... )
+            >>> children = collection.get_children(parent_id)
+        """
+        rows = self._catalog.get_children(doc_id)
+        return [Document(page_content=text, metadata=meta) for _, text, meta in rows]
+
+    def get_parent(self, doc_id: int) -> Document | None:
+        """
+        Get the parent document of a given document.
+
+        Args:
+            doc_id: ID of the child document
+
+        Returns:
+            Parent Document, or None if no parent
+        """
+        result = self._catalog.get_parent(doc_id)
+        if result is None:
+            return None
+        _, text, meta = result
+        return Document(page_content=text, metadata=meta)
+
+    def get_descendants(
+        self, doc_id: int, max_depth: int | None = None
+    ) -> list[tuple[Document, int]]:
+        """
+        Get all descendants of a document (recursive).
+
+        Args:
+            doc_id: ID of the root document
+            max_depth: Maximum depth to traverse (None for unlimited)
+
+        Returns:
+            List of (Document, depth) tuples, ordered by depth then ID
+        """
+        rows = self._catalog.get_descendants(doc_id, max_depth)
+        return [
+            (Document(page_content=text, metadata=meta), depth)
+            for _, text, meta, depth in rows
+        ]
+
+    def get_ancestors(
+        self, doc_id: int, max_depth: int | None = None
+    ) -> list[tuple[Document, int]]:
+        """
+        Get all ancestors of a document (path to root).
+
+        Args:
+            doc_id: ID of the document
+            max_depth: Maximum depth to traverse (None for unlimited)
+
+        Returns:
+            List of (Document, depth) tuples, from immediate parent to root
+        """
+        rows = self._catalog.get_ancestors(doc_id, max_depth)
+        return [
+            (Document(page_content=text, metadata=meta), depth)
+            for _, text, meta, depth in rows
+        ]
+
+    def set_parent(self, doc_id: int, parent_id: int | None) -> bool:
+        """
+        Set or update the parent of a document.
+
+        Args:
+            doc_id: ID of the document to update
+            parent_id: New parent ID (None to remove parent relationship)
+
+        Returns:
+            True if document was updated, False if document not found
+        """
+        return self._catalog.set_parent(doc_id, parent_id)
 
     def count(self) -> int:
         """Return the number of documents in the collection."""
