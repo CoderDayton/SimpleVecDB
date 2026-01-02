@@ -444,8 +444,8 @@ class VectorCollection:
             - batch_ids: IDs of documents in current batch
 
         Returns:
-            List of all inserted document IDs (access via generator.send(None)
-            or list(generator) after exhaustion).
+            List of all inserted document IDs. Collect IDs by extending a list
+            with 'batch_ids' from each yielded progress dictionary (see examples).
 
         Example:
             >>> def load_documents():
@@ -453,10 +453,10 @@ class VectorCollection:
             ...         doc = json.loads(line)
             ...         yield (doc["text"], doc.get("meta"), None)
             ...
-            >>> gen = collection.add_texts_streaming(load_documents())
-            >>> for progress in gen:
+            >>> all_ids = []
+            >>> for progress in collection.add_texts_streaming(load_documents()):
             ...     print(f"Batch {progress['batch_num']}: {progress['docs_processed']} total")
-            >>> all_ids = gen.value  # or capture return value
+            ...     all_ids.extend(progress['batch_ids'])  # collect IDs from each batch
 
         Example with callback:
             >>> def log_progress(p):
