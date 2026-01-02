@@ -11,7 +11,7 @@ These tests cover:
 from __future__ import annotations
 
 import os
-import tempfile
+import sqlite3
 from pathlib import Path
 
 import numpy as np
@@ -248,7 +248,7 @@ class TestEncryptedVectorDB:
         db.close()
 
         # Try to open without key - should fail as SQLite can't read it
-        with pytest.raises(Exception):  # sqlite3.DatabaseError
+        with pytest.raises(sqlite3.DatabaseError):
             VectorDB(db_path)
 
     def test_memory_db_encryption_not_allowed(self):

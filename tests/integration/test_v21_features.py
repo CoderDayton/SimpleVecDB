@@ -16,10 +16,9 @@ from simplevecdb import VectorDB
 
 # Check if encryption is available
 try:
-    import sqlcipher3
-    from simplevecdb.encryption import create_encrypted_connection
-
-    HAS_ENCRYPTION = True
+    import importlib.util
+    sqlcipher_spec = importlib.util.find_spec("sqlcipher3")
+    HAS_ENCRYPTION = sqlcipher_spec is not None
 except ImportError:
     HAS_ENCRYPTION = False
 

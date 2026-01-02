@@ -169,14 +169,15 @@ def create_encrypted_connection(
         # Set the encryption key using PRAGMA
         # SQLCipher accepts both raw keys (x'hex') and passphrases
         if isinstance(key, bytes) and len(key) == AES_KEY_SIZE:
-            # Use raw key format
+            # Use raw key format - safe as hex() only produces [0-9a-f]
             hex_key = key.hex()
             conn.execute(f"PRAGMA key = \"x'{hex_key}'\"")
         else:
             # Use passphrase (SQLCipher will derive key internally)
             if isinstance(key, bytes):
                 key = key.decode("utf-8")
-            # Escape single quotes in passphrase
+            # Escape single quotes in passphrase for SQL safety
+            # SQLCipher only interprets single quotes, so this is sufficient
             escaped_key = key.replace("'", "''")
             conn.execute(f"PRAGMA key = '{escaped_key}'")
 
@@ -257,10 +258,8 @@ def encrypt_file(
     Encrypt a file using AES-256-GCM.
 
     File format:
-    - 16 bytes: salt
     - 12 bytes: nonce
-    - N bytes: ciphertext
-    - 16 bytes: GCM auth tag (appended by cryptography)
+    - N bytes: ciphertext (includes 16-byte GCM auth tag appended by cryptography)
 
     Args:
         input_path: Path to plaintext file

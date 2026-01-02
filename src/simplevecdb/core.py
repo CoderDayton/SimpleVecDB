@@ -456,7 +456,8 @@ class VectorCollection:
             >>> gen = collection.add_texts_streaming(load_documents())
             >>> for progress in gen:
             ...     print(f"Batch {progress['batch_num']}: {progress['docs_processed']} total")
-            >>> all_ids = gen.value  # or capture return value
+            >>> # Collect all IDs from the progress updates or exhaust the generator
+            >>> all_ids = list(gen)  # Returns the final list of all IDs
 
         Example with callback:
             >>> def log_progress(p):

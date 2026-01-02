@@ -606,7 +606,14 @@ class CatalogManager:
         Returns:
             List of (id, text, metadata, depth) tuples
         """
-        depth_clause = f"AND depth < {max_depth}" if max_depth else ""
+        # Validate max_depth to prevent SQL injection
+        if max_depth is not None:
+            max_depth = int(max_depth)
+            if max_depth < 1:
+                raise ValueError("max_depth must be at least 1")
+            depth_clause = f"AND depth < {max_depth}"
+        else:
+            depth_clause = ""
 
         sql = f"""
             WITH RECURSIVE descendants(id, text, metadata, depth) AS (
@@ -644,7 +651,14 @@ class CatalogManager:
         Returns:
             List of (id, text, metadata, depth) tuples, from immediate parent to root
         """
-        depth_clause = f"AND depth < {max_depth}" if max_depth else ""
+        # Validate max_depth to prevent SQL injection
+        if max_depth is not None:
+            max_depth = int(max_depth)
+            if max_depth < 1:
+                raise ValueError("max_depth must be at least 1")
+            depth_clause = f"AND depth < {max_depth}"
+        else:
+            depth_clause = ""
 
         sql = f"""
             WITH RECURSIVE ancestors(id, text, metadata, parent_id, depth) AS (
@@ -679,7 +693,26 @@ class CatalogManager:
 
         Returns:
             True if document was updated, False if not found
+
+        Raises:
+            ValueError: If setting this parent would create a circular relationship
         """
+        # Validate against circular relationships
+        if parent_id is not None:
+            # Check if parent_id is the same as doc_id
+            if parent_id == doc_id:
+                raise ValueError("A document cannot be its own parent")
+            
+            # Check if parent_id is a descendant of doc_id
+            # This would create a cycle
+            descendants = self.get_descendants(doc_id)
+            descendant_ids = {d[0] for d in descendants}
+            if parent_id in descendant_ids:
+                raise ValueError(
+                    f"Cannot set parent: document {parent_id} is a descendant of {doc_id}. "
+                    "This would create a circular relationship."
+                )
+
         with self.conn:
             cursor = self.conn.execute(
                 f"UPDATE {self._table_name} SET parent_id = ? WHERE id = ?",
