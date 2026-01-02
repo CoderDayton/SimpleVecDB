@@ -606,26 +606,45 @@ class CatalogManager:
         Returns:
             List of (id, text, metadata, depth) tuples
         """
-        depth_clause = f"AND depth < {max_depth}" if max_depth else ""
+        # Validate max_depth parameter to prevent SQL injection
+        if max_depth is not None:
+            max_depth = int(max_depth)
 
-        sql = f"""
-            WITH RECURSIVE descendants(id, text, metadata, depth) AS (
-                SELECT id, text, metadata, 1 as depth
-                FROM {self._table_name}
-                WHERE parent_id = ?
+        if max_depth is not None:
+            sql = f"""
+                WITH RECURSIVE descendants(id, text, metadata, depth) AS (
+                    SELECT id, text, metadata, 1 as depth
+                    FROM {self._table_name}
+                    WHERE parent_id = ?
 
-                UNION ALL
+                    UNION ALL
 
-                SELECT t.id, t.text, t.metadata, d.depth + 1
-                FROM {self._table_name} t
-                JOIN descendants d ON t.parent_id = d.id
-                WHERE 1=1 {depth_clause}
-            )
-            SELECT id, text, metadata, depth FROM descendants
-            ORDER BY depth, id
-        """
+                    SELECT t.id, t.text, t.metadata, d.depth + 1
+                    FROM {self._table_name} t
+                    JOIN descendants d ON t.parent_id = d.id
+                    WHERE depth < ?
+                )
+                SELECT id, text, metadata, depth FROM descendants
+                ORDER BY depth, id
+            """
+            rows = self.conn.execute(sql, (root_id, max_depth)).fetchall()
+        else:
+            sql = f"""
+                WITH RECURSIVE descendants(id, text, metadata, depth) AS (
+                    SELECT id, text, metadata, 1 as depth
+                    FROM {self._table_name}
+                    WHERE parent_id = ?
 
-        rows = self.conn.execute(sql, (root_id,)).fetchall()
+                    UNION ALL
+
+                    SELECT t.id, t.text, t.metadata, d.depth + 1
+                    FROM {self._table_name} t
+                    JOIN descendants d ON t.parent_id = d.id
+                )
+                SELECT id, text, metadata, depth FROM descendants
+                ORDER BY depth, id
+            """
+            rows = self.conn.execute(sql, (root_id,)).fetchall()
 
         return [
             (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows
@@ -644,26 +663,46 @@ class CatalogManager:
         Returns:
             List of (id, text, metadata, depth) tuples, from immediate parent to root
         """
-        depth_clause = f"AND depth < {max_depth}" if max_depth else ""
+        # Validate max_depth parameter to prevent SQL injection
+        if max_depth is not None:
+            max_depth = int(max_depth)
 
-        sql = f"""
-            WITH RECURSIVE ancestors(id, text, metadata, parent_id, depth) AS (
-                SELECT id, text, metadata, parent_id, 1 as depth
-                FROM {self._table_name}
-                WHERE id = (SELECT parent_id FROM {self._table_name} WHERE id = ?)
+        if max_depth is not None:
+            sql = f"""
+                WITH RECURSIVE ancestors(id, text, metadata, parent_id, depth) AS (
+                    SELECT id, text, metadata, parent_id, 1 as depth
+                    FROM {self._table_name}
+                    WHERE id = (SELECT parent_id FROM {self._table_name} WHERE id = ?)
 
-                UNION ALL
+                    UNION ALL
 
-                SELECT t.id, t.text, t.metadata, t.parent_id, a.depth + 1
-                FROM {self._table_name} t
-                JOIN ancestors a ON t.id = a.parent_id
-                WHERE a.parent_id IS NOT NULL {depth_clause}
-            )
-            SELECT id, text, metadata, depth FROM ancestors
-            ORDER BY depth
-        """
+                    SELECT t.id, t.text, t.metadata, t.parent_id, a.depth + 1
+                    FROM {self._table_name} t
+                    JOIN ancestors a ON t.id = a.parent_id
+                    WHERE a.parent_id IS NOT NULL AND depth < ?
+                )
+                SELECT id, text, metadata, depth FROM ancestors
+                ORDER BY depth
+            """
+            rows = self.conn.execute(sql, (doc_id, max_depth)).fetchall()
+        else:
+            sql = f"""
+                WITH RECURSIVE ancestors(id, text, metadata, parent_id, depth) AS (
+                    SELECT id, text, metadata, parent_id, 1 as depth
+                    FROM {self._table_name}
+                    WHERE id = (SELECT parent_id FROM {self._table_name} WHERE id = ?)
 
-        rows = self.conn.execute(sql, (doc_id,)).fetchall()
+                    UNION ALL
+
+                    SELECT t.id, t.text, t.metadata, t.parent_id, a.depth + 1
+                    FROM {self._table_name} t
+                    JOIN ancestors a ON t.id = a.parent_id
+                    WHERE a.parent_id IS NOT NULL
+                )
+                SELECT id, text, metadata, depth FROM ancestors
+                ORDER BY depth
+            """
+            rows = self.conn.execute(sql, (doc_id,)).fetchall()
 
         return [
             (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows
