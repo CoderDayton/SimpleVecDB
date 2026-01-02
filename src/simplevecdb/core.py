@@ -981,6 +981,9 @@ class VectorCollection:
 
         Returns:
             True if document was updated, False if document not found
+
+        Raises:
+            ValueError: If setting parent would create a circular relationship
         """
         return self._catalog.set_parent(doc_id, parent_id)
 

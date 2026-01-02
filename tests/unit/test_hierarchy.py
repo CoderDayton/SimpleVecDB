@@ -344,6 +344,184 @@ class TestHierarchicalRelationships:
         db.close()
 
 
+class TestCircularRelationshipPrevention:
+    """Tests for preventing circular parent-child relationships."""
+
+    @pytest.fixture
+    def db_path(self, tmp_path: Path) -> Path:
+        return tmp_path / "test_circular.db"
+
+    @pytest.fixture
+    def dim(self) -> int:
+        return 32
+
+    def make_embedding(self, dim: int) -> list[float]:
+        return np.random.randn(dim).astype(np.float32).tolist()
+
+    def test_prevent_self_parent(self, db_path: Path, dim: int):
+        """Document cannot be its own parent."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        doc_id = collection.add_texts(
+            ["Document"],
+            embeddings=[self.make_embedding(dim)],
+        )[0]
+
+        # Try to set document as its own parent
+        with pytest.raises(ValueError, match="cannot be its own parent"):
+            collection.set_parent(doc_id, doc_id)
+
+        db.close()
+
+    def test_prevent_direct_cycle(self, db_path: Path, dim: int):
+        """Prevent direct cycle: A->B then B->A."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        # Create A and B
+        doc_a = collection.add_texts(
+            ["Document A"],
+            embeddings=[self.make_embedding(dim)],
+        )[0]
+
+        doc_b = collection.add_texts(
+            ["Document B"],
+            embeddings=[self.make_embedding(dim)],
+        )[0]
+
+        # Set A as parent of B (B->A)
+        collection.set_parent(doc_b, doc_a)
+
+        # Try to set B as parent of A (would create A->B cycle)
+        with pytest.raises(ValueError, match="circular relationship"):
+            collection.set_parent(doc_a, doc_b)
+
+        # Verify relationship is unchanged
+        parent = collection.get_parent(doc_b)
+        assert parent is not None
+        assert parent.page_content == "Document A"
+
+        db.close()
+
+    def test_prevent_indirect_cycle(self, db_path: Path, dim: int):
+        """Prevent indirect cycle: A->B->C then C->A."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        # Create A, B, C
+        doc_a = collection.add_texts(
+            ["Document A"],
+            embeddings=[self.make_embedding(dim)],
+        )[0]
+
+        doc_b = collection.add_texts(
+            ["Document B"],
+            embeddings=[self.make_embedding(dim)],
+        )[0]
+
+        doc_c = collection.add_texts(
+            ["Document C"],
+            embeddings=[self.make_embedding(dim)],
+        )[0]
+
+        # Create chain: A -> B -> C
+        collection.set_parent(doc_b, doc_a)
+        collection.set_parent(doc_c, doc_b)
+
+        # Try to set C as parent of A (would create cycle)
+        with pytest.raises(ValueError, match="circular relationship"):
+            collection.set_parent(doc_a, doc_c)
+
+        # Try to set B as parent of A (would create cycle)
+        with pytest.raises(ValueError, match="circular relationship"):
+            collection.set_parent(doc_a, doc_b)
+
+        db.close()
+
+    def test_prevent_complex_cycle(self, db_path: Path, dim: int):
+        """Prevent cycle in complex tree structure."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        # Create tree:
+        #     root
+        #    /    \
+        #   A      B
+        #  / \
+        # C   D
+        
+        root = collection.add_texts(["Root"], embeddings=[self.make_embedding(dim)])[0]
+        doc_a = collection.add_texts(["A"], embeddings=[self.make_embedding(dim)])[0]
+        doc_b = collection.add_texts(["B"], embeddings=[self.make_embedding(dim)])[0]
+        doc_c = collection.add_texts(["C"], embeddings=[self.make_embedding(dim)])[0]
+        doc_d = collection.add_texts(["D"], embeddings=[self.make_embedding(dim)])[0]
+
+        collection.set_parent(doc_a, root)
+        collection.set_parent(doc_b, root)
+        collection.set_parent(doc_c, doc_a)
+        collection.set_parent(doc_d, doc_a)
+
+        # Try to make root a child of C (would create cycle)
+        with pytest.raises(ValueError, match="circular relationship"):
+            collection.set_parent(root, doc_c)
+
+        # Try to make A a child of D (would create cycle)
+        with pytest.raises(ValueError, match="circular relationship"):
+            collection.set_parent(doc_a, doc_d)
+
+        db.close()
+
+    def test_allow_valid_reparenting(self, db_path: Path, dim: int):
+        """Valid parent changes should still work."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        # Create separate trees
+        tree1_root = collection.add_texts(["Tree1"], embeddings=[self.make_embedding(dim)])[0]
+        tree1_child = collection.add_texts(["Child1"], embeddings=[self.make_embedding(dim)])[0]
+        
+        tree2_root = collection.add_texts(["Tree2"], embeddings=[self.make_embedding(dim)])[0]
+        tree2_child = collection.add_texts(["Child2"], embeddings=[self.make_embedding(dim)])[0]
+
+        collection.set_parent(tree1_child, tree1_root)
+        collection.set_parent(tree2_child, tree2_root)
+
+        # Moving child from one tree to another is valid
+        collection.set_parent(tree1_child, tree2_root)
+        
+        parent = collection.get_parent(tree1_child)
+        assert parent is not None
+        assert parent.page_content == "Tree2"
+
+        # Moving to be sibling is valid
+        collection.set_parent(tree1_child, tree1_root)
+        
+        parent = collection.get_parent(tree1_child)
+        assert parent is not None
+        assert parent.page_content == "Tree1"
+
+        db.close()
+
+    def test_allow_removing_parent(self, db_path: Path, dim: int):
+        """Removing parent (setting to None) should always work."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        # Create parent-child
+        parent = collection.add_texts(["Parent"], embeddings=[self.make_embedding(dim)])[0]
+        child = collection.add_texts(["Child"], embeddings=[self.make_embedding(dim)])[0]
+        
+        collection.set_parent(child, parent)
+
+        # Removing parent should work
+        result = collection.set_parent(child, None)
+        assert result is True
+        assert collection.get_parent(child) is None
+
+        db.close()
+
+
 class TestHierarchyMigration:
     """Test that existing databases get parent_id column added."""
 

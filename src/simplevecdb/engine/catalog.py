@@ -679,7 +679,29 @@ class CatalogManager:
 
         Returns:
             True if document was updated, False if not found
+
+        Raises:
+            ValueError: If setting parent would create a circular relationship
         """
+        # If removing parent (parent_id is None), no cycle check needed
+        if parent_id is not None:
+            # Check if parent_id would create a cycle
+            # A cycle exists if parent_id is a descendant of doc_id
+            descendants = self.get_descendants(doc_id)
+            descendant_ids = {desc[0] for desc in descendants}
+            
+            if parent_id in descendant_ids:
+                raise ValueError(
+                    f"Cannot set parent: would create circular relationship. "
+                    f"Document {parent_id} is a descendant of document {doc_id}."
+                )
+            
+            # Also check if trying to set document as its own parent
+            if parent_id == doc_id:
+                raise ValueError(
+                    f"Cannot set parent: document {doc_id} cannot be its own parent."
+                )
+        
         with self.conn:
             cursor = self.conn.execute(
                 f"UPDATE {self._table_name} SET parent_id = ? WHERE id = ?",
