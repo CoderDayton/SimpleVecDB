@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `encrypt_index_file()` / `decrypt_index_file()` - Index file encryption
   - `EncryptionError` / `EncryptionUnavailableError` - New exception types
 
+- **Streaming Insert API** - Memory-efficient large-scale ingestion:
+  - `collection.add_texts_streaming(iterable)` - Process from any iterator/generator
+  - Configurable `batch_size` parameter (default: config.EMBEDDING_BATCH_SIZE)
+  - Yields `StreamingProgress` after each batch for monitoring
+  - Optional `on_progress` callback for custom logging/UI updates
+  - New types: `StreamingProgress`, `ProgressCallback`
+
 ### Changed
 
 - `check_migration()` now gracefully handles encrypted databases (returns `needs_migration=False`)

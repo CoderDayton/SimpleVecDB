@@ -21,6 +21,9 @@ build/
 *.db
 *.sqlite
 
+# OpenCode
+.opencode/
+
 # Project specific
 simplevecdb_plan.md
 AGENTS.md

@@ -20,6 +20,7 @@ A named collection of vectors within a database.
     options:
       members:
         - add_texts
+        - add_texts_streaming
         - similarity_search
         - similarity_search_batch
         - keyword_search
@@ -76,4 +77,25 @@ collection = db.collection("docs", quantization=Quantization.INT8)
 
 # 1-bit quantization - 32x memory savings
 collection = db.collection("docs", quantization=Quantization.BIT)
+```
+
+### Streaming Insert
+
+For large-scale ingestion without memory pressure:
+
+```python
+# From generator/iterator
+def load_documents():
+    for line in open("large_file.jsonl"):
+        doc = json.loads(line)
+        yield (doc["text"], doc.get("metadata"), doc.get("embedding"))
+
+for progress in collection.add_texts_streaming(load_documents()):
+    print(f"Batch {progress['batch_num']}: {progress['docs_processed']} total")
+
+# With progress callback
+def log_progress(p):
+    print(f"{p['docs_processed']} docs, batch {p['batch_num']}")
+
+list(collection.add_texts_streaming(items, batch_size=500, on_progress=log_progress))
 ```

@@ -14,14 +14,21 @@ import sqlite3
 import tempfile
 import numpy as np
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from typing import Any, TYPE_CHECKING
 from pathlib import Path
 import platform
 import multiprocessing
 import itertools
 
-from .types import Document, DistanceStrategy, Quantization, MigrationRequiredError
+from .types import (
+    Document,
+    DistanceStrategy,
+    Quantization,
+    MigrationRequiredError,
+    StreamingProgress,
+    ProgressCallback,
+)
 from .utils import _import_optional
 from .engine.quantization import QuantizationStrategy
 from .engine.search import SearchEngine
@@ -396,6 +403,165 @@ class VectorCollection:
             all_ids.extend(doc_ids)
 
         return all_ids
+
+    def add_texts_streaming(
+        self,
+        items: Iterable[tuple[str, dict | None, Sequence[float] | None]],
+        *,
+        batch_size: int | None = None,
+        threads: int = 0,
+        on_progress: ProgressCallback | None = None,
+    ) -> Generator[StreamingProgress, None, list[int]]:
+        """
+        Stream documents into the collection with controlled memory usage.
+
+        Processes documents in batches from any iterable (generator, file reader,
+        API paginator, etc.) without loading all data into memory. Yields progress
+        after each batch for monitoring large ingestions.
+
+        Args:
+            items: Iterable of (text, metadata, embedding) tuples.
+                - text: Document content (required)
+                - metadata: Optional dict, use None for empty
+                - embedding: Optional pre-computed vector, use None to auto-embed
+            batch_size: Documents per batch (default: config.EMBEDDING_BATCH_SIZE).
+            threads: Threads for parallel insertion (0=auto).
+            on_progress: Optional callback invoked after each batch.
+
+        Yields:
+            StreamingProgress dict after each batch with:
+            - batch_num: Current batch number (1-indexed)
+            - total_batches: Estimated total (None if unknown)
+            - docs_processed: Cumulative documents inserted
+            - docs_in_batch: Documents in current batch
+            - batch_ids: IDs of documents in current batch
+
+        Returns:
+            List of all inserted document IDs (access via generator.send(None)
+            or list(generator) after exhaustion).
+
+        Example:
+            >>> def load_documents():
+            ...     for line in open("large_file.jsonl"):
+            ...         doc = json.loads(line)
+            ...         yield (doc["text"], doc.get("meta"), None)
+            ...
+            >>> gen = collection.add_texts_streaming(load_documents())
+            >>> for progress in gen:
+            ...     print(f"Batch {progress['batch_num']}: {progress['docs_processed']} total")
+            >>> all_ids = gen.value  # or capture return value
+
+        Example with callback:
+            >>> def log_progress(p):
+            ...     print(f"{p['docs_processed']} docs inserted")
+            >>> list(collection.add_texts_streaming(items, on_progress=log_progress))
+        """
+        from simplevecdb import config
+
+        if batch_size is None:
+            batch_size = config.EMBEDDING_BATCH_SIZE
+
+        all_ids: list[int] = []
+        batch_num = 0
+        docs_processed = 0
+
+        # Accumulate batch
+        batch_texts: list[str] = []
+        batch_metas: list[dict] = []
+        batch_embeds: list[Sequence[float]] = []
+        needs_embedding = False
+
+        for text, metadata, embedding in items:
+            batch_texts.append(text)
+            batch_metas.append(metadata or {})
+            if embedding is not None:
+                batch_embeds.append(embedding)
+            else:
+                needs_embedding = True
+                batch_embeds.append([])  # Placeholder
+
+            # Process batch when full
+            if len(batch_texts) >= batch_size:
+                batch_ids = self._process_streaming_batch(
+                    batch_texts, batch_metas, batch_embeds, needs_embedding, threads
+                )
+                all_ids.extend(batch_ids)
+                batch_num += 1
+                docs_processed += len(batch_ids)
+
+                progress: StreamingProgress = {
+                    "batch_num": batch_num,
+                    "total_batches": None,
+                    "docs_processed": docs_processed,
+                    "docs_in_batch": len(batch_ids),
+                    "batch_ids": batch_ids,
+                }
+
+                if on_progress:
+                    on_progress(progress)
+
+                yield progress
+
+                # Reset batch
+                batch_texts = []
+                batch_metas = []
+                batch_embeds = []
+                needs_embedding = False
+
+        # Process final partial batch
+        if batch_texts:
+            batch_ids = self._process_streaming_batch(
+                batch_texts, batch_metas, batch_embeds, needs_embedding, threads
+            )
+            all_ids.extend(batch_ids)
+            batch_num += 1
+            docs_processed += len(batch_ids)
+
+            progress = {
+                "batch_num": batch_num,
+                "total_batches": batch_num,  # Now we know total
+                "docs_processed": docs_processed,
+                "docs_in_batch": len(batch_ids),
+                "batch_ids": batch_ids,
+            }
+
+            if on_progress:
+                on_progress(progress)
+
+            yield progress
+
+        return all_ids
+
+    def _process_streaming_batch(
+        self,
+        texts: list[str],
+        metas: list[dict],
+        embeds: list[Sequence[float]],
+        needs_embedding: bool,
+        threads: int,
+    ) -> list[int]:
+        """Process a single batch for streaming insert."""
+        # Generate embeddings if needed
+        if needs_embedding:
+            try:
+                from simplevecdb.embeddings.models import embed_texts as embed_fn
+
+                generated = embed_fn(texts)
+                # Replace placeholders with generated embeddings
+                for i, emb in enumerate(embeds):
+                    if not emb:  # Empty placeholder
+                        embeds[i] = generated[i]
+            except Exception as e:
+                raise ValueError(
+                    "Auto-embedding failed - install with [server] extra or provide embeddings"
+                ) from e
+
+        # Add to catalog and index
+        doc_ids = self._catalog.add_documents(texts, metas, None, embeddings=embeds)
+        emb_np = np.array(embeds, dtype=np.float32)
+        self._index.add(np.array(doc_ids, dtype=np.uint64), emb_np, threads=threads)
+
+        return doc_ids
 
     def similarity_search(
         self,
