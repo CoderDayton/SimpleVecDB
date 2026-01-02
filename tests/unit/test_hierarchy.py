@@ -450,7 +450,7 @@ class TestCircularRelationshipPrevention:
         #   A      B
         #  / \
         # C   D
-        
+
         root = collection.add_texts(["Root"], embeddings=[self.make_embedding(dim)])[0]
         doc_a = collection.add_texts(["A"], embeddings=[self.make_embedding(dim)])[0]
         doc_b = collection.add_texts(["B"], embeddings=[self.make_embedding(dim)])[0]
