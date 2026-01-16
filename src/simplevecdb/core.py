@@ -1084,6 +1084,127 @@ class VectorDB:
                     migration_info=migration_info,
                 )
 
+    def list_collections(self) -> list[str]:
+        """
+        Return names of all initialized collections.
+
+        Only returns collections that have been accessed via `collection()` in this
+        session. Does not scan the database for collections created in previous sessions.
+
+        Returns:
+            List of collection names currently cached in this VectorDB instance.
+
+        Example:
+            >>> db = VectorDB("app.db")
+            >>> db.collection("users")
+            >>> db.collection("products")
+            >>> db.list_collections()
+            ['users', 'products']
+        """
+        return list(self._collections.keys())
+
+    def search_collections(
+        self,
+        query: Sequence[float],
+        collections: list[str] | None = None,
+        k: int = 10,
+        filter: dict[str, Any] | None = None,
+        *,
+        normalize_scores: bool = True,
+        parallel: bool = True,
+    ) -> list[tuple[Document, float, str]]:
+        """
+        Search across multiple collections with merged, ranked results.
+
+        Performs similarity search on each collection and merges results using
+        score normalization for fair comparison across distance metrics.
+
+        Args:
+            query: Query vector (must match dimension of all searched collections).
+            collections: List of collection names to search. None searches all
+                initialized collections (from list_collections()).
+            k: Number of top results to return after merging.
+            filter: Optional metadata filter applied to all collections.
+            normalize_scores: If True, convert distances to similarity scores
+                in [0, 1] range using `1 / (1 + distance)`. Enables fair
+                comparison across COSINE [0,2] and L2 [0,∞) metrics.
+            parallel: If True, search collections concurrently using ThreadPoolExecutor.
+
+        Returns:
+            List of (Document, similarity_score, collection_name) tuples,
+            sorted by descending similarity score (highest first).
+
+        Raises:
+            ValueError: If no collections specified and none initialized,
+                or if collections have mismatched dimensions.
+            KeyError: If a specified collection name doesn't exist.
+
+        Example:
+            >>> db = VectorDB("app.db")
+            >>> db.collection("users").add_texts(["alice"], embeddings=[[0.1]*384])
+            >>> db.collection("products").add_texts(["widget"], embeddings=[[0.2]*384])
+            >>> results = db.search_collections([0.15]*384, k=2)
+            >>> for doc, score, coll in results:
+            ...     print(f"{coll}: {doc.page_content} ({score:.3f})")
+        """
+        target_names = (
+            collections if collections is not None else self.list_collections()
+        )
+
+        if not target_names:
+            return []
+
+        # Resolve and validate collections
+        targets: list[VectorCollection] = []
+        dims: set[int | None] = set()
+        for name in target_names:
+            if name not in self._collections:
+                raise KeyError(
+                    f"Collection '{name}' not initialized. Call db.collection('{name}') first."
+                )
+            coll = self._collections[name]
+            targets.append(coll)
+            dims.add(coll._dim)
+
+        # Check dimension consistency (ignore None for empty collections)
+        dims.discard(None)
+        if len(dims) > 1:
+            raise ValueError(
+                f"Dimension mismatch across collections: {dims}. "
+                "All searched collections must have the same embedding dimension."
+            )
+
+        # Search function for each collection
+        def _search_one(coll: VectorCollection) -> list[tuple[Document, float, str]]:
+            results = coll.similarity_search(query, k=k, filter=filter)
+            return [(doc, dist, coll.name) for doc, dist in results]
+
+        # Execute searches
+        all_results: list[tuple[Document, float, str]] = []
+        if parallel and len(targets) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as executor:
+                futures = [executor.submit(_search_one, coll) for coll in targets]
+                for future in futures:
+                    all_results.extend(future.result())
+        else:
+            for coll in targets:
+                all_results.extend(_search_one(coll))
+
+        # Normalize scores: similarity = 1 / (1 + distance)
+        if normalize_scores:
+            all_results = [
+                (doc, 1.0 / (1.0 + dist), name) for doc, dist, name in all_results
+            ]
+        else:
+            # Invert for sorting (lower distance = higher rank)
+            all_results = [(doc, -dist, name) for doc, dist, name in all_results]
+
+        # Sort by score descending and take top k
+        all_results.sort(key=lambda x: x[1], reverse=True)
+        return all_results[:k]
+
     def collection(
         self,
         name: str = "default",

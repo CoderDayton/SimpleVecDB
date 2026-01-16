@@ -369,7 +369,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 - [x] SQLCipher encryption (at-rest data protection)
 - [x] Streaming insert API for large-scale ingestion
 - [x] Hierarchical document relationships (parent/child)
-- [ ] Cross-collection search
+- [x] Cross-collection search
 - [ ] Vector clustering and auto-tagging
 
 Vote on features or propose new ones in [GitHub Discussions](https://github.com/coderdayton/simplevecdb/discussions).

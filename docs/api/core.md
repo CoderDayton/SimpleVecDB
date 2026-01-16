@@ -8,6 +8,8 @@ The main database class for managing vector collections.
     options:
       members:
         - collection
+        - list_collections
+        - search_collections
         - vacuum
         - close
         - check_migration
@@ -145,3 +147,56 @@ results = collection.similarity_search(
 | `get_descendants(doc_id, max_depth)` | All nested children recursively |
 | `get_ancestors(doc_id)` | Path from document to root |
 | `set_parent(doc_id, parent_id)` | Move document to new parent (or None to orphan) |
+
+### Cross-Collection Search
+
+Search across multiple collections with unified, ranked results:
+
+```python
+from simplevecdb import VectorDB
+
+db = VectorDB("app.db")
+
+# Initialize collections
+users = db.collection("users")
+products = db.collection("products")
+docs = db.collection("docs")
+
+# Add data to each collection
+users.add_texts(["Alice likes hiking"], embeddings=[[0.1]*384])
+products.add_texts(["Hiking boots", "Trail map"], embeddings=[[0.2]*384, [0.15]*384])
+docs.add_texts(["Mountain hiking guide"], embeddings=[[0.12]*384])
+
+# List initialized collections
+print(db.list_collections())  # ['users', 'products', 'docs']
+
+# Search across ALL collections
+results = db.search_collections([0.1]*384, k=5)
+for doc, score, collection_name in results:
+    print(f"[{collection_name}] {doc.page_content} (score: {score:.3f})")
+
+# Search specific collections only
+results = db.search_collections(
+    [0.1]*384,
+    collections=["users", "products"],  # Exclude 'docs'
+    k=3
+)
+
+# With metadata filtering (applies to all collections)
+results = db.search_collections(
+    [0.1]*384,
+    k=10,
+    filter={"category": "outdoor"}
+)
+
+# Disable score normalization (returns inverted distances)
+results = db.search_collections([0.1]*384, normalize_scores=False)
+
+# Sequential search (disable parallelism)
+results = db.search_collections([0.1]*384, parallel=False)
+```
+
+| Method | Description |
+|--------|-------------|
+| `list_collections()` | Names of all initialized collections |
+| `search_collections(query, collections, k, filter, normalize_scores, parallel)` | Search across multiple collections with merged results |

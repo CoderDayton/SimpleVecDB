@@ -285,6 +285,38 @@ class AsyncVectorDB:
                 )
             return self._collections[cache_key]
 
+    def list_collections(self) -> list[str]:
+        """Return names of all initialized collections."""
+        return self._db.list_collections()
+
+    async def search_collections(
+        self,
+        query: Sequence[float],
+        collections: list[str] | None = None,
+        k: int = 10,
+        filter: dict[str, Any] | None = None,
+        *,
+        normalize_scores: bool = True,
+        parallel: bool = True,
+    ) -> list[tuple[Document, float, str]]:
+        """
+        Search across multiple collections with merged, ranked results.
+
+        See VectorDB.search_collections for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._db.search_collections(
+                query,
+                collections,
+                k,
+                filter,
+                normalize_scores=normalize_scores,
+                parallel=parallel,
+            ),
+        )
+
     async def vacuum(self, checkpoint_wal: bool = True) -> None:
         """
         Reclaim disk space by rebuilding the database file.
