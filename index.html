@@ -585,6 +585,36 @@
     <div data-slot="sidebar-group" data-sidebar="group" class="relative flex w-full min-w-0 flex-col p-2">
         <div data-slot="sidebar-group-label" data-sidebar="group-label"
             class="ring-sidebar-ring flex h-8 shrink-0 items-center rounded-md px-2 text-xs outline-hidden transition-[margin,opacity] duration-200 ease-linear focus-visible:ring-2 [&amp;&gt;svg]:size-4 [&amp;&gt;svg]:shrink-0 group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0 text-muted-foreground font-medium">
+            Guides</div>
+        <div data-slot="sidebar-group-content" data-sidebar="group-content" class="w-full text-sm">
+            <ul data-slot="sidebar-menu" data-sidebar="menu" class="flex w-full min-w-0 flex-col gap-0.5">
+                
+                <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="group/menu-item relative">
+    <a data-slot="sidebar-menu-button" data-active="false" data-sidebar="menu-button"
+        data-size="default" href="/SimpleVecDB/guides/clustering/"
+        class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground peer/menu-button flex items-center gap-2 rounded-md p-2 text-left outline-hidden ring-sidebar-ring transition-[width,height,padding] focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 data-[active=true]:bg-accent data-[active=true]:border-accent 3xl:fixed:w-full 3xl:fixed:max-w-48 relative h-[30px] w-fit overflow-visible border border-transparent text-[0.8rem] font-medium after:absolute after:inset-x-0 after:-inset-y-1 after:z-0 after:rounded-md">
+
+        
+        Clustering
+        
+
+        
+
+        
+
+        
+    </a>
+</li>
+                
+            </ul>
+        </div>
+    </div>
+    
+    
+    
+    <div data-slot="sidebar-group" data-sidebar="group" class="relative flex w-full min-w-0 flex-col p-2">
+        <div data-slot="sidebar-group-label" data-sidebar="group-label"
+            class="ring-sidebar-ring flex h-8 shrink-0 items-center rounded-md px-2 text-xs outline-hidden transition-[margin,opacity] duration-200 ease-linear focus-visible:ring-2 [&amp;&gt;svg]:size-4 [&amp;&gt;svg]:shrink-0 group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0 text-muted-foreground font-medium">
             API</div>
         <div data-slot="sidebar-group-content" data-sidebar="group-content" class="w-full text-sm">
             <ul data-slot="sidebar-menu" data-sidebar="menu" class="flex w-full min-w-0 flex-col gap-0.5">
@@ -681,6 +711,23 @@
 
         
         Configuration
+        
+
+        
+
+        
+
+        
+    </a>
+</li>
+                
+                <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="group/menu-item relative">
+    <a data-slot="sidebar-menu-button" data-active="false" data-sidebar="menu-button"
+        data-size="default" href="/SimpleVecDB/api/types/"
+        class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground peer/menu-button flex items-center gap-2 rounded-md p-2 text-left outline-hidden ring-sidebar-ring transition-[width,height,padding] focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 data-[active=true]:bg-accent data-[active=true]:border-accent 3xl:fixed:w-full 3xl:fixed:max-w-48 relative h-[30px] w-fit overflow-visible border border-transparent text-[0.8rem] font-medium after:absolute after:inset-x-0 after:-inset-y-1 after:z-0 after:rounded-md">
+
+        
+        Types
         
 
         
@@ -830,7 +877,7 @@
 <script>
     const updatedAt = document.getElementById("updated_at");
     if (updatedAt) {
-        const date = new Date('2026-01-01T20:37:44-06:00');
+        const date = new Date('2026-01-17T13:26:28-06:00');
         updatedAt.textContent = date.toLocaleDateString();
     }
 </script>
@@ -906,16 +953,19 @@
 <p><strong>Note:</strong> If using custom-compiled SQLite, ensure <code>-DSQLITE_ENABLE_FTS5</code> is enabled for full-text search support.</p>
 </blockquote>
 <h2 id="installation">Installation</h2>
-<div class="codehilite"><pre><span></span><code><span class="c1"># Core library only (lightweight, 50MB)</span>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Standard installation (includes clustering, encryption)</span>
 pip<span class="w"> </span>install<span class="w"> </span>simplevecdb
 
-<span class="c1"># With local embeddings server + HuggingFace models (500MB+)</span>
+<span class="c1"># With local embeddings server (adds 500MB+ models)</span>
 pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;simplevecdb[server]&quot;</span>
-
-<span class="c1"># With encryption support (SQLCipher)</span>
-pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;simplevecdb[encryption]&quot;</span>
 </code></pre></div>
 
+<p><strong>What's included by default:</strong>
+- Vector search with HNSW indexing
+- Clustering (K-means, MiniBatch K-means, HDBSCAN)
+- Encryption (SQLCipher AES-256)
+- Async support
+- LangChain &amp; LlamaIndex integrations</p>
 <p><strong>Verify Installation:</strong></p>
 <div class="codehilite"><pre><span></span><code>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;from simplevecdb import VectorDB; print(&#39;SimpleVecDB installed successfully!&#39;)&quot;</span>
 </code></pre></div>
@@ -1073,6 +1123,19 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 <span class="n">children</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_children</span><span class="p">(</span><span class="n">parent_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
 </code></pre></div>
 
+<h3 id="vector-clustering-v22">Vector Clustering (v2.2+)</h3>
+<p>Discover natural groupings in your embeddings:</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Cluster documents and auto-generate tags</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+<span class="n">tags</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;tfidf&quot;</span><span class="p">)</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">assign_cluster_metadata</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">tags</span><span class="p">)</span>
+
+<span class="c1"># Save for fast assignment of new documents</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">save_cluster</span><span class="p">(</span><span class="s2">&quot;categories&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">assign_to_cluster</span><span class="p">(</span><span class="s2">&quot;categories&quot;</span><span class="p">,</span> <span class="n">new_doc_ids</span><span class="p">)</span>
+</code></pre></div>
+
+<p>See <a href="guides/clustering/">Clustering Guide</a> for algorithms, metrics, and use cases.</p>
 <h2 id="feature-matrix">Feature Matrix</h2>
 <div class="table-wrapper"><table>
 <thead>
@@ -1157,6 +1220,11 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 <td style="text-align: left;"><strong>Document Hierarchies</strong></td>
 <td style="text-align: left;">✅</td>
 <td style="text-align: left;">Parent/child relationships for chunked docs</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Vector Clustering</strong></td>
+<td style="text-align: left;">✅</td>
+<td style="text-align: left;">K-means, MiniBatch K-means, HDBSCAN with auto-tagging</td>
 </tr>
 </tbody>
 </table></div>
@@ -1257,8 +1325,8 @@ pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> 
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> SQLCipher encryption (at-rest data protection)</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Streaming insert API for large-scale ingestion</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Hierarchical document relationships (parent/child)</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Cross-collection search</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Vector clustering and auto-tagging</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Cross-collection search</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Vector clustering and auto-tagging (v2.2)</li>
 </ul>
 <p>Vote on features or propose new ones in <a href="https://github.com/coderdayton/simplevecdb/discussions">GitHub Discussions</a>.</p>
 <h2 id="contributing">Contributing</h2>
@@ -1377,6 +1445,21 @@ pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> 
             <div class="flex flex-col gap-8">
                 
                 <div class="flex flex-col gap-4">
+                    <div class="text-muted-foreground text-sm font-medium">Guides</div>
+                    
+                    <div class="flex flex-col gap-3">
+                        
+                        <a class="text-2xl font-medium" href="guides/clustering/">
+                            
+                            Clustering
+                            
+                        </a>
+                        
+                    </div>
+                    
+                </div>
+                
+                <div class="flex flex-col gap-4">
                     <div class="text-muted-foreground text-sm font-medium">API</div>
                     
                     <div class="flex flex-col gap-3">
@@ -1414,6 +1497,12 @@ pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> 
                         <a class="text-2xl font-medium" href="api/config/">
                             
                             Configuration
+                            
+                        </a>
+                        
+                        <a class="text-2xl font-medium" href="api/types/">
+                            
+                            Types
                             
                         </a>
                         
@@ -1561,6 +1650,12 @@ pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> 
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Document Hierarchies (v2.1+)
+        </a>
+        
+        <a href="#vector-clustering-v22"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Vector Clustering (v2.2+)
         </a>
         
         

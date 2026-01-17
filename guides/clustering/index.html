@@ -36,11 +36,11 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Examples - SimpleVecDB Docs</title>
+    <title>Clustering - SimpleVecDB Docs</title>
     
 
 
-<title>Examples</title>
+<title>Clustering</title>
 
 
 
@@ -50,18 +50,18 @@
 
 
 
-<link rel="canonical" href="https://coderdayton.github.io/SimpleVecDB/examples/">
+<link rel="canonical" href="https://coderdayton.github.io/SimpleVecDB/guides/clustering/">
 
 
 <!-- Open Graph (Facebook, LinkedIn) -->
 
-<meta property="og:title" content="Examples">
+<meta property="og:title" content="Clustering">
 
 
 
 
 
-<meta property="og:url" content="https://coderdayton.github.io/SimpleVecDB/examples/">
+<meta property="og:url" content="https://coderdayton.github.io/SimpleVecDB/guides/clustering/">
 
 
 
@@ -70,7 +70,7 @@
 
 <!-- Twitter Card -->
 
-<meta name="twitter:title" content="Examples">
+<meta name="twitter:title" content="Clustering">
 
 
 
@@ -81,35 +81,35 @@
 
 
 
-    <link rel="icon" href="../img/favicon.ico">
+    <link rel="icon" href="../../img/favicon.ico">
 
-    <link href="../css/base.css" rel="stylesheet">
-    <link href="../css/geist.css" rel="stylesheet">
+    <link href="../../css/base.css" rel="stylesheet">
+    <link href="../../css/geist.css" rel="stylesheet">
 
     
     
 
 <link id="pygments-light" rel="stylesheet"
-    href="../css/pygments/shadcn-light.css">
+    href="../../css/pygments/shadcn-light.css">
 <link id="pygments-dark" rel="stylesheet"
-    href="../css/pygments/github-dark.css"
+    href="../../css/pygments/github-dark.css"
     media="(prefers-color-scheme: dark)">
 
 
     
-    <link href="../assets/_mkdocstrings.css" rel="stylesheet">
+    <link href="../../assets/_mkdocstrings.css" rel="stylesheet">
 
     
 
-    <script src="../js/callbacks.js"></script>
+    <script src="../../js/callbacks.js"></script>
 
     
     <!-- katex -->
-<link rel="stylesheet" href="../css/katex.min.css">
+<link rel="stylesheet" href="../../css/katex.min.css">
 <!-- The loading of KaTeX is deferred to speed up page rendering -->
-<script defer src="../js/katex.min.js"></script>
+<script defer src="../../js/katex.min.js"></script>
 <!-- To automatically render math in text elements, include the auto-render extension: -->
-<script defer src="../js/auto-render.min.js"
+<script defer src="../../js/auto-render.min.js"
     onload='renderMathInElement(document.body, "{}");'></script>
     
 
@@ -482,7 +482,7 @@
                 
                 
                 <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="group/menu-item relative">
-    <a data-slot="sidebar-menu-button" data-active="true" data-sidebar="menu-button"
+    <a data-slot="sidebar-menu-button" data-active="false" data-sidebar="menu-button"
         data-size="default" href="/SimpleVecDB/examples/"
         class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground peer/menu-button flex items-center gap-2 rounded-md p-2 text-left outline-hidden ring-sidebar-ring transition-[width,height,padding] focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 data-[active=true]:bg-accent data-[active=true]:border-accent 3xl:fixed:w-full 3xl:fixed:max-w-48 relative h-[30px] w-fit overflow-visible border border-transparent text-[0.8rem] font-medium after:absolute after:inset-x-0 after:-inset-y-1 after:z-0 after:rounded-md">
 
@@ -590,7 +590,7 @@
             <ul data-slot="sidebar-menu" data-sidebar="menu" class="flex w-full min-w-0 flex-col gap-0.5">
                 
                 <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="group/menu-item relative">
-    <a data-slot="sidebar-menu-button" data-active="false" data-sidebar="menu-button"
+    <a data-slot="sidebar-menu-button" data-active="true" data-sidebar="menu-button"
         data-size="default" href="/SimpleVecDB/guides/clustering/"
         class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground peer/menu-button flex items-center gap-2 rounded-md p-2 text-left outline-hidden ring-sidebar-ring transition-[width,height,padding] focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 data-[active=true]:bg-accent data-[active=true]:border-accent 3xl:fixed:w-full 3xl:fixed:max-w-48 relative h-[30px] w-fit overflow-visible border border-transparent text-[0.8rem] font-medium after:absolute after:inset-x-0 after:-inset-y-1 after:z-0 after:rounded-md">
 
@@ -824,12 +824,12 @@
         <h1
           class="scroll-m-20 text-4xl font-semibold tracking-tight sm:text-3xl xl:text-4xl"
         >
-          Examples
+          Clustering
         </h1>
 
         <div class="flex items-center gap-2 pt-1.5">
           
-<button onclick="fetch(`https://coderdayton.github.io/SimpleVecDB/examples.md`).then((r) => r.blob()).then((blob) => navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]))" 
+<button onclick="fetch(`https://coderdayton.github.io/SimpleVecDB/guides/clustering.md`).then((r) => r.blob()).then((blob) => navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]))" 
         data-slot="button" 
         class="cursor-pointer inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-md gap-1.5 px-3 has-[&>svg]:px-2.5 h-8 shadow-none md:h-7 md:text-[0.8rem]">
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tabler-icon tabler-icon-copy ">
@@ -842,7 +842,7 @@
             data-slot="button"
             id="previous-button"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-secondary text-secondary-foreground hover:bg-secondary/80 extend-touch-target size-8 shadow-none md:size-7"
-            href="/SimpleVecDB/"
+            href="/SimpleVecDB/ENV_SETUP/"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -868,7 +868,7 @@
             data-slot="button"
             id="next-button"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-secondary text-secondary-foreground hover:bg-secondary/80 extend-touch-target size-8 shadow-none md:size-7"
-            href="/SimpleVecDB/benchmarks/"
+            href="/SimpleVecDB/api/core/"
           >
             <span class="sr-only">Next</span>
             <svg
@@ -902,7 +902,7 @@
 <script>
     const updatedAt = document.getElementById("updated_at");
     if (updatedAt) {
-        const date = new Date('2026-01-16T03:46:34-06:00');
+        const date = new Date('2026-01-17T13:26:28-06:00');
         updatedAt.textContent = date.toLocaleDateString();
     }
 </script>
@@ -910,316 +910,313 @@
     </div>
   </div>
   <div class="typography w-full flex-1 *:data-[slot=alert]:first:mt-0">
-    <h2 id="rag-with-langchain">RAG with LangChain</h2>
-<p><a href="https://github.com/coderdayton/simplevecdb/blob/main/examples/rag/langchain_rag.ipynb">View Notebook</a></p>
-<h2 id="rag-with-llamaindex">RAG with LlamaIndex</h2>
-<p><a href="https://github.com/coderdayton/simplevecdb/blob/main/examples/rag/llama_rag.ipynb">View Notebook</a></p>
-<h2 id="rag-with-ollama-llm">RAG with Ollama LLM</h2>
-<p><a href="https://github.com/coderdayton/simplevecdb/blob/main/examples/rag/ollama_rag.ipynb">View Notebook</a></p>
-<h2 id="quick-start-examples">Quick Start Examples</h2>
-<h3 id="basic-usage">Basic Usage</h3>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span><span class="p">,</span> <span class="n">Quantization</span>
+    <p>Vector clustering discovers natural groupings in your embeddings, enabling automatic categorization, topic discovery, and semantic organization of documents.</p>
+<h2 id="installation">Installation</h2>
+<p>Clustering is included in the standard installation:</p>
+<div class="codehilite"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>simplevecdb
+</code></pre></div>
 
-<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;vectors.db&quot;</span><span class="p">)</span>
-<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="n">Quantization</span><span class="o">.</span><span class="n">FLOAT16</span><span class="p">)</span>
+<p><strong>Dependencies included:</strong>
+- <code>scikit-learn&gt;=1.3.0</code> — K-means and MiniBatch K-means algorithms
+- <code>hdbscan&gt;=0.8.33</code> — Density-based clustering</p>
+<p>No extra installation steps required!</p>
+<h2 id="quick-start">Quick Start</h2>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
+
+<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;products.db&quot;</span><span class="p">)</span>
+<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;items&quot;</span><span class="p">)</span>
 
 <span class="c1"># Add documents with embeddings</span>
-<span class="n">texts</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;Paris is the capital of France&quot;</span><span class="p">,</span> <span class="s2">&quot;Berlin is in Germany&quot;</span><span class="p">]</span>
-<span class="n">embeddings</span> <span class="o">=</span> <span class="p">[[</span><span class="mf">0.1</span><span class="p">]</span> <span class="o">*</span> <span class="mi">384</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.2</span><span class="p">]</span> <span class="o">*</span> <span class="mi">384</span><span class="p">]</span>  <span class="c1"># Your embedding model output</span>
-<span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">texts</span><span class="o">=</span><span class="n">descriptions</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>
 
-<span class="c1"># Search</span>
-<span class="n">query_embedding</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">]</span> <span class="o">*</span> <span class="mi">384</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query_embedding</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
-<span class="k">for</span> <span class="n">doc</span><span class="p">,</span> <span class="n">score</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">doc</span><span class="o">.</span><span class="n">page_content</span><span class="si">}</span><span class="s2"> (score: </span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+<span class="c1"># Cluster into 5 groups</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+
+<span class="c1"># Auto-generate descriptive tags</span>
+<span class="n">tags</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;tfidf&quot;</span><span class="p">,</span> <span class="n">n_keywords</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="c1"># {&#39;0&#39;: [&#39;electronics&#39;, &#39;wireless&#39;, &#39;bluetooth&#39;], &#39;1&#39;: [&#39;clothing&#39;, ...], ...}</span>
+
+<span class="c1"># Persist cluster IDs to document metadata</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">assign_cluster_metadata</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">tags</span><span class="p">)</span>
+
+<span class="c1"># Retrieve all documents in cluster 0</span>
+<span class="n">docs</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_cluster_members</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </code></pre></div>
 
-<h3 id="keyword-hybrid-search">Keyword &amp; Hybrid Search</h3>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
-
-<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;local.db&quot;</span><span class="p">)</span>
-<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;default&quot;</span><span class="p">)</span>
-<span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
-    <span class="p">[</span><span class="s2">&quot;banana is yellow&quot;</span><span class="p">,</span> <span class="s2">&quot;grapes are purple&quot;</span><span class="p">],</span>
-    <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">]</span> <span class="o">*</span> <span class="mi">192</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">]</span> <span class="o">*</span> <span class="mi">192</span><span class="p">]</span>
-<span class="p">)</span>
-
-<span class="c1"># BM25 keyword search</span>
-<span class="n">bm25</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">keyword_search</span><span class="p">(</span><span class="s2">&quot;banana&quot;</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-
-<span class="c1"># Hybrid search (BM25 + vectors with RRF)</span>
-<span class="n">hybrid</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">hybrid_search</span><span class="p">(</span><span class="s2">&quot;yellow fruit&quot;</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-</code></pre></div>
-
-<h3 id="batch-search-v20">Batch Search (v2.0+)</h3>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
-
-<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;vectors.db&quot;</span><span class="p">)</span>
-<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">)</span>
-
-<span class="c1"># Add some documents...</span>
-<span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>
-
-<span class="c1"># Search multiple queries at once (~10x faster than sequential)</span>
-<span class="n">queries</span> <span class="o">=</span> <span class="p">[</span><span class="n">embedding1</span><span class="p">,</span> <span class="n">embedding2</span><span class="p">,</span> <span class="n">embedding3</span><span class="p">]</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search_batch</span><span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
-
-<span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">query_results</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">results</span><span class="p">):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Query </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">query_results</span><span class="p">)</span><span class="si">}</span><span class="s2"> results&quot;</span><span class="p">)</span>
-</code></pre></div>
-
-<h3 id="force-exact-search">Force Exact Search</h3>
-<div class="codehilite"><pre><span></span><code><span class="c1"># Adaptive (default): brute-force for &lt;10k, HNSW for larger</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
-
-<span class="c1"># Force brute-force for perfect recall</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-
-<span class="c1"># Force HNSW for speed on small collections</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</code></pre></div>
-
-<h3 id="metadata-filtering">Metadata Filtering</h3>
-<div class="codehilite"><pre><span></span><code><span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
-    <span class="p">[</span><span class="s2">&quot;doc1&quot;</span><span class="p">,</span> <span class="s2">&quot;doc2&quot;</span><span class="p">,</span> <span class="s2">&quot;doc3&quot;</span><span class="p">],</span>
-    <span class="n">embeddings</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">],</span>
-    <span class="n">metadatas</span><span class="o">=</span><span class="p">[</span>
-        <span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;tech&quot;</span><span class="p">,</span> <span class="s2">&quot;year&quot;</span><span class="p">:</span> <span class="mi">2024</span><span class="p">},</span>
-        <span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;science&quot;</span><span class="p">,</span> <span class="s2">&quot;year&quot;</span><span class="p">:</span> <span class="mi">2023</span><span class="p">},</span>
-        <span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;tech&quot;</span><span class="p">,</span> <span class="s2">&quot;year&quot;</span><span class="p">:</span> <span class="mi">2023</span><span class="p">},</span>
-    <span class="p">]</span>
-<span class="p">)</span>
-
-<span class="c1"># Filter by metadata</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span>
-    <span class="n">query</span><span class="p">,</span>
-    <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-    <span class="nb">filter</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;tech&quot;</span><span class="p">}</span>
+<h2 id="algorithms">Algorithms</h2>
+<h3 id="k-means-kmeans">K-Means (<code>kmeans</code>)</h3>
+<p>Classic centroid-based clustering. Best for balanced, spherical clusters.</p>
+<div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span>
+    <span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;kmeans&quot;</span><span class="p">,</span>
+    <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span>  <span class="c1"># Reproducible results</span>
 <span class="p">)</span>
 </code></pre></div>
 
-<h3 id="encrypted-database-v21">Encrypted Database (v2.1+)</h3>
-<div class="codehilite"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;simplevecdb[encryption]&quot;</span>
-</code></pre></div>
-
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
-
-<span class="c1"># Create encrypted database with SQLCipher</span>
-<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;secure.db&quot;</span><span class="p">,</span> <span class="n">encryption_key</span><span class="o">=</span><span class="s2">&quot;your-secret-key&quot;</span><span class="p">)</span>
-<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;confidential&quot;</span><span class="p">)</span>
-
-<span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
-    <span class="p">[</span><span class="s2">&quot;sensitive financial data&quot;</span><span class="p">,</span> <span class="s2">&quot;private health records&quot;</span><span class="p">],</span>
-    <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.1</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.2</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">],</span>
-    <span class="n">metadatas</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;finance&quot;</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;health&quot;</span><span class="p">}]</span>
-<span class="p">)</span>
-<span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
-
-<span class="c1"># Reopen requires the same encryption key</span>
-<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;secure.db&quot;</span><span class="p">,</span> <span class="n">encryption_key</span><span class="o">=</span><span class="s2">&quot;your-secret-key&quot;</span><span class="p">)</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;confidential&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">([</span><span class="mf">0.1</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-
-<span class="c1"># Wrong key will fail</span>
-<span class="k">try</span><span class="p">:</span>
-    <span class="n">bad_db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;secure.db&quot;</span><span class="p">,</span> <span class="n">encryption_key</span><span class="o">=</span><span class="s2">&quot;wrong-key&quot;</span><span class="p">)</span>
-<span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Access denied: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</code></pre></div>
-
-<h3 id="streaming-insert-v21">Streaming Insert (v2.1+)</h3>
-<p>Memory-efficient ingestion for large datasets:</p>
-<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
-
-<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;large_dataset.db&quot;</span><span class="p">)</span>
-<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">)</span>
-
-<span class="c1"># Generator function for memory efficiency</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">load_documents</span><span class="p">():</span>
-    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;large_file.jsonl&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-        <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">f</span><span class="p">:</span>
-            <span class="n">doc</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
-            <span class="k">yield</span> <span class="p">(</span>
-                <span class="n">doc</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">],</span>
-                <span class="n">doc</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;metadata&quot;</span><span class="p">,</span> <span class="p">{}),</span>
-                <span class="n">doc</span><span class="p">[</span><span class="s2">&quot;embedding&quot;</span><span class="p">]</span>
-            <span class="p">)</span>
-
-<span class="c1"># Stream with progress tracking</span>
-<span class="k">for</span> <span class="n">progress</span> <span class="ow">in</span> <span class="n">collection</span><span class="o">.</span><span class="n">add_texts_streaming</span><span class="p">(</span><span class="n">load_documents</span><span class="p">(),</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1000</span><span class="p">):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Batch </span><span class="si">{</span><span class="n">progress</span><span class="p">[</span><span class="s1">&#39;batch_num&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">progress</span><span class="p">[</span><span class="s1">&#39;docs_processed&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> total docs&quot;</span><span class="p">)</span>
-
-<span class="c1"># With callback instead of iteration</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">log_progress</span><span class="p">(</span><span class="n">p</span><span class="p">):</span>
-    <span class="k">if</span> <span class="n">p</span><span class="p">[</span><span class="s1">&#39;docs_processed&#39;</span><span class="p">]</span> <span class="o">%</span> <span class="mi">10000</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Milestone: </span><span class="si">{</span><span class="n">p</span><span class="p">[</span><span class="s1">&#39;docs_processed&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> docs&quot;</span><span class="p">)</span>
-
-<span class="nb">list</span><span class="p">(</span><span class="n">collection</span><span class="o">.</span><span class="n">add_texts_streaming</span><span class="p">(</span>
-    <span class="n">load_documents</span><span class="p">(),</span>
-    <span class="n">batch_size</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
-    <span class="n">on_progress</span><span class="o">=</span><span class="n">log_progress</span>
-<span class="p">))</span>
-</code></pre></div>
-
-<h3 id="document-hierarchies-v21">Document Hierarchies (v2.1+)</h3>
-<p>Organize documents in parent-child trees for chunked documents, threads, or nested content:</p>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
-
-<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;hierarchical.db&quot;</span><span class="p">)</span>
-<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">)</span>
-
-<span class="c1"># Add parent documents (e.g., full articles)</span>
-<span class="n">parent_ids</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
-    <span class="p">[</span><span class="s2">&quot;Chapter 1: Introduction to ML&quot;</span><span class="p">,</span> <span class="s2">&quot;Chapter 2: Neural Networks&quot;</span><span class="p">],</span>
-    <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.1</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.2</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">],</span>
-    <span class="n">metadatas</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;chapter&quot;</span><span class="p">,</span> <span class="s2">&quot;num&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;chapter&quot;</span><span class="p">,</span> <span class="s2">&quot;num&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}]</span>
-<span class="p">)</span>
-
-<span class="c1"># Add children with parent references (e.g., chunks/sections)</span>
-<span class="n">child_ids</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
-    <span class="p">[</span><span class="s2">&quot;Section 1.1: What is ML?&quot;</span><span class="p">,</span> <span class="s2">&quot;Section 1.2: History of ML&quot;</span><span class="p">,</span> <span class="s2">&quot;Section 2.1: Perceptrons&quot;</span><span class="p">],</span>
-    <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.11</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.12</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.21</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">],</span>
-    <span class="n">metadatas</span><span class="o">=</span><span class="p">[</span>
-        <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;section&quot;</span><span class="p">,</span> <span class="s2">&quot;chapter&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span>
-        <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;section&quot;</span><span class="p">,</span> <span class="s2">&quot;chapter&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span>
-        <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;section&quot;</span><span class="p">,</span> <span class="s2">&quot;chapter&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}</span>
-    <span class="p">],</span>
-    <span class="n">parent_ids</span><span class="o">=</span><span class="p">[</span><span class="n">parent_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">parent_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">parent_ids</span><span class="p">[</span><span class="mi">1</span><span class="p">]]</span>
-<span class="p">)</span>
-
-<span class="c1"># Navigate the hierarchy</span>
-<span class="n">children</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_children</span><span class="p">(</span><span class="n">parent_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Chapter 1 has </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">children</span><span class="p">)</span><span class="si">}</span><span class="s2"> sections&quot;</span><span class="p">)</span>
-
-<span class="n">parent</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_parent</span><span class="p">(</span><span class="n">child_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Section belongs to: </span><span class="si">{</span><span class="n">parent</span><span class="o">.</span><span class="n">page_content</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-
-<span class="c1"># Get all descendants (recursive)</span>
-<span class="n">all_descendants</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_descendants</span><span class="p">(</span><span class="n">parent_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-
-<span class="c1"># Get ancestors (path to root)</span>
-<span class="n">ancestors</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_ancestors</span><span class="p">(</span><span class="n">child_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-
-<span class="c1"># Reparent a document</span>
-<span class="n">collection</span><span class="o">.</span><span class="n">set_parent</span><span class="p">(</span><span class="n">child_ids</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">parent_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>  <span class="c1"># Move section to Chapter 1</span>
-
-<span class="c1"># Search within a subtree</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search</span><span class="p">(</span>
-    <span class="p">[</span><span class="mf">0.1</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span>
-    <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-    <span class="nb">filter</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;section&quot;</span><span class="p">,</span> <span class="s2">&quot;chapter&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">}</span>
+<p><strong>Pros:</strong>
+- Fast and deterministic
+- Works well with balanced clusters
+- Provides cluster centroids for assignment</p>
+<p><strong>Cons:</strong>
+- Requires specifying <code>n_clusters</code> upfront
+- Sensitive to outliers
+- Assumes spherical cluster shapes</p>
+<p><strong>Best for:</strong> Product categorization, customer segmentation, content organization</p>
+<h3 id="minibatch-k-means-minibatch_kmeans-default">MiniBatch K-Means (<code>minibatch_kmeans</code>, default)</h3>
+<p>Scalable variant of K-means using mini-batches. 3-10x faster on large datasets.</p>
+<div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span>
+    <span class="n">n_clusters</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;minibatch_kmeans&quot;</span><span class="p">,</span>
+    <span class="n">sample_size</span><span class="o">=</span><span class="mi">5000</span><span class="p">,</span>  <span class="c1"># Use subset for speed</span>
+    <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span>
 <span class="p">)</span>
 </code></pre></div>
 
-<h3 id="async-usage">Async Usage</h3>
-<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncVectorDB</span>
-
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
-    <span class="k">async</span> <span class="k">with</span> <span class="n">AsyncVectorDB</span><span class="p">(</span><span class="s2">&quot;vectors.db&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">db</span><span class="p">:</span>
-        <span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">)</span>
-
-        <span class="c1"># Add documents</span>
-        <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>
-
-        <span class="c1"># Batch search</span>
-        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">similarity_search_batch</span><span class="p">(</span><span class="n">queries</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
-
-        <span class="k">return</span> <span class="n">results</span>
-
-<span class="n">results</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<p><strong>Pros:</strong>
+- Scales to millions of documents
+- Memory-efficient
+- Nearly identical quality to K-means</p>
+<p><strong>Cons:</strong>
+- Slightly less stable than K-means
+- Still requires <code>n_clusters</code></p>
+<p><strong>Best for:</strong> Large-scale document clustering, real-time categorization</p>
+<h3 id="hdbscan-hdbscan">HDBSCAN (<code>hdbscan</code>)</h3>
+<p>Density-based clustering that automatically discovers cluster count and handles noise.</p>
+<div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;hdbscan&quot;</span><span class="p">,</span>
+    <span class="n">min_cluster_size</span><span class="o">=</span><span class="mi">10</span>  <span class="c1"># Minimum documents per cluster</span>
+<span class="p">)</span>
 </code></pre></div>
 
-<h3 id="cross-collection-search-v22">Cross-Collection Search (v2.2+)</h3>
-<p>Search across multiple collections with unified ranking:</p>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
+<p><strong>Pros:</strong>
+- Automatically determines optimal cluster count
+- Handles noise (assigns label <code>-1</code> to outliers)
+- Discovers non-spherical clusters</p>
+<p><strong>Cons:</strong>
+- Slower than K-means variants
+- No centroids (cannot assign new documents)
+- Requires tuning <code>min_cluster_size</code></p>
+<p><strong>Best for:</strong> Exploratory analysis, topic discovery, anomaly detection</p>
+<h2 id="cluster-quality-metrics">Cluster Quality Metrics</h2>
+<p>Evaluate clustering quality with built-in metrics:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
 
-<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;multi_tenant.db&quot;</span><span class="p">)</span>
+<span class="c1"># Silhouette Score: -1 to 1 (higher is better)</span>
+<span class="c1"># Measures how well-separated clusters are</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Silhouette: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">silhouette_score</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># &gt; 0.7: Strong clustering</span>
+<span class="c1"># 0.5-0.7: Reasonable clustering</span>
+<span class="c1"># &lt; 0.5: Weak clustering</span>
 
-<span class="c1"># Create domain-specific collections</span>
-<span class="n">users</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;users&quot;</span><span class="p">)</span>
-<span class="n">products</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;products&quot;</span><span class="p">)</span>
-<span class="n">support</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;support_tickets&quot;</span><span class="p">)</span>
+<span class="c1"># Inertia: Sum of squared distances to centroids (K-means only)</span>
+<span class="c1"># Lower is better (indicates tighter clusters)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Inertia: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">inertia</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
-<span class="c1"># Populate collections</span>
-<span class="n">users</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
-    <span class="p">[</span><span class="s2">&quot;Alice - software engineer&quot;</span><span class="p">,</span> <span class="s2">&quot;Bob - data scientist&quot;</span><span class="p">],</span>
-    <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.1</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.2</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">],</span>
-    <span class="n">metadatas</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;eng&quot;</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;data&quot;</span><span class="p">}]</span>
-<span class="p">)</span>
-<span class="n">products</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
-    <span class="p">[</span><span class="s2">&quot;Python IDE Pro&quot;</span><span class="p">,</span> <span class="s2">&quot;Data Analysis Suite&quot;</span><span class="p">],</span>
-    <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.15</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.25</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">],</span>
-    <span class="n">metadatas</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;software&quot;</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;software&quot;</span><span class="p">}]</span>
-<span class="p">)</span>
-<span class="n">support</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span>
-    <span class="p">[</span><span class="s2">&quot;How to install Python IDE?&quot;</span><span class="p">,</span> <span class="s2">&quot;Data export not working&quot;</span><span class="p">],</span>
-    <span class="n">embeddings</span><span class="o">=</span><span class="p">[[</span><span class="mf">0.12</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="p">[</span><span class="mf">0.22</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">]</span>
-<span class="p">)</span>
-
-<span class="c1"># Search across ALL collections at once</span>
-<span class="n">query</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">search_collections</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
-
-<span class="k">for</span> <span class="n">doc</span><span class="p">,</span> <span class="n">score</span><span class="p">,</span> <span class="n">collection_name</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">collection_name</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">doc</span><span class="o">.</span><span class="n">page_content</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
-<span class="c1"># Output:</span>
-<span class="c1"># [users] Alice - software engineer (0.999)</span>
-<span class="c1"># [support] How to install Python IDE? (0.893)</span>
-<span class="c1"># [products] Python IDE Pro (0.871)</span>
-<span class="c1"># ...</span>
-
-<span class="c1"># Search only specific collections</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">search_collections</span><span class="p">(</span>
-    <span class="n">query</span><span class="p">,</span>
-    <span class="n">collections</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;users&quot;</span><span class="p">,</span> <span class="s2">&quot;products&quot;</span><span class="p">],</span>
-    <span class="n">k</span><span class="o">=</span><span class="mi">3</span>
-<span class="p">)</span>
-
-<span class="c1"># Apply metadata filter across all searched collections</span>
-<span class="n">results</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">search_collections</span><span class="p">(</span>
-    <span class="n">query</span><span class="p">,</span>
-    <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-    <span class="nb">filter</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;software&quot;</span><span class="p">}</span>
-<span class="p">)</span>
-
-<span class="c1"># List available collections</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">list_collections</span><span class="p">())</span>  <span class="c1"># [&#39;users&#39;, &#39;products&#39;, &#39;support_tickets&#39;]</span>
+<span class="c1"># Get all metrics as dict</span>
+<span class="n">metrics</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">metrics</span><span class="p">()</span>
+<span class="c1"># {&#39;inertia&#39;: 1523.45, &#39;silhouette_score&#39;: 0.62}</span>
 </code></pre></div>
 
-<p><strong>Async cross-collection search:</strong></p>
-<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb.async_core</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncVectorDB</span>
-
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">search_all</span><span class="p">():</span>
-    <span class="n">db</span> <span class="o">=</span> <span class="n">AsyncVectorDB</span><span class="p">(</span><span class="s2">&quot;app.db&quot;</span><span class="p">)</span>
-
-    <span class="c1"># Initialize collections</span>
-    <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;users&quot;</span><span class="p">)</span>
-    <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;products&quot;</span><span class="p">)</span>
-
-    <span class="c1"># Search across collections</span>
-    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">db</span><span class="o">.</span><span class="n">search_collections</span><span class="p">([</span><span class="mf">0.1</span><span class="p">]</span><span class="o">*</span><span class="mi">384</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">results</span>
-
-<span class="n">results</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">search_all</span><span class="p">())</span>
+<h2 id="auto-tagging">Auto-Tagging</h2>
+<p>Generate human-readable labels for clusters:</p>
+<h3 id="tf-idf-method-default">TF-IDF Method (default)</h3>
+<p>Extracts keywords with highest TF-IDF scores per cluster.</p>
+<div class="codehilite"><pre><span></span><code><span class="n">tags</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;tfidf&quot;</span><span class="p">,</span> <span class="n">n_keywords</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+<span class="c1"># {&#39;0&#39;: [&#39;machine&#39;, &#39;learning&#39;, &#39;neural&#39;, &#39;network&#39;, &#39;deep&#39;], ...}</span>
 </code></pre></div>
 
-<h2 id="benchmark-scripts">Benchmark Scripts</h2>
-<h3 id="backend-benchmark">Backend Benchmark</h3>
-<p>Compare HNSW vs brute-force performance:</p>
-<div class="codehilite"><pre><span></span><code>python<span class="w"> </span>examples/backend_benchmark.py
+<p><strong>Best for:</strong> Text documents with distinct vocabulary per cluster</p>
+<h3 id="frequency-method">Frequency Method</h3>
+<p>Extracts most common words per cluster.</p>
+<div class="codehilite"><pre><span></span><code><span class="n">tags</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;frequency&quot;</span><span class="p">,</span> <span class="n">n_keywords</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </code></pre></div>
 
-<h3 id="quantization-benchmark">Quantization Benchmark</h3>
-<p>Test different quantization levels:</p>
-<div class="codehilite"><pre><span></span><code>python<span class="w"> </span>examples/quant_benchmark.py
+<p><strong>Best for:</strong> Short documents, social media posts</p>
+<h3 id="custom-callback">Custom Callback</h3>
+<p>Implement custom tagging logic:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">custom_tagger</span><span class="p">(</span><span class="n">cluster_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">texts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="c1"># Your logic here (e.g., LLM-based summarization)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="s2">&quot;tag1&quot;</span><span class="p">,</span> <span class="s2">&quot;tag2&quot;</span><span class="p">,</span> <span class="s2">&quot;tag3&quot;</span><span class="p">]</span>
+
+<span class="n">tags</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">custom_callback</span><span class="o">=</span><span class="n">custom_tagger</span><span class="p">)</span>
 </code></pre></div>
 
-<h3 id="embedding-performance">Embedding Performance</h3>
-<p>Benchmark local embedding generation:</p>
-<div class="codehilite"><pre><span></span><code>python<span class="w"> </span>examples/embeddings/perf_benchmark.py
+<h2 id="cluster-persistence">Cluster Persistence</h2>
+<p>Save cluster configurations for fast assignment of new documents without re-clustering.</p>
+<h3 id="save-cluster-state">Save Cluster State</h3>
+<div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+<span class="n">tags</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+
+<span class="n">collection</span><span class="o">.</span><span class="n">save_cluster</span><span class="p">(</span>
+    <span class="s2">&quot;product_categories&quot;</span><span class="p">,</span>
+    <span class="n">result</span><span class="p">,</span>
+    <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;tags&quot;</span><span class="p">:</span> <span class="n">tags</span><span class="p">,</span> <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;created_at&quot;</span><span class="p">:</span> <span class="s2">&quot;2026-01-17&quot;</span><span class="p">}</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<h3 id="load-cluster-state">Load Cluster State</h3>
+<div class="codehilite"><pre><span></span><code><span class="n">loaded</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">load_cluster</span><span class="p">(</span><span class="s2">&quot;product_categories&quot;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">loaded</span><span class="p">:</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">metadata</span> <span class="o">=</span> <span class="n">loaded</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loaded </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">n_clusters</span><span class="si">}</span><span class="s2"> clusters&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tags: </span><span class="si">{</span><span class="n">metadata</span><span class="p">[</span><span class="s1">&#39;tags&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="assign-new-documents">Assign New Documents</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Add new documents</span>
+<span class="n">new_ids</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">new_texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">new_embeddings</span><span class="p">)</span>
+
+<span class="c1"># Assign to nearest cluster centroids</span>
+<span class="n">assigned_count</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">assign_to_cluster</span><span class="p">(</span><span class="s2">&quot;product_categories&quot;</span><span class="p">,</span> <span class="n">new_ids</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Assigned </span><span class="si">{</span><span class="n">assigned_count</span><span class="si">}</span><span class="s2"> documents&quot;</span><span class="p">)</span>
+
+<span class="c1"># Retrieve assigned documents</span>
+<span class="n">docs</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_cluster_members</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="list-and-delete">List and Delete</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># List all saved clusters</span>
+<span class="n">clusters</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">list_clusters</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">clusters</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">c</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">c</span><span class="p">[</span><span class="s1">&#39;n_clusters&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> clusters, </span><span class="si">{</span><span class="n">c</span><span class="p">[</span><span class="s1">&#39;algorithm&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Delete when no longer needed</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">delete_cluster</span><span class="p">(</span><span class="s2">&quot;product_categories&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="filtering-and-sampling">Filtering and Sampling</h2>
+<p>Cluster subsets of your collection:</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Cluster only verified documents</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span>
+    <span class="n">n_clusters</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="nb">filter</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;verified&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+<span class="p">)</span>
+
+<span class="c1"># Use random sample for speed (large collections)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span>
+    <span class="n">n_clusters</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="n">sample_size</span><span class="o">=</span><span class="mi">10000</span>  <span class="c1"># Cluster 10k random documents</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<h2 id="async-support">Async Support</h2>
+<p>All clustering methods have async equivalents:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncVectorDB</span>
+
+<span class="k">async</span> <span class="k">with</span> <span class="n">AsyncVectorDB</span><span class="p">(</span><span class="s2">&quot;products.db&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">db</span><span class="p">:</span>
+    <span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;items&quot;</span><span class="p">)</span>
+
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+    <span class="n">tags</span> <span class="o">=</span> <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">save_cluster</span><span class="p">(</span><span class="s2">&quot;categories&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+
+    <span class="n">new_ids</span> <span class="o">=</span> <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">embeddings</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">collection</span><span class="o">.</span><span class="n">assign_to_cluster</span><span class="p">(</span><span class="s2">&quot;categories&quot;</span><span class="p">,</span> <span class="n">new_ids</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="use-cases">Use Cases</h2>
+<h3 id="product-categorization">Product Categorization</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Cluster products by description embeddings</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;minibatch_kmeans&quot;</span><span class="p">)</span>
+<span class="n">tags</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">n_keywords</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">assign_cluster_metadata</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">tags</span><span class="p">)</span>
+
+<span class="c1"># Save for new products</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">save_cluster</span><span class="p">(</span><span class="s2">&quot;product_taxonomy&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;tags&quot;</span><span class="p">:</span> <span class="n">tags</span><span class="p">})</span>
+</code></pre></div>
+
+<h3 id="topic-discovery">Topic Discovery</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Let HDBSCAN discover natural topics</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;hdbscan&quot;</span><span class="p">,</span> <span class="n">min_cluster_size</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>
+<span class="n">tags</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;tfidf&quot;</span><span class="p">,</span> <span class="n">n_keywords</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+
+<span class="c1"># Analyze cluster sizes</span>
+<span class="k">for</span> <span class="n">cluster_id</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">n_clusters</span><span class="p">):</span>
+    <span class="n">docs</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_cluster_members</span><span class="p">(</span><span class="n">cluster_id</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Topic </span><span class="si">{</span><span class="n">cluster_id</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">docs</span><span class="p">)</span><span class="si">}</span><span class="s2"> docs - </span><span class="si">{</span><span class="n">tags</span><span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">cluster_id</span><span class="p">)]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="customer-segmentation">Customer Segmentation</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Cluster customer profiles</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">assign_cluster_metadata</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+
+<span class="c1"># Target marketing campaigns per segment</span>
+<span class="n">segment_0_customers</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_cluster_members</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="duplicate-detection">Duplicate Detection</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Use high cluster count to find near-duplicates</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;minibatch_kmeans&quot;</span><span class="p">)</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">assign_cluster_metadata</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+
+<span class="c1"># Find potential duplicates in same cluster</span>
+<span class="k">for</span> <span class="n">cluster_id</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">n_clusters</span><span class="p">):</span>
+    <span class="n">docs</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">get_cluster_members</span><span class="p">(</span><span class="n">cluster_id</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">docs</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Potential duplicates in cluster </span><span class="si">{</span><span class="n">cluster_id</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">docs</span><span class="p">)</span><span class="si">}</span><span class="s2"> docs&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="best-practices">Best Practices</h2>
+<h3 id="choosing-cluster-count">Choosing Cluster Count</h3>
+<ol>
+<li><strong>Elbow Method</strong>: Plot inertia vs. <code>n_clusters</code>, look for "elbow"</li>
+<li><strong>Silhouette Analysis</strong>: Maximize silhouette score</li>
+<li><strong>Domain Knowledge</strong>: Use business requirements (e.g., 10 product categories)</li>
+<li><strong>HDBSCAN</strong>: Let algorithm decide</li>
+</ol>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Elbow method</span>
+<span class="n">inertias</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">20</span><span class="p">):</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
+    <span class="n">inertias</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">inertia</span><span class="p">)</span>
+<span class="c1"># Plot and find elbow</span>
+</code></pre></div>
+
+<h3 id="performance-optimization">Performance Optimization</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Large collections: use sampling + MiniBatch K-means</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span>
+    <span class="n">n_clusters</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;minibatch_kmeans&quot;</span><span class="p">,</span>
+    <span class="n">sample_size</span><span class="o">=</span><span class="mi">50000</span>
+<span class="p">)</span>
+
+<span class="c1"># Small collections: use K-means for stability</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span>
+    <span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;kmeans&quot;</span><span class="p">,</span>
+    <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<h3 id="reproducibility">Reproducibility</h3>
+<p>Always set <code>random_state</code> for deterministic results:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="metadata-organization">Metadata Organization</h3>
+<p>Use consistent metadata keys:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">collection</span><span class="o">.</span><span class="n">assign_cluster_metadata</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">tags</span><span class="p">,</span> <span class="n">metadata_key</span><span class="o">=</span><span class="s2">&quot;category&quot;</span><span class="p">)</span>
+<span class="n">collection</span><span class="o">.</span><span class="n">assign_cluster_metadata</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">tags</span><span class="p">,</span> <span class="n">metadata_key</span><span class="o">=</span><span class="s2">&quot;topic&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="api-reference">API Reference</h2>
+<p>See <a href="../../api/core/#clustering--auto-tagging">VectorCollection API</a> for complete method signatures and parameters.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p><strong>ValueError: n_clusters must be &gt;= 2</strong></p>
+<p>K-means requires at least 2 clusters. Use HDBSCAN for single-cluster detection.</p>
+<p><strong>Silhouette score is None</strong></p>
+<p>Occurs when clustering produces only 1 cluster or all documents in separate clusters. Adjust <code>n_clusters</code> or <code>min_cluster_size</code>.</p>
+<p><strong>HDBSCAN assigns all documents to noise (cluster -1)</strong></p>
+<p>Decrease <code>min_cluster_size</code> or increase document count. HDBSCAN needs sufficient density.</p>
+<p><strong>Slow clustering on large collections</strong></p>
+<p>Use <code>sample_size</code> parameter or switch to <code>minibatch_kmeans</code>:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">sample_size</span><span class="o">=</span><span class="mi">10000</span><span class="p">)</span>
+</code></pre></div>
+
+<p><strong>Cluster assignments change between runs</strong></p>
+<p>Set <code>random_state</code> for reproducibility:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span><span class="p">)</span>
 </code></pre></div>
   </div>
 </article>
@@ -1227,7 +1224,7 @@
     
     <a data-slot="button"
         class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-secondary text-secondary-foreground hover:bg-secondary/80 h-8 rounded-md gap-1.5 px-3 has-[&gt;svg]:px-2.5 shadow-none"
-        href="/SimpleVecDB/">
+        href="/SimpleVecDB/ENV_SETUP/">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
             class="tabler-icon tabler-icon-arrow-left ">
@@ -1235,14 +1232,14 @@
             <path d="M5 12l6 6"></path>
             <path d="M5 12l6 -6"></path>
         </svg>
-        <span class="max-[500px]:hidden">Home</span>
+        <span class="max-[500px]:hidden">Setup</span>
     </a>
     
     
     <a data-slot="button"
         class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-secondary text-secondary-foreground hover:bg-secondary/80 h-8 rounded-md gap-1.5 px-3 has-[&gt;svg]:px-2.5 ml-auto shadow-none"
-        href="/SimpleVecDB/benchmarks/">
-        <span class="max-[500px]:hidden">Benchmarks</span>
+        href="/SimpleVecDB/api/core/">
+        <span class="max-[500px]:hidden">VectorDB</span>
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
             class="tabler-icon tabler-icon-arrow-right ">
@@ -1269,37 +1266,37 @@
                 <div class="text-muted-foreground text-sm font-medium">Menu</div>
                 <div class="flex flex-col gap-3">
                     
-                    <a class="text-2xl font-medium" href="..">
+                    <a class="text-2xl font-medium" href="../..">
                         
                         Home
                         
                     </a>
                     
-                    <a class="text-2xl font-medium" href="./">
+                    <a class="text-2xl font-medium" href="../../examples/">
                         
                         Examples
                         
                     </a>
                     
-                    <a class="text-2xl font-medium" href="../benchmarks/">
+                    <a class="text-2xl font-medium" href="../../benchmarks/">
                         
                         Benchmarks
                         
                     </a>
                     
-                    <a class="text-2xl font-medium" href="../CHANGELOG/">
+                    <a class="text-2xl font-medium" href="../../CHANGELOG/">
                         
                         Changelog
                         
                     </a>
                     
-                    <a class="text-2xl font-medium" href="../CONTRIBUTING/">
+                    <a class="text-2xl font-medium" href="../../CONTRIBUTING/">
                         
                         Contributing
                         
                     </a>
                     
-                    <a class="text-2xl font-medium" href="../ENV_SETUP/">
+                    <a class="text-2xl font-medium" href="../../ENV_SETUP/">
                         
                         Setup
                         
@@ -1317,7 +1314,7 @@
                     
                     <div class="flex flex-col gap-3">
                         
-                        <a class="text-2xl font-medium" href="../guides/clustering/">
+                        <a class="text-2xl font-medium" href="./">
                             
                             Clustering
                             
@@ -1332,43 +1329,43 @@
                     
                     <div class="flex flex-col gap-3">
                         
-                        <a class="text-2xl font-medium" href="../api/core/">
+                        <a class="text-2xl font-medium" href="../../api/core/">
                             
                             VectorDB
                             
                         </a>
                         
-                        <a class="text-2xl font-medium" href="../api/async/">
+                        <a class="text-2xl font-medium" href="../../api/async/">
                             
                             Async API
                             
                         </a>
                         
-                        <a class="text-2xl font-medium" href="../api/embeddings/">
+                        <a class="text-2xl font-medium" href="../../api/embeddings/">
                             
                             Embeddings
                             
                         </a>
                         
-                        <a class="text-2xl font-medium" href="../api/encryption/">
+                        <a class="text-2xl font-medium" href="../../api/encryption/">
                             
                             Encryption
                             
                         </a>
                         
-                        <a class="text-2xl font-medium" href="../api/integrations/">
+                        <a class="text-2xl font-medium" href="../../api/integrations/">
                             
                             Integrations
                             
                         </a>
                         
-                        <a class="text-2xl font-medium" href="../api/config/">
+                        <a class="text-2xl font-medium" href="../../api/config/">
                             
                             Configuration
                             
                         </a>
                         
-                        <a class="text-2xl font-medium" href="../api/types/">
+                        <a class="text-2xl font-medium" href="../../api/types/">
                             
                             Types
                             
@@ -1383,19 +1380,19 @@
                     
                     <div class="flex flex-col gap-3">
                         
-                        <a class="text-2xl font-medium" href="../api/engine/catalog/">
+                        <a class="text-2xl font-medium" href="../../api/engine/catalog/">
                             
                             Catalog
                             
                         </a>
                         
-                        <a class="text-2xl font-medium" href="../api/engine/search/">
+                        <a class="text-2xl font-medium" href="../../api/engine/search/">
                             
                             Search
                             
                         </a>
                         
-                        <a class="text-2xl font-medium" href="../api/engine/quantization/">
+                        <a class="text-2xl font-medium" href="../../api/engine/quantization/">
                             
                             Quantization
                             
@@ -1423,125 +1420,217 @@
         
         
         
-        <a href="#rag-with-langchain"
+        <a href="#installation"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            RAG with LangChain
+            Installation
         </a>
         
 
         
-        <a href="#rag-with-llamaindex"
+        <a href="#quick-start"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            RAG with LlamaIndex
+            Quick Start
         </a>
         
 
         
-        <a href="#rag-with-ollama-llm"
+        <a href="#algorithms"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            RAG with Ollama LLM
-        </a>
-        
-
-        
-        <a href="#quick-start-examples"
-            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
-            data-active="false" data-depth="2">
-            Quick Start Examples
+            Algorithms
         </a>
         
         
-        <a href="#basic-usage"
+        <a href="#k-means-kmeans"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Basic Usage
+            K-Means (kmeans)
         </a>
         
-        <a href="#keyword-hybrid-search"
+        <a href="#minibatch-k-means-minibatch_kmeans-default"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Keyword &amp; Hybrid Search
+            MiniBatch K-Means (minibatch_kmeans, default)
         </a>
         
-        <a href="#batch-search-v20"
+        <a href="#hdbscan-hdbscan"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Batch Search (v2.0+)
-        </a>
-        
-        <a href="#force-exact-search"
-            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
-            data-active="false" data-depth="3">
-            Force Exact Search
-        </a>
-        
-        <a href="#metadata-filtering"
-            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
-            data-active="false" data-depth="3">
-            Metadata Filtering
-        </a>
-        
-        <a href="#encrypted-database-v21"
-            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
-            data-active="false" data-depth="3">
-            Encrypted Database (v2.1+)
-        </a>
-        
-        <a href="#streaming-insert-v21"
-            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
-            data-active="false" data-depth="3">
-            Streaming Insert (v2.1+)
-        </a>
-        
-        <a href="#document-hierarchies-v21"
-            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
-            data-active="false" data-depth="3">
-            Document Hierarchies (v2.1+)
-        </a>
-        
-        <a href="#async-usage"
-            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
-            data-active="false" data-depth="3">
-            Async Usage
-        </a>
-        
-        <a href="#cross-collection-search-v22"
-            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
-            data-active="false" data-depth="3">
-            Cross-Collection Search (v2.2+)
+            HDBSCAN (hdbscan)
         </a>
         
         
 
         
-        <a href="#benchmark-scripts"
+        <a href="#cluster-quality-metrics"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            Benchmark Scripts
+            Cluster Quality Metrics
+        </a>
+        
+
+        
+        <a href="#auto-tagging"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Auto-Tagging
         </a>
         
         
-        <a href="#backend-benchmark"
+        <a href="#tf-idf-method-default"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Backend Benchmark
+            TF-IDF Method (default)
         </a>
         
-        <a href="#quantization-benchmark"
+        <a href="#frequency-method"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Quantization Benchmark
+            Frequency Method
         </a>
         
-        <a href="#embedding-performance"
+        <a href="#custom-callback"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Embedding Performance
+            Custom Callback
         </a>
         
+        
+
+        
+        <a href="#cluster-persistence"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Cluster Persistence
+        </a>
+        
+        
+        <a href="#save-cluster-state"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Save Cluster State
+        </a>
+        
+        <a href="#load-cluster-state"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Load Cluster State
+        </a>
+        
+        <a href="#assign-new-documents"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Assign New Documents
+        </a>
+        
+        <a href="#list-and-delete"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            List and Delete
+        </a>
+        
+        
+
+        
+        <a href="#filtering-and-sampling"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Filtering and Sampling
+        </a>
+        
+
+        
+        <a href="#async-support"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Async Support
+        </a>
+        
+
+        
+        <a href="#use-cases"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Use Cases
+        </a>
+        
+        
+        <a href="#product-categorization"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Product Categorization
+        </a>
+        
+        <a href="#topic-discovery"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Topic Discovery
+        </a>
+        
+        <a href="#customer-segmentation"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Customer Segmentation
+        </a>
+        
+        <a href="#duplicate-detection"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Duplicate Detection
+        </a>
+        
+        
+
+        
+        <a href="#best-practices"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Best Practices
+        </a>
+        
+        
+        <a href="#choosing-cluster-count"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Choosing Cluster Count
+        </a>
+        
+        <a href="#performance-optimization"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Performance Optimization
+        </a>
+        
+        <a href="#reproducibility"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Reproducibility
+        </a>
+        
+        <a href="#metadata-organization"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Metadata Organization
+        </a>
+        
+        
+
+        
+        <a href="#api-reference"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            API Reference
+        </a>
+        
+
+        
+        <a href="#troubleshooting"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            Troubleshooting
+        </a>
         
 
         
@@ -1573,12 +1662,12 @@
     </div>
      
 
-<script src="../search/main.js"></script>
+<script src="../../search/main.js"></script>
 
 
     
 
-    <script src="../js/copy-button.js"></script>
+    <script src="../../js/copy-button.js"></script>
     <script>updatePygmentsStylesheet();</script>
     
     <script>fetchStargazers("https://github.com/coderdayton/simplevecdb");</script>

@@ -46,15 +46,19 @@ SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built
 ## Installation
 
 ```bash
-# Core library only (lightweight, 50MB)
+# Standard installation (includes clustering, encryption)
 pip install simplevecdb
 
-# With local embeddings server + HuggingFace models (500MB+)
+# With local embeddings server (adds 500MB+ models)
 pip install "simplevecdb[server]"
-
-# With encryption support (SQLCipher)
-pip install "simplevecdb[encryption]"
 ```
+
+**What's included by default:**
+- Vector search with HNSW indexing
+- Clustering (K-means, MiniBatch K-means, HDBSCAN)
+- Encryption (SQLCipher AES-256)
+- Async support
+- LangChain & LlamaIndex integrations
 
 **Verify Installation:**
 
@@ -247,6 +251,23 @@ child_ids = collection.add_texts(
 children = collection.get_children(parent_ids[0])
 ```
 
+### Vector Clustering (v2.2+)
+
+Discover natural groupings in your embeddings:
+
+```python
+# Cluster documents and auto-generate tags
+result = collection.cluster(n_clusters=5)
+tags = collection.auto_tag(result, method="tfidf")
+collection.assign_cluster_metadata(result, tags)
+
+# Save for fast assignment of new documents
+collection.save_cluster("categories", result)
+collection.assign_to_cluster("categories", new_doc_ids)
+```
+
+See [Clustering Guide](guides/clustering.md) for algorithms, metrics, and use cases.
+
 ## Feature Matrix
 
 | Feature                   | Status | Description                                                |
@@ -266,6 +287,7 @@ children = collection.get_children(parent_ids[0])
 | **Built-in Encryption**   | ✅     | SQLCipher AES-256 at-rest encryption via `[encryption]`    |
 | **Streaming Insert**      | ✅     | Memory-efficient large-scale ingestion with progress       |
 | **Document Hierarchies**  | ✅     | Parent/child relationships for chunked docs                |
+| **Vector Clustering**     | ✅     | K-means, MiniBatch K-means, HDBSCAN with auto-tagging     |
 
 ## Performance Benchmarks
 
@@ -339,8 +361,8 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 - [x] SQLCipher encryption (at-rest data protection)
 - [x] Streaming insert API for large-scale ingestion
 - [x] Hierarchical document relationships (parent/child)
-- [ ] Cross-collection search
-- [ ] Vector clustering and auto-tagging
+- [x] Cross-collection search
+- [x] Vector clustering and auto-tagging (v2.2)
 
 Vote on features or propose new ones in [GitHub Discussions](https://github.com/coderdayton/simplevecdb/discussions).
 
