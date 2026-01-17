@@ -414,6 +414,47 @@ class UsearchIndex:
     def __contains__(self, key: int) -> bool:
         return self.contains(key)
 
+    def keys(self) -> list[int]:
+        """Return all keys in the index."""
+        if self._index is None:
+            return []
+        return [int(k) for k in self._index.keys]
+
+    def get(self, keys: NDArray[np.uint64]) -> NDArray[np.float32]:
+        """
+        Retrieve vectors by their keys.
+
+        Args:
+            keys: Array of keys to retrieve
+
+        Returns:
+            Array of vectors, shape (len(keys), ndim). Missing keys return zeros.
+        """
+        if self._index is None or len(keys) == 0:
+            return np.array([], dtype=np.float32).reshape(0, self._ndim or 1)
+
+        keys = np.asarray(keys, dtype=np.uint64)
+        vectors = []
+        missing_logged = False
+        for key in keys:
+            try:
+                vec = self._index.get(int(key))
+                vectors.append(np.asarray(vec, dtype=np.float32))
+            except KeyError:
+                if not missing_logged:
+                    _logger.warning(
+                        "Index missing key(s); returning zero vectors. "
+                        "Index may be out of sync with catalog."
+                    )
+                    missing_logged = True
+                vectors.append(np.zeros(self._ndim or 1, dtype=np.float32))
+
+        return (
+            np.stack(vectors)
+            if vectors
+            else np.array([], dtype=np.float32).reshape(0, self._ndim or 1)
+        )
+
     def __del__(self) -> None:
         try:
             self.close()

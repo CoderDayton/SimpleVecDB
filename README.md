@@ -46,15 +46,19 @@ SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built
 ## Installation
 
 ```bash
-# Core library only (lightweight, 50MB)
+# Standard installation (includes clustering, encryption)
 pip install simplevecdb
 
-# With local embeddings server + HuggingFace models (500MB+)
+# With local embeddings server (adds 500MB+ models)
 pip install "simplevecdb[server]"
-
-# With encryption support (SQLCipher)
-pip install "simplevecdb[encryption]"
 ```
+
+**What's included by default:**
+- Vector search with HNSW indexing
+- Clustering (K-means, MiniBatch K-means, HDBSCAN)
+- Encryption (SQLCipher AES-256)
+- Async support
+- LangChain & LlamaIndex integrations
 
 **Verify Installation:**
 
@@ -282,6 +286,23 @@ parent = collection.get_parent(child_ids[0])
 descendants = collection.get_descendants(parent_ids[0])
 ```
 
+### Vector Clustering (v2.2+)
+
+Discover natural groupings in your embeddings:
+
+```python
+# Cluster documents and auto-generate tags
+result = collection.cluster(n_clusters=5)
+tags = collection.auto_tag(result, method="tfidf")
+collection.assign_cluster_metadata(result, tags)
+
+# Save for fast assignment of new documents
+collection.save_cluster("categories", result)
+collection.assign_to_cluster("categories", new_doc_ids)
+```
+
+Supports K-means, MiniBatch K-means, and HDBSCAN. See [Clustering Guide](https://coderdayton.github.io/SimpleVecDB/guides/clustering) for details.
+
 ## Feature Matrix
 
 | Feature                   | Status | Description                                                  |
@@ -301,6 +322,8 @@ descendants = collection.get_descendants(parent_ids[0])
 | **Built-in Encryption**   | ✅     | SQLCipher AES-256 at-rest encryption via `[encryption]` extras |
 | **Streaming Insert**      | ✅     | Memory-efficient large-scale ingestion with progress callbacks |
 | **Document Hierarchies**  | ✅     | Parent/child relationships for chunked docs                  |
+| **Vector Clustering**     | ✅     | K-means, MiniBatch K-means, HDBSCAN with auto-tagging (v2.2+) |
+| **Cluster Persistence**   | ✅     | Save/load cluster centroids for fast assignment (v2.2+)      |
 
 ## Performance Benchmarks
 
@@ -370,7 +393,9 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 - [x] Streaming insert API for large-scale ingestion
 - [x] Hierarchical document relationships (parent/child)
 - [x] Cross-collection search
-- [ ] Vector clustering and auto-tagging
+- [x] Vector clustering and auto-tagging (v2.2)
+- [ ] Incremental clustering (online learning)
+- [ ] Cluster visualization exports
 
 Vote on features or propose new ones in [GitHub Discussions](https://github.com/coderdayton/simplevecdb/discussions).
 
