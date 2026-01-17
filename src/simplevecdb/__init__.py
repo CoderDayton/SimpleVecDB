@@ -17,7 +17,7 @@ from .logging import get_logger, configure_logging, log_operation
 from .utils import DatabaseLockedError, retry_on_lock, validate_filter
 from .encryption import EncryptionError, EncryptionUnavailableError
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 __all__ = [
     # Core classes
     "VectorDB",

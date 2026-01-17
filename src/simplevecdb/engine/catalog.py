@@ -487,6 +487,87 @@ class CatalogManager:
         row = self.conn.execute(f"SELECT COUNT(*) FROM {self._table_name}").fetchone()
         return row[0] if row else 0
 
+    def get_all_docs_with_text(
+        self,
+        filter_dict: dict[str, Any] | None = None,
+        filter_builder: Callable[[dict[str, Any], str], tuple[str, list[Any]]]
+        | None = None,
+    ) -> list[tuple[int, str, dict[str, Any]]]:
+        """
+        Get all documents with their text content.
+
+        Args:
+            filter_dict: Optional metadata filter
+            filter_builder: Function to build filter clause
+
+        Returns:
+            List of (doc_id, text, metadata) tuples
+        """
+        filter_clause = ""
+        filter_params: list[Any] = []
+        if filter_dict and filter_builder:
+            filter_clause, filter_params = filter_builder(filter_dict, "metadata")
+
+        sql = f"""
+            SELECT id, text, metadata FROM {self._table_name}
+            WHERE 1=1 {filter_clause}
+            ORDER BY id
+        """
+        rows = self.conn.execute(sql, tuple(filter_params)).fetchall()
+        result = []
+        for row_id, text, meta_json in rows:
+            meta = json.loads(meta_json) if meta_json else {}
+            result.append((int(row_id), text, meta))
+        return result
+
+    def update_metadata_batch(self, updates: list[tuple[int, dict[str, Any]]]) -> int:
+        """
+        Update metadata for multiple documents in a single transaction.
+
+        Merges new metadata with existing metadata (shallow merge).
+
+        Args:
+            updates: List of (doc_id, metadata_updates) tuples
+
+        Returns:
+            Number of documents updated
+        """
+        if not updates:
+            return 0
+
+        updated = 0
+        # Batch into chunks of 500 for performance
+        for i in range(0, len(updates), 500):
+            batch = updates[i : i + 500]
+            ids = [u[0] for u in batch]
+
+            # Fetch all existing metadata in one query
+            placeholders = ",".join(["?"] * len(ids))
+            rows = self.conn.execute(
+                f"SELECT id, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
+                ids,
+            ).fetchall()
+
+            current_meta_map = {r[0]: (json.loads(r[1]) if r[1] else {}) for r in rows}
+
+            # Prepare updates
+            update_data = []
+            for doc_id, meta_updates in batch:
+                if doc_id in current_meta_map:
+                    meta = current_meta_map[doc_id]
+                    meta.update(meta_updates)
+                    update_data.append((json.dumps(meta), doc_id))
+                    updated += 1
+
+            if update_data:
+                self.conn.executemany(
+                    f"UPDATE {self._table_name} SET metadata = ? WHERE id = ?",
+                    update_data,
+                )
+
+        self.conn.commit()
+        return updated
+
     def check_legacy_sqlite_vec(self, vec_table_name: str) -> bool:
         """
         Check if legacy sqlite-vec tables exist (for migration).
@@ -706,3 +787,117 @@ class CatalogManager:
                 (parent_id, doc_id),
             )
             return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------ #
+    # Cluster State Persistence
+    # ------------------------------------------------------------------ #
+
+    def _ensure_cluster_table(self) -> None:
+        """Create cluster state table if it doesn't exist."""
+        cluster_table = f"{self._table_name}_clusters"
+        self.conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {cluster_table} (
+                name TEXT PRIMARY KEY,
+                algorithm TEXT NOT NULL,
+                n_clusters INTEGER NOT NULL,
+                centroids BLOB,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                metadata TEXT
+            )
+            """
+        )
+        self.conn.commit()
+
+    def save_cluster_state(
+        self,
+        name: str,
+        algorithm: str,
+        n_clusters: int,
+        centroids: bytes | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Save cluster state for later reuse.
+
+        Args:
+            name: Unique name for this cluster configuration
+            algorithm: Algorithm used (kmeans, minibatch_kmeans, hdbscan)
+            n_clusters: Number of clusters
+            centroids: Serialized centroid array (numpy bytes)
+            metadata: Additional metadata (inertia, silhouette, etc.)
+        """
+        self._ensure_cluster_table()
+        cluster_table = f"{self._table_name}_clusters"
+
+        meta_json = json.dumps(metadata) if metadata else None
+
+        self.conn.execute(
+            f"""
+            INSERT OR REPLACE INTO {cluster_table}
+            (name, algorithm, n_clusters, centroids, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (name, algorithm, n_clusters, centroids, meta_json),
+        )
+        self.conn.commit()
+
+    def load_cluster_state(
+        self, name: str
+    ) -> tuple[str, int, bytes | None, dict[str, Any]] | None:
+        """
+        Load saved cluster state.
+
+        Args:
+            name: Name of the cluster configuration
+
+        Returns:
+            Tuple of (algorithm, n_clusters, centroids_bytes, metadata) or None
+        """
+        self._ensure_cluster_table()
+        cluster_table = f"{self._table_name}_clusters"
+
+        row = self.conn.execute(
+            f"SELECT algorithm, n_clusters, centroids, metadata FROM {cluster_table} WHERE name = ?",
+            (name,),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        algorithm, n_clusters, centroids, meta_json = row
+        metadata = json.loads(meta_json) if meta_json else {}
+        return (algorithm, n_clusters, centroids, metadata)
+
+    def list_cluster_states(self) -> list[dict[str, Any]]:
+        """List all saved cluster configurations."""
+        self._ensure_cluster_table()
+        cluster_table = f"{self._table_name}_clusters"
+
+        rows = self.conn.execute(
+            f"SELECT name, algorithm, n_clusters, created_at, metadata FROM {cluster_table}"
+        ).fetchall()
+
+        result = []
+        for name, algorithm, n_clusters, created_at, meta_json in rows:
+            result.append(
+                {
+                    "name": name,
+                    "algorithm": algorithm,
+                    "n_clusters": n_clusters,
+                    "created_at": created_at,
+                    "metadata": json.loads(meta_json) if meta_json else {},
+                }
+            )
+        return result
+
+    def delete_cluster_state(self, name: str) -> bool:
+        """Delete a saved cluster configuration."""
+        self._ensure_cluster_table()
+        cluster_table = f"{self._table_name}_clusters"
+
+        cursor = self.conn.execute(
+            f"DELETE FROM {cluster_table} WHERE name = ?", (name,)
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0

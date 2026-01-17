@@ -28,12 +28,15 @@ from .types import (
     MigrationRequiredError,
     StreamingProgress,
     ProgressCallback,
+    ClusterResult,
+    ClusterTagCallback,
 )
 from .utils import _import_optional
 from .engine.quantization import QuantizationStrategy
 from .engine.search import SearchEngine
 from .engine.catalog import CatalogManager
 from .engine.usearch_index import UsearchIndex
+from .engine.clustering import ClusterEngine, ClusterAlgorithm
 from . import constants
 from .encryption import (
     create_encrypted_connection,
@@ -984,6 +987,366 @@ class VectorCollection:
         """
         return self._catalog.set_parent(doc_id, parent_id)
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Clustering Methods
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def cluster(
+        self,
+        n_clusters: int | None = None,
+        algorithm: ClusterAlgorithm = "minibatch_kmeans",
+        *,
+        filter: dict[str, Any] | None = None,
+        sample_size: int | None = None,
+        min_cluster_size: int = 5,
+        random_state: int | None = None,
+    ) -> ClusterResult:
+        """
+        Cluster documents in the collection by their embeddings.
+
+        Requires scikit-learn and hdbscan (included in the standard install).
+
+        Args:
+            n_clusters: Number of clusters (required for kmeans/minibatch_kmeans).
+            algorithm: Clustering algorithm - 'kmeans', 'minibatch_kmeans', or 'hdbscan'.
+            filter: Optional metadata filter to cluster a subset of documents.
+            sample_size: If set, cluster a random sample and assign rest to nearest centroid.
+            min_cluster_size: Minimum cluster size (HDBSCAN only).
+            random_state: Random seed for reproducibility.
+
+        Returns:
+            ClusterResult with labels, centroids, and doc_ids.
+
+        Raises:
+            ImportError: If scikit-learn or hdbscan (for HDBSCAN) not installed.
+            ValueError: If n_clusters required but not provided.
+
+        Example:
+            >>> result = collection.cluster(n_clusters=5)
+            >>> print(result.summary())  # {0: 42, 1: 38, 2: 20, ...}
+        """
+        engine = ClusterEngine()
+
+        doc_ids = list(self._index.keys())
+        if not doc_ids:
+            return ClusterResult(
+                labels=np.array([], dtype=np.int32),
+                centroids=None,
+                doc_ids=[],
+                n_clusters=0,
+                algorithm=algorithm,
+            )
+
+        if filter:
+            filtered_ids = set(
+                self._catalog.find_ids_by_filter(
+                    filter, self._catalog.build_filter_clause
+                )
+            )
+            doc_ids = [d for d in doc_ids if d in filtered_ids]
+
+        vectors = self._index.get(np.array(doc_ids, dtype=np.uint64))
+
+        effective_n_clusters = n_clusters
+        if n_clusters is not None and algorithm in ("kmeans", "minibatch_kmeans"):
+            effective_n_clusters = min(n_clusters, len(doc_ids))
+
+        if sample_size and sample_size < len(doc_ids):
+            rng = np.random.default_rng(random_state)
+            sample_indices = rng.choice(len(doc_ids), sample_size, replace=False)
+            sample_ids = [doc_ids[i] for i in sample_indices]
+            sample_vectors = vectors[sample_indices]
+
+            result = engine.cluster_vectors(
+                sample_vectors,
+                sample_ids,
+                algorithm=algorithm,
+                n_clusters=effective_n_clusters,
+                min_cluster_size=min_cluster_size,
+                random_state=random_state,
+            )
+
+            if result.centroids is not None:
+                remaining_mask = np.ones(len(doc_ids), dtype=bool)
+                remaining_mask[sample_indices] = False
+                remaining_ids = [doc_ids[i] for i, m in enumerate(remaining_mask) if m]
+                remaining_vectors = vectors[remaining_mask]
+
+                remaining_labels = engine.assign_to_nearest_centroid(
+                    remaining_vectors, result.centroids
+                )
+
+                all_ids = sample_ids + remaining_ids
+                all_labels = np.concatenate([result.labels, remaining_labels])
+
+                order = np.argsort(all_ids)
+                return ClusterResult(
+                    labels=all_labels[order],
+                    centroids=result.centroids,
+                    doc_ids=[all_ids[i] for i in order],
+                    n_clusters=result.n_clusters,
+                    algorithm=algorithm,
+                )
+            return result
+
+        return engine.cluster_vectors(
+            vectors,
+            doc_ids,
+            algorithm=algorithm,
+            n_clusters=effective_n_clusters,
+            min_cluster_size=min_cluster_size,
+            random_state=random_state,
+        )
+
+    def auto_tag(
+        self,
+        cluster_result: ClusterResult,
+        *,
+        method: str = "keywords",
+        n_keywords: int = 5,
+        custom_callback: ClusterTagCallback | None = None,
+    ) -> dict[int, str]:
+        """
+        Generate descriptive tags for each cluster.
+
+        Args:
+            cluster_result: Result from cluster() method.
+            method: Tagging method - 'keywords' (TF-IDF) or 'custom'.
+            n_keywords: Number of keywords per cluster (for 'keywords' method).
+            custom_callback: Custom function (texts: list[str]) -> str for 'custom' method.
+
+        Returns:
+            Dict mapping cluster_id -> tag string.
+
+        Example:
+            >>> result = collection.cluster(n_clusters=3)
+            >>> tags = collection.auto_tag(result)
+            >>> print(tags)  # {0: 'machine learning, neural', 1: 'database, sql', ...}
+        """
+        docs = self._catalog.get_documents_by_ids(cluster_result.doc_ids)
+
+        cluster_texts: dict[int, list[str]] = {}
+        for doc_id, label in zip(cluster_result.doc_ids, cluster_result.labels):
+            label_int = int(label)
+            if label_int not in cluster_texts:
+                cluster_texts[label_int] = []
+            if doc_id in docs:
+                cluster_texts[label_int].append(docs[doc_id][0])
+
+        if method == "custom" and custom_callback:
+            return {
+                cluster_id: custom_callback(texts)
+                for cluster_id, texts in cluster_texts.items()
+            }
+
+        engine = ClusterEngine()
+        return engine.generate_keywords(cluster_texts, n_keywords)
+
+    def assign_cluster_metadata(
+        self,
+        cluster_result: ClusterResult,
+        tags: dict[int, str] | None = None,
+        *,
+        metadata_key: str = "cluster",
+        tag_key: str = "cluster_tag",
+    ) -> int:
+        """
+        Persist cluster assignments to document metadata.
+
+        After calling this, you can filter by cluster: filter={"cluster": 2}
+
+        Args:
+            cluster_result: Result from cluster() method.
+            tags: Optional cluster tags from auto_tag(). If provided, also sets tag_key.
+            metadata_key: Metadata key for cluster ID (default: "cluster").
+            tag_key: Metadata key for cluster tag (default: "cluster_tag").
+
+        Returns:
+            Number of documents updated.
+
+        Example:
+            >>> result = collection.cluster(n_clusters=5)
+            >>> tags = collection.auto_tag(result)
+            >>> collection.assign_cluster_metadata(result, tags)
+            >>> # Now filter by cluster
+            >>> docs = collection.similarity_search(query, filter={"cluster": 2})
+        """
+        updates: list[tuple[int, dict[str, Any]]] = []
+        for doc_id, label in zip(cluster_result.doc_ids, cluster_result.labels):
+            meta: dict[str, Any] = {metadata_key: int(label)}
+            if tags and int(label) in tags:
+                meta[tag_key] = tags[int(label)]
+            updates.append((doc_id, meta))
+
+        return self._catalog.update_metadata_batch(updates)
+
+    def get_cluster_members(
+        self,
+        cluster_id: int,
+        *,
+        metadata_key: str = "cluster",
+    ) -> list[Document]:
+        """
+        Get all documents in a cluster (requires assign_cluster_metadata first).
+
+        Args:
+            cluster_id: Cluster ID to retrieve.
+            metadata_key: Metadata key where cluster is stored (default: "cluster").
+
+        Returns:
+            List of Documents in the cluster.
+        """
+        rows = self._catalog.get_all_docs_with_text(
+            filter_dict={metadata_key: cluster_id},
+            filter_builder=self._catalog.build_filter_clause,
+        )
+        return [Document(page_content=text, metadata=meta) for _, text, meta in rows]
+
+    def save_cluster(
+        self,
+        name: str,
+        cluster_result: ClusterResult,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Save cluster state for later reuse without re-clustering.
+
+        Persists centroids and algorithm info so new documents can be assigned
+        to existing clusters using assign_to_cluster().
+
+        Args:
+            name: Unique name for this cluster configuration.
+            cluster_result: Result from cluster() method.
+            metadata: Optional additional metadata (tags, metrics, etc.).
+
+        Example:
+            >>> result = collection.cluster(n_clusters=5)
+            >>> tags = collection.auto_tag(result)
+            >>> collection.save_cluster("product_categories", result, metadata={"tags": tags})
+        """
+        centroids_bytes = None
+        if cluster_result.centroids is not None:
+            centroids_bytes = cluster_result.centroids.tobytes()
+
+        self._catalog.save_cluster_state(
+            name=name,
+            algorithm=cluster_result.algorithm,
+            n_clusters=cluster_result.n_clusters,
+            centroids=centroids_bytes,
+            metadata=metadata,
+        )
+
+    def load_cluster(self, name: str) -> tuple[ClusterResult, dict[str, Any]] | None:
+        """
+        Load a saved cluster configuration.
+
+        Args:
+            name: Name of the saved cluster configuration.
+
+        Returns:
+            Tuple of (ClusterResult with centroids, metadata dict) or None if not found.
+
+        Example:
+            >>> saved = collection.load_cluster("product_categories")
+            >>> if saved:
+            ...     result, meta = saved
+            ...     print(f"Loaded {result.n_clusters} clusters")
+        """
+        state = self._catalog.load_cluster_state(name)
+        if state is None:
+            return None
+
+        algorithm, n_clusters, centroids_bytes, metadata = state
+
+        centroids = None
+        if centroids_bytes is not None:
+            dim = self._dim
+            if dim:
+                centroids = np.frombuffer(centroids_bytes, dtype=np.float32).reshape(
+                    n_clusters, dim
+                )
+
+        result = ClusterResult(
+            labels=np.array([], dtype=np.int32),
+            centroids=centroids,
+            doc_ids=[],
+            n_clusters=n_clusters,
+            algorithm=algorithm,
+        )
+        return result, metadata
+
+    def list_clusters(self) -> list[dict[str, Any]]:
+        """List all saved cluster configurations."""
+        return self._catalog.list_cluster_states()
+
+    def delete_cluster(self, name: str) -> bool:
+        """Delete a saved cluster configuration."""
+        return self._catalog.delete_cluster_state(name)
+
+    def assign_to_cluster(
+        self,
+        name: str,
+        doc_ids: list[int] | None = None,
+        *,
+        metadata_key: str = "cluster",
+    ) -> int:
+        """
+        Assign documents to clusters using saved centroids.
+
+        Fast assignment without re-clustering - uses nearest centroid matching.
+        Useful for assigning newly added documents to existing cluster structure.
+
+        Args:
+            name: Name of saved cluster configuration (from save_cluster).
+            doc_ids: Document IDs to assign. If None, assigns all unassigned docs.
+            metadata_key: Metadata key to store cluster assignment.
+
+        Returns:
+            Number of documents assigned.
+
+        Raises:
+            ValueError: If cluster not found or has no centroids (HDBSCAN).
+
+        Example:
+            >>> # Add new documents
+            >>> new_ids = collection.add_texts(new_texts, embeddings=new_embs)
+            >>> # Assign to existing clusters
+            >>> collection.assign_to_cluster("product_categories", new_ids)
+        """
+        saved = self.load_cluster(name)
+        if saved is None:
+            raise ValueError(f"Cluster '{name}' not found")
+
+        result, _ = saved
+        if result.centroids is None:
+            raise ValueError(
+                f"Cluster '{name}' has no centroids (HDBSCAN clusters cannot be used for assignment)"
+            )
+
+        if doc_ids is None:
+            all_ids = list(self._index.keys())
+            # Get all documents to check for metadata key existence
+            all_docs = self._catalog.get_all_docs_with_text()
+            assigned_ids = {
+                doc_id for doc_id, _, meta in all_docs if metadata_key in meta
+            }
+            doc_ids = [d for d in all_ids if d not in assigned_ids]
+
+        if not doc_ids:
+            return 0
+
+        vectors = self._index.get(np.array(doc_ids, dtype=np.uint64))
+
+        engine = ClusterEngine()
+        labels = engine.assign_to_nearest_centroid(vectors, result.centroids)
+
+        updates = [
+            (doc_id, {metadata_key: int(label)})
+            for doc_id, label in zip(doc_ids, labels)
+        ]
+        return self._catalog.update_metadata_batch(updates)
+
     def count(self) -> int:
         """Return the number of documents in the collection."""
         return self._catalog.count()
@@ -1009,7 +1372,6 @@ class VectorDB:
     Encryption (optional):
     - SQLite encrypted via SQLCipher (transparent page-level AES-256)
     - Index files encrypted via AES-256-GCM (at-rest only, zero runtime overhead)
-    - Install with: pip install simplevecdb[encryption]
     """
 
     def __init__(
@@ -1028,8 +1390,7 @@ class VectorDB:
             distance_strategy: Default distance metric for similarity search.
             quantization: Default vector compression strategy.
             encryption_key: Optional passphrase or 32-byte key for at-rest encryption.
-                Requires simplevecdb[encryption] extras. Encrypts both SQLite
-                (via SQLCipher) and usearch index files (via AES-256-GCM).
+                Encrypts both SQLite (via SQLCipher) and usearch index files (via AES-256-GCM).
             auto_migrate: If True, automatically migrate v1.x sqlite-vec data
                 to usearch. If False (default), raise MigrationRequiredError
                 when legacy data is detected. Use check_migration() to preview.
@@ -1037,8 +1398,8 @@ class VectorDB:
         Raises:
             MigrationRequiredError: If auto_migrate=False and legacy sqlite-vec
                 data is detected. Contains details about what needs migration.
-            EncryptionUnavailableError: If encryption_key provided but
-                simplevecdb[encryption] not installed.
+            EncryptionUnavailableError: If encryption_key provided but encryption
+                dependencies are missing.
             EncryptionError: If encrypted database cannot be opened (wrong key).
             ValueError: If encryption_key used with ":memory:" database.
         """
@@ -1083,6 +1444,127 @@ class VectorDB:
                     total_vectors=migration_info["total_vectors"],
                     migration_info=migration_info,
                 )
+
+    def list_collections(self) -> list[str]:
+        """
+        Return names of all initialized collections.
+
+        Only returns collections that have been accessed via `collection()` in this
+        session. Does not scan the database for collections created in previous sessions.
+
+        Returns:
+            List of collection names currently cached in this VectorDB instance.
+
+        Example:
+            >>> db = VectorDB("app.db")
+            >>> db.collection("users")
+            >>> db.collection("products")
+            >>> db.list_collections()
+            ['users', 'products']
+        """
+        return list(self._collections.keys())
+
+    def search_collections(
+        self,
+        query: Sequence[float],
+        collections: list[str] | None = None,
+        k: int = 10,
+        filter: dict[str, Any] | None = None,
+        *,
+        normalize_scores: bool = True,
+        parallel: bool = True,
+    ) -> list[tuple[Document, float, str]]:
+        """
+        Search across multiple collections with merged, ranked results.
+
+        Performs similarity search on each collection and merges results using
+        score normalization for fair comparison across distance metrics.
+
+        Args:
+            query: Query vector (must match dimension of all searched collections).
+            collections: List of collection names to search. None searches all
+                initialized collections (from list_collections()).
+            k: Number of top results to return after merging.
+            filter: Optional metadata filter applied to all collections.
+            normalize_scores: If True, convert distances to similarity scores
+                in [0, 1] range using `1 / (1 + distance)`. Enables fair
+                comparison across COSINE [0,2] and L2 [0,∞) metrics.
+            parallel: If True, search collections concurrently using ThreadPoolExecutor.
+
+        Returns:
+            List of (Document, similarity_score, collection_name) tuples,
+            sorted by descending similarity score (highest first).
+
+        Raises:
+            ValueError: If no collections specified and none initialized,
+                or if collections have mismatched dimensions.
+            KeyError: If a specified collection name doesn't exist.
+
+        Example:
+            >>> db = VectorDB("app.db")
+            >>> db.collection("users").add_texts(["alice"], embeddings=[[0.1]*384])
+            >>> db.collection("products").add_texts(["widget"], embeddings=[[0.2]*384])
+            >>> results = db.search_collections([0.15]*384, k=2)
+            >>> for doc, score, coll in results:
+            ...     print(f"{coll}: {doc.page_content} ({score:.3f})")
+        """
+        target_names = (
+            collections if collections is not None else self.list_collections()
+        )
+
+        if not target_names:
+            return []
+
+        # Resolve and validate collections
+        targets: list[VectorCollection] = []
+        dims: set[int | None] = set()
+        for name in target_names:
+            if name not in self._collections:
+                raise KeyError(
+                    f"Collection '{name}' not initialized. Call db.collection('{name}') first."
+                )
+            coll = self._collections[name]
+            targets.append(coll)
+            dims.add(coll._dim)
+
+        # Check dimension consistency (ignore None for empty collections)
+        dims.discard(None)
+        if len(dims) > 1:
+            raise ValueError(
+                f"Dimension mismatch across collections: {dims}. "
+                "All searched collections must have the same embedding dimension."
+            )
+
+        # Search function for each collection
+        def _search_one(coll: VectorCollection) -> list[tuple[Document, float, str]]:
+            results = coll.similarity_search(query, k=k, filter=filter)
+            return [(doc, dist, coll.name) for doc, dist in results]
+
+        # Execute searches
+        all_results: list[tuple[Document, float, str]] = []
+        if parallel and len(targets) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as executor:
+                futures = [executor.submit(_search_one, coll) for coll in targets]
+                for future in futures:
+                    all_results.extend(future.result())
+        else:
+            for coll in targets:
+                all_results.extend(_search_one(coll))
+
+        # Normalize scores: similarity = 1 / (1 + distance)
+        if normalize_scores:
+            all_results = [
+                (doc, 1.0 / (1.0 + dist), name) for doc, dist, name in all_results
+            ]
+        else:
+            # Invert for sorting (lower distance = higher rank)
+            all_results = [(doc, -dist, name) for doc, dist, name in all_results]
+
+        # Sort by score descending and take top k
+        all_results.sort(key=lambda x: x[1], reverse=True)
+        return all_results[:k]
 
     def collection(
         self,

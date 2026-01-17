@@ -3,7 +3,10 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import field
 from enum import Enum
-from typing import Callable, TypedDict
+from typing import Callable, TypedDict, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 class StrEnum(str, Enum):
@@ -83,3 +86,40 @@ class MigrationRequiredError(Exception):
             f"⚠️  BACKUP YOUR DATABASE BEFORE MIGRATING: cp {path} {path}.backup"
         )
         super().__init__(msg)
+
+
+@dataclasses.dataclass
+class ClusterResult:
+    """Result of a clustering operation."""
+
+    labels: np.ndarray
+    centroids: np.ndarray | None
+    doc_ids: list[int]
+    n_clusters: int
+    algorithm: str
+    inertia: float | None = None
+    silhouette_score: float | None = None
+
+    def get_cluster_doc_ids(self, cluster_id: int) -> list[int]:
+        """Get document IDs belonging to a specific cluster."""
+        return [
+            doc_id
+            for doc_id, label in zip(self.doc_ids, self.labels)
+            if label == cluster_id
+        ]
+
+    def summary(self) -> dict[int, int]:
+        """Return cluster_id -> member count mapping."""
+        from collections import Counter
+
+        return dict(Counter(int(label) for label in self.labels))
+
+    def metrics(self) -> dict[str, float | None]:
+        """Return clustering quality metrics."""
+        return {
+            "inertia": self.inertia,
+            "silhouette_score": self.silhouette_score,
+        }
+
+
+ClusterTagCallback = Callable[[list[str]], str]

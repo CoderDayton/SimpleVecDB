@@ -39,6 +39,8 @@ nav:
   - Changelog: CHANGELOG.md
   - Contributing: CONTRIBUTING.md
   - Setup: ENV_SETUP.md
+  - Guides:
+      - Clustering: guides/clustering.md
   - API:
       - VectorDB: api/core.md
       - Async API: api/async.md
@@ -46,6 +48,7 @@ nav:
       - Encryption: api/encryption.md
       - Integrations: api/integrations.md
       - Configuration: api/config.md
+      - Types: api/types.md
   - Engine:
       - Catalog: api/engine/catalog.md
       - Search: api/engine/search.md

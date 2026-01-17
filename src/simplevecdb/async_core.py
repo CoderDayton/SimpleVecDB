@@ -213,6 +213,185 @@ class AsyncVectorCollection:
             lambda: self._collection.remove_texts(texts, filter),
         )
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Clustering Methods (Async)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def cluster(
+        self,
+        n_clusters: int | None = None,
+        algorithm: str = "minibatch_kmeans",
+        *,
+        filter: dict[str, Any] | None = None,
+        sample_size: int | None = None,
+        min_cluster_size: int = 5,
+        random_state: int | None = None,
+    ) -> Any:
+        """
+        Cluster documents by their embeddings (async).
+
+        See VectorCollection.cluster for full documentation.
+        """
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.cluster(
+                n_clusters,
+                algorithm,  # type: ignore[arg-type]
+                filter=filter,
+                sample_size=sample_size,
+                min_cluster_size=min_cluster_size,
+                random_state=random_state,
+            ),
+        )
+
+    async def auto_tag(
+        self,
+        cluster_result: Any,
+        *,
+        method: str = "keywords",
+        n_keywords: int = 5,
+        custom_callback: Any = None,
+    ) -> dict[int, str]:
+        """
+        Generate descriptive tags for clusters (async).
+
+        See VectorCollection.auto_tag for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.auto_tag(
+                cluster_result,
+                method=method,
+                n_keywords=n_keywords,
+                custom_callback=custom_callback,
+            ),
+        )
+
+    async def assign_cluster_metadata(
+        self,
+        cluster_result: Any,
+        tags: dict[int, str] | None = None,
+        *,
+        metadata_key: str = "cluster",
+        tag_key: str = "cluster_tag",
+    ) -> int:
+        """
+        Persist cluster assignments to metadata (async).
+
+        See VectorCollection.assign_cluster_metadata for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.assign_cluster_metadata(
+                cluster_result,
+                tags,
+                metadata_key=metadata_key,
+                tag_key=tag_key,
+            ),
+        )
+
+    async def get_cluster_members(
+        self,
+        cluster_id: int,
+        *,
+        metadata_key: str = "cluster",
+    ) -> list[Document]:
+        """
+        Get all documents in a cluster (async).
+
+        See VectorCollection.get_cluster_members for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.get_cluster_members(
+                cluster_id, metadata_key=metadata_key
+            ),
+        )
+
+    async def save_cluster(
+        self,
+        name: str,
+        cluster_result: Any,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Save cluster state for later assignment (async).
+
+        See VectorCollection.save_cluster for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.save_cluster(
+                name, cluster_result, metadata=metadata
+            ),
+        )
+
+    async def load_cluster(
+        self,
+        name: str,
+    ) -> tuple[Any, dict[str, Any]] | None:
+        """
+        Load saved cluster state (async).
+
+        See VectorCollection.load_cluster for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.load_cluster(name),
+        )
+
+    async def list_clusters(self) -> list[dict[str, Any]]:
+        """
+        List all saved cluster configurations (async).
+
+        See VectorCollection.list_clusters for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._collection.list_clusters,
+        )
+
+    async def delete_cluster(self, name: str) -> bool:
+        """
+        Delete a saved cluster configuration (async).
+
+        See VectorCollection.delete_cluster for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.delete_cluster(name),
+        )
+
+    async def assign_to_cluster(
+        self,
+        name: str,
+        doc_ids: list[int],
+        *,
+        metadata_key: str = "cluster",
+    ) -> int:
+        """
+        Assign documents to a saved cluster (async).
+
+        See VectorCollection.assign_to_cluster for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.assign_to_cluster(
+                name, doc_ids, metadata_key=metadata_key
+            ),
+        )
+
 
 class AsyncVectorDB:
     """
@@ -284,6 +463,38 @@ class AsyncVectorDB:
                     sync_collection, self._executor
                 )
             return self._collections[cache_key]
+
+    def list_collections(self) -> list[str]:
+        """Return names of all initialized collections."""
+        return self._db.list_collections()
+
+    async def search_collections(
+        self,
+        query: Sequence[float],
+        collections: list[str] | None = None,
+        k: int = 10,
+        filter: dict[str, Any] | None = None,
+        *,
+        normalize_scores: bool = True,
+        parallel: bool = True,
+    ) -> list[tuple[Document, float, str]]:
+        """
+        Search across multiple collections with merged, ranked results.
+
+        See VectorDB.search_collections for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._db.search_collections(
+                query,
+                collections,
+                k,
+                filter,
+                normalize_scores=normalize_scores,
+                parallel=parallel,
+            ),
+        )
 
     async def vacuum(self, checkpoint_wal: bool = True) -> None:
         """

@@ -259,3 +259,89 @@ async def test_async_similarity_search_batch(sample_texts, sample_embeddings):
             doc, score = query_results[0]
             assert doc.page_content == sample_texts[i]
             assert score < 0.01
+
+
+@pytest.mark.asyncio
+async def test_async_cluster_persistence_roundtrip():
+    """Test save_cluster and load_cluster async methods."""
+    async with AsyncVectorDB(":memory:") as db:
+        collection = db.collection("test")
+
+        np.random.seed(42)
+        embeddings = np.random.randn(20, 384).astype(np.float32)
+        embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+        await collection.add_texts(
+            texts=[f"doc_{i}" for i in range(20)],
+            embeddings=embeddings.tolist(),
+        )
+
+        result = await collection.cluster(n_clusters=3, random_state=42)
+        await collection.save_cluster("test_cluster", result, metadata={"v": 1})
+
+        loaded = await collection.load_cluster("test_cluster")
+        assert loaded is not None
+        loaded_result, loaded_meta = loaded
+        assert loaded_result.n_clusters == 3
+        assert loaded_meta == {"v": 1}
+
+
+@pytest.mark.asyncio
+async def test_async_list_and_delete_clusters():
+    """Test list_clusters and delete_cluster async methods."""
+    async with AsyncVectorDB(":memory:") as db:
+        collection = db.collection("test")
+
+        np.random.seed(42)
+        embeddings = np.random.randn(10, 384).astype(np.float32)
+        embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+        await collection.add_texts(
+            texts=[f"doc_{i}" for i in range(10)],
+            embeddings=embeddings.tolist(),
+        )
+
+        result = await collection.cluster(n_clusters=2, random_state=42)
+        await collection.save_cluster("cluster_a", result)
+        await collection.save_cluster("cluster_b", result)
+
+        clusters = await collection.list_clusters()
+        assert len(clusters) == 2
+        names = {c["name"] for c in clusters}
+        assert names == {"cluster_a", "cluster_b"}
+
+        deleted = await collection.delete_cluster("cluster_a")
+        assert deleted is True
+
+        clusters = await collection.list_clusters()
+        assert len(clusters) == 1
+        assert clusters[0]["name"] == "cluster_b"
+
+
+@pytest.mark.asyncio
+async def test_async_assign_to_cluster():
+    """Test assign_to_cluster async method."""
+    async with AsyncVectorDB(":memory:") as db:
+        collection = db.collection("test")
+
+        np.random.seed(42)
+        embeddings = np.random.randn(10, 384).astype(np.float32)
+        embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+        await collection.add_texts(
+            texts=[f"doc_{i}" for i in range(10)],
+            embeddings=embeddings.tolist(),
+        )
+
+        result = await collection.cluster(n_clusters=2, random_state=42)
+        await collection.save_cluster("saved", result)
+
+        new_emb = np.random.randn(3, 384).astype(np.float32)
+        new_emb /= np.linalg.norm(new_emb, axis=1, keepdims=True)
+        new_ids = await collection.add_texts(
+            texts=["new_a", "new_b", "new_c"],
+            embeddings=new_emb.tolist(),
+        )
+
+        assigned = await collection.assign_to_cluster("saved", new_ids)
+        assert assigned == 3

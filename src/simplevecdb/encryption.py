@@ -19,7 +19,8 @@ Usage:
     db = VectorDB("secure.db", encryption_key=os.urandom(32))
 
 Requirements:
-    pip install simplevecdb[encryption]
+    Included in the standard install. If missing, reinstall:
+    pip install --force-reinstall simplevecdb
 """
 
 from __future__ import annotations
@@ -57,8 +58,8 @@ class EncryptionUnavailableError(ImportError):
 
     def __init__(self) -> None:
         super().__init__(
-            "Encryption requires additional dependencies. "
-            "Install with: pip install simplevecdb[encryption]"
+            "Encryption requires sqlcipher3-binary and cryptography. "
+            "Reinstall simplevecdb: pip install --force-reinstall simplevecdb"
         )
 
 

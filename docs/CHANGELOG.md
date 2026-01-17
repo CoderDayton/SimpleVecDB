@@ -5,6 +5,107 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-01-17
+
+### Added
+
+- **Vector Clustering & Auto-Tagging** - Discover natural groupings in embeddings
+  - `VectorCollection.cluster()` - Cluster documents by semantic similarity
+    - **K-means**: Classic centroid-based clustering for balanced clusters
+    - **MiniBatch K-means**: Scalable variant for large datasets (default)
+    - **HDBSCAN**: Density-based clustering that auto-discovers cluster count
+  - `VectorCollection.auto_tag()` - Generate descriptive tags for clusters
+    - TF-IDF method (default): Extract keywords with highest TF-IDF scores
+    - Frequency method: Extract most common words per cluster
+    - Custom callback: Implement custom tagging logic (e.g., LLM-based)
+  - `VectorCollection.assign_cluster_metadata()` - Persist cluster IDs to document metadata
+  - `VectorCollection.get_cluster_members()` - Retrieve all documents in a cluster
+
+- **Cluster Quality Metrics** - Evaluate clustering results
+  - `ClusterResult.inertia` - Sum of squared distances to centroids (K-means only, lower is better)
+  - `ClusterResult.silhouette_score` - Cluster separation metric (-1 to 1, higher is better)
+  - `ClusterResult.metrics()` - Get all metrics as dictionary
+
+- **Cluster Persistence** - Save and reuse cluster configurations
+  - `VectorCollection.save_cluster()` - Save cluster centroids and metadata to database
+  - `VectorCollection.load_cluster()` - Load saved cluster configuration
+  - `VectorCollection.list_clusters()` - List all saved cluster configurations
+  - `VectorCollection.delete_cluster()` - Delete a saved cluster configuration
+  - `VectorCollection.assign_to_cluster()` - Assign new documents to saved clusters without re-clustering
+
+- **Async Clustering Support** - Full async/await parity for all clustering operations
+  - `AsyncVectorCollection.cluster()`, `auto_tag()`, `assign_cluster_metadata()`, `get_cluster_members()`
+  - `AsyncVectorCollection.save_cluster()`, `load_cluster()`, `list_clusters()`, `delete_cluster()`, `assign_to_cluster()`
+
+- **New Dependencies** - Now included in standard installation
+  - `scikit-learn>=1.3.0` - K-means, MiniBatch K-means, silhouette score
+  - `hdbscan>=0.8.33` - Density-based clustering
+  - `sqlcipher3-binary>=0.5.0` - Encryption support (previously optional)
+  - `cryptography>=41.0` - Encryption utilities (previously optional)
+
+- **Documentation**
+  - New comprehensive clustering guide: `docs/guides/clustering.md`
+    - Algorithm comparison and selection guide
+    - Quality metrics interpretation
+    - Cluster persistence workflows
+    - Use cases: product categorization, topic discovery, customer segmentation, duplicate detection
+    - Best practices and troubleshooting
+  - New types reference: `docs/api/types.md`
+    - Complete `ClusterResult` API documentation
+    - `Document`, `DistanceStrategy`, `Quantization`, `ClusterAlgorithm` reference
+  - Updated README.md and docs/index.md with clustering sections
+  - Enhanced `docs/api/core.md` with clustering examples
+
+### Changed
+
+- **pyproject.toml**: Updated `scikit-learn` minimum version from `1.0` to `1.3.0` for improved clustering stability
+
+### Testing
+
+- Added 26 clustering tests in `tests/unit/test_clustering.py`:
+  - 16 core clustering tests (algorithms, auto-tagging, metadata persistence, edge cases)
+  - 4 cluster metrics tests (inertia, silhouette, metrics method)
+  - 6 cluster persistence tests (save/load/list/delete/assign)
+- Added 3 async clustering tests in `tests/unit/test_async.py`
+- Total test count: 305 (up from 292)
+
+### Installation
+
+Clustering and encryption are now included by default:
+
+```bash
+pip install simplevecdb
+```
+
+No extra installation steps required!
+
+### Example
+
+```python
+from simplevecdb import VectorDB
+
+db = VectorDB("products.db")
+collection = db.collection("items")
+
+# Cluster documents
+result = collection.cluster(n_clusters=5, algorithm="minibatch_kmeans")
+
+# Generate tags and persist
+tags = collection.auto_tag(result, method="tfidf", n_keywords=3)
+collection.assign_cluster_metadata(result, tags)
+
+# Save for fast assignment of new documents
+collection.save_cluster("categories", result, metadata={"tags": tags})
+
+# Later: assign new documents without re-clustering
+new_ids = collection.add_texts(new_texts, embeddings=new_embeddings)
+collection.assign_to_cluster("categories", new_ids)
+
+# Evaluate quality
+print(f"Silhouette Score: {result.silhouette_score:.2f}")  # 0.62
+print(f"Inertia: {result.inertia:.2f}")  # 1523.45
+```
+
 ## [2.0.0] - 2025-12-23
 
 ### Breaking Changes

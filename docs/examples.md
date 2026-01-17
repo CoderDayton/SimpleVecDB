@@ -249,6 +249,86 @@ async def main():
 results = asyncio.run(main())
 ```
 
+### Cross-Collection Search (v2.2+)
+
+Search across multiple collections with unified ranking:
+
+```python
+from simplevecdb import VectorDB
+
+db = VectorDB("multi_tenant.db")
+
+# Create domain-specific collections
+users = db.collection("users")
+products = db.collection("products")
+support = db.collection("support_tickets")
+
+# Populate collections
+users.add_texts(
+    ["Alice - software engineer", "Bob - data scientist"],
+    embeddings=[[0.1]*384, [0.2]*384],
+    metadatas=[{"role": "eng"}, {"role": "data"}]
+)
+products.add_texts(
+    ["Python IDE Pro", "Data Analysis Suite"],
+    embeddings=[[0.15]*384, [0.25]*384],
+    metadatas=[{"category": "software"}, {"category": "software"}]
+)
+support.add_texts(
+    ["How to install Python IDE?", "Data export not working"],
+    embeddings=[[0.12]*384, [0.22]*384]
+)
+
+# Search across ALL collections at once
+query = [0.1]*384
+results = db.search_collections(query, k=5)
+
+for doc, score, collection_name in results:
+    print(f"[{collection_name}] {doc.page_content} ({score:.3f})")
+# Output:
+# [users] Alice - software engineer (0.999)
+# [support] How to install Python IDE? (0.893)
+# [products] Python IDE Pro (0.871)
+# ...
+
+# Search only specific collections
+results = db.search_collections(
+    query,
+    collections=["users", "products"],
+    k=3
+)
+
+# Apply metadata filter across all searched collections
+results = db.search_collections(
+    query,
+    k=10,
+    filter={"category": "software"}
+)
+
+# List available collections
+print(db.list_collections())  # ['users', 'products', 'support_tickets']
+```
+
+**Async cross-collection search:**
+
+```python
+import asyncio
+from simplevecdb.async_core import AsyncVectorDB
+
+async def search_all():
+    db = AsyncVectorDB("app.db")
+    
+    # Initialize collections
+    db.collection("users")
+    db.collection("products")
+    
+    # Search across collections
+    results = await db.search_collections([0.1]*384, k=10)
+    return results
+
+results = asyncio.run(search_all())
+```
+
 ## Benchmark Scripts
 
 ### Backend Benchmark
