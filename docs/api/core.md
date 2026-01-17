@@ -210,6 +210,8 @@ results = db.search_collections([0.1]*384, parallel=False)
 | `list_collections()` | Names of all initialized collections |
 | `search_collections(query, collections, k, filter, normalize_scores, parallel)` | Search across multiple collections with merged results |
 
+<a id="clustering-auto-tagging"></a>
+
 ### Clustering & Auto-Tagging
 
 Group similar documents and generate descriptive tags:

@@ -370,7 +370,7 @@ collection.assign_cluster_metadata(result, tags, metadata_key="topic")
 
 ## API Reference
 
-See [VectorCollection API](../api/core.md#clustering--auto-tagging) for complete method signatures and parameters.
+See [VectorCollection API](../api/core.md#clustering-auto-tagging) for complete method signatures and parameters.
 
 ## Troubleshooting
 

@@ -144,12 +144,7 @@ collection = db.collection("docs", quantization=Quantization.BIT)
 
 ### ClusterAlgorithm
 
-::: simplevecdb.types.ClusterAlgorithm
-    options:
-      show_root_heading: true
-      show_source: false
-
-Clustering algorithms.
+Clustering algorithms (string literals accepted by `VectorCollection.cluster`).
 
 | Value | Description | Requires n_clusters | Provides Centroids |
 |-------|-------------|--------------------|--------------------|
