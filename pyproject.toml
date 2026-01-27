@@ -49,6 +49,7 @@ dev = [
     "mkdocs-shadcn>=0.9.7",
     "pymdown-extensions>=10.0",
     "sqlcipher3-binary>=0.5.0",
+    "bandit>=1.9.3",
 ]
 
 [build-system]
