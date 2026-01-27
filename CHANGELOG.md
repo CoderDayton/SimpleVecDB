@@ -5,6 +5,20 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-01-27
+
+### Changed
+
+- Moved integration dependencies (langchain-core, langchain-openai, llama-index) from dev to main dependencies for easier installation
+- Added bandit to dev dependencies for security linting in pre-commit
+- Cleaned up duplicate dev dependency definitions
+
+## [2.2.0] - 2026-01-26
+
+### Added
+
+- Version 2.2.0 release
+
 ## [2.1.0] - 2026-01-01
 
 ### Added
@@ -415,6 +429,10 @@ Benchmarks on i9-13900K & RTX 4090 with 10k vectors (384-dim):
 - **Documentation**: https://coderdayton.github.io/simplevecdb/
 - **License**: MIT
 
+[2.2.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.1
+[2.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.0
+[2.1.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.1.0
+[2.0.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.0.0
 [1.3.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.3.0
 [1.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.2.0
 [1.1.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.1
