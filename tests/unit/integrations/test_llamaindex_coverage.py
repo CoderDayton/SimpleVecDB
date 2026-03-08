@@ -4,6 +4,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+try:
+    import llama_index  # noqa: F401
+except ImportError:
+    pytest.skip("llama-index not installed", allow_module_level=True)
+
 
 def test_llamaindex_delete_nodes(tmp_path):
     """Test LlamaIndex integration delete_nodes method."""

@@ -167,10 +167,29 @@ def validate_filter(filter_dict: dict[str, Any] | None) -> None:
                 f"Filter value for '{key}' must be int, float, str, or list, "
                 f"got {type(value).__name__}: {value!r}"
             )
+        if isinstance(value, float) and (
+            value != value or value == float("inf") or value == float("-inf")
+        ):
+            raise ValueError(
+                f"Filter value for '{key}' must be finite, got {value!r}"
+            )
         if isinstance(value, list):
+            if not value:
+                raise ValueError(
+                    f"Filter list for '{key}' must not be empty"
+                )
             for i, item in enumerate(value):
                 if not isinstance(item, (int, float, str)):
                     raise ValueError(
                         f"Filter list items for '{key}' must be int, float, or str, "
                         f"got {type(item).__name__} at index {i}: {item!r}"
+                    )
+                if isinstance(item, float) and (
+                    item != item
+                    or item == float("inf")
+                    or item == float("-inf")
+                ):
+                    raise ValueError(
+                        f"Filter list item for '{key}' at index {i} must be finite, "
+                        f"got {item!r}"
                     )

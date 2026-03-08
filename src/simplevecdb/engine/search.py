@@ -84,11 +84,15 @@ class SearchEngine:
         if len(keys) == 0:
             return []
 
+        # Convert once, reuse
+        keys_list = keys.tolist()
+        dist_list = distances.tolist()
+
         # Fetch documents and apply filter
-        docs_map = self._catalog.get_documents_by_ids(keys.tolist())
+        docs_map = self._catalog.get_documents_by_ids(keys_list)
 
         results: list[tuple[Document, float]] = []
-        for key, dist in zip(keys.tolist(), distances.tolist()):
+        for key, dist in zip(keys_list, dist_list):
             if key not in docs_map:
                 continue
 
@@ -98,8 +102,7 @@ class SearchEngine:
             if filter and not self._matches_filter(metadata, filter):
                 continue
 
-            doc = Document(page_content=text, metadata=metadata)
-            results.append((doc, float(dist)))
+            results.append((Document(page_content=text, metadata=metadata), float(dist)))
 
             if len(results) >= k:
                 break
@@ -153,21 +156,19 @@ class SearchEngine:
             keys_batch = keys_batch.reshape(1, -1)
             distances_batch = distances_batch.reshape(1, -1)
 
-        # Collect all unique keys for batch document fetch
-        all_keys = set()
-        for keys in keys_batch:
-            all_keys.update(keys.tolist())
+        # Collect all unique keys via numpy (avoids per-row tolist)
+        all_keys_arr = np.unique(keys_batch.ravel())
+        docs_map = self._catalog.get_documents_by_ids(all_keys_arr.tolist())
 
-        docs_map = self._catalog.get_documents_by_ids(list(all_keys))
+        # Convert batch arrays to Python lists once
+        keys_lists = keys_batch.tolist()
+        dist_lists = distances_batch.tolist()
 
         # Build results for each query
         all_results: list[list[tuple[Document, float]]] = []
-        for query_idx in range(len(queries)):
-            keys = keys_batch[query_idx]
-            dists = distances_batch[query_idx]
-
+        for keys_row, dists_row in zip(keys_lists, dist_lists):
             results: list[tuple[Document, float]] = []
-            for key, dist in zip(keys.tolist(), dists.tolist()):
+            for key, dist in zip(keys_row, dists_row):
                 if key not in docs_map:
                     continue
 
@@ -176,8 +177,7 @@ class SearchEngine:
                 if filter and not self._matches_filter(metadata, filter):
                     continue
 
-                doc = Document(page_content=text, metadata=metadata)
-                results.append((doc, float(dist)))
+                results.append((Document(page_content=text, metadata=metadata), float(dist)))
 
                 if len(results) >= k:
                     break

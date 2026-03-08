@@ -365,6 +365,23 @@ class VectorCollection:
         if not texts:
             return []
 
+        if metadatas is not None and len(metadatas) != len(texts):
+            raise ValueError(
+                f"metadatas length ({len(metadatas)}) must match texts length ({len(texts)})"
+            )
+        if embeddings is not None and len(embeddings) != len(texts):
+            raise ValueError(
+                f"embeddings length ({len(embeddings)}) must match texts length ({len(texts)})"
+            )
+        if ids is not None and len(ids) != len(texts):
+            raise ValueError(
+                f"ids length ({len(ids)}) must match texts length ({len(texts)})"
+            )
+        if parent_ids is not None and len(parent_ids) != len(texts):
+            raise ValueError(
+                f"parent_ids length ({len(parent_ids)}) must match texts length ({len(texts)})"
+            )
+
         # Resolve embeddings
         if embeddings is None:
             try:
@@ -404,11 +421,11 @@ class VectorCollection:
                 parent_ids=batch_parent_ids,
             )
 
-            # Prepare vectors
-            emb_np = np.array(batch_embeds, dtype=np.float32)
+            # Prepare vectors (asarray avoids copy if already ndarray)
+            emb_np = np.asarray(batch_embeds, dtype=np.float32)
 
             # Add to usearch index
-            self._index.add(np.array(doc_ids, dtype=np.uint64), emb_np, threads=threads)
+            self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
 
             all_ids.extend(doc_ids)
 
@@ -488,7 +505,7 @@ class VectorCollection:
                 batch_embeds.append(embedding)
             else:
                 needs_embedding = True
-                batch_embeds.append([])  # Placeholder
+                batch_embeds.append(None)  # Placeholder for auto-embedding
 
             # Process batch when full
             if len(batch_texts) >= batch_size:
@@ -559,9 +576,7 @@ class VectorCollection:
                 generated = embed_fn(texts)
                 # Replace placeholders with generated embeddings
                 for i, emb in enumerate(embeds):
-                    if (
-                        emb is None
-                    ):  # Explicit None placeholder (avoids NumPy truthiness issue)
+                    if emb is None or (isinstance(emb, list) and len(emb) == 0):
                         embeds[i] = generated[i]
             except Exception as e:
                 raise ValueError(
@@ -601,6 +616,8 @@ class VectorCollection:
         Returns:
             List of (Document, distance) tuples, sorted by ascending distance.
         """
+        if k <= 0:
+            return []
         return self._search.similarity_search(
             query, k, filter, exact=exact, threads=threads
         )
@@ -637,6 +654,8 @@ class VectorCollection:
             >>> for query_results in results:
             ...     print(f"Found {len(query_results)} matches")
         """
+        if k <= 0 or not queries:
+            return []
         return self._search.similarity_search_batch(
             queries, k, filter, exact=exact, threads=threads
         )
@@ -660,6 +679,8 @@ class VectorCollection:
         Raises:
             RuntimeError: If FTS5 is not available.
         """
+        if k <= 0 or not query:
+            return []
         return self._search.keyword_search(query, k, filter)
 
     def hybrid_search(
@@ -691,6 +712,8 @@ class VectorCollection:
         Raises:
             RuntimeError: If FTS5 is not available.
         """
+        if k <= 0 or not query:
+            return []
         return self._search.hybrid_search(
             query,
             k,
@@ -1548,7 +1571,13 @@ class VectorDB:
             with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as executor:
                 futures = [executor.submit(_search_one, coll) for coll in targets]
                 for future in futures:
-                    all_results.extend(future.result())
+                    try:
+                        all_results.extend(future.result())
+                    except Exception:
+                        _logger.warning(
+                            "search_collections: one collection search failed",
+                            exc_info=True,
+                        )
         else:
             for coll in targets:
                 all_results.extend(_search_one(coll))
@@ -1713,6 +1742,9 @@ class VectorDB:
             # Check named collections (vectors_{name})
             for table in table_names:
                 if table.startswith("vectors_") and table != "vec_index":
+                    # Validate table name from sqlite_master (defense-in-depth)
+                    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", table):
+                        continue
                     collection_name = table[8:]  # Remove "vectors_" prefix
                     try:
                         count = conn.execute(
@@ -1785,8 +1817,17 @@ MIGRATION ROLLBACK INSTRUCTIONS:
 
     def close(self) -> None:
         """Close the database connection and save indexes."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
         self.save()
         self.conn.close()
+
+    def __enter__(self) -> "VectorDB":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
 
     def __del__(self) -> None:
         try:

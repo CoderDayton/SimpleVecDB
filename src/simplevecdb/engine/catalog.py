@@ -224,16 +224,25 @@ class CatalogManager:
         # Convert embeddings to bytes if provided
         embedding_blobs: list[bytes | None] = []
         if embeddings is not None:
-            for emb in embeddings:
-                arr = np.asarray(emb, dtype=np.float32)
-                embedding_blobs.append(arr.tobytes())
+            # Batch conversion: single np.array call instead of per-item np.asarray
+            emb_matrix = np.asarray(embeddings, dtype=np.float32)
+            row_bytes = emb_matrix.tobytes()
+            stride = emb_matrix.shape[1] * 4  # float32 = 4 bytes
+            embedding_blobs = [
+                row_bytes[i * stride : (i + 1) * stride]
+                for i in range(emb_matrix.shape[0])
+            ]
         else:
             embedding_blobs = [None] * len(texts)
 
+        # Pre-serialize metadata (compact separators saves allocation overhead)
+        _dumps = json.dumps
+        meta_strs = [_dumps(m, separators=(",", ":")) for m in metadatas]
+
         rows = [
-            (uid, txt, json.dumps(meta), emb_blob, pid)
-            for uid, txt, meta, emb_blob, pid in zip(
-                ids_list, texts, metadatas, embedding_blobs, parent_ids_list
+            (uid, txt, meta_str, emb_blob, pid)
+            for uid, txt, meta_str, emb_blob, pid in zip(
+                ids_list, texts, meta_strs, embedding_blobs, parent_ids_list
             )
         ]
 
