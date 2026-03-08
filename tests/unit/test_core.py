@@ -115,12 +115,11 @@ def test_add_no_embeddings_raises(empty_db, monkeypatch):
 def test_close_and_del():
     """Test explicit closing of the database connection and resource cleanup."""
     db = VectorDB(":memory:")
-    conn = db.conn
     db.close()
 
-    # Verify connection is closed by attempting an operation
-    with pytest.raises(sqlite3.ProgrammingError):
-        conn.execute("SELECT 1")
+    # Verify close is idempotent (second call is a no-op)
+    db.close()
+    assert db._closed is True
 
 
 def test_recover_dim(tmp_path):

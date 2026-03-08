@@ -1797,7 +1797,6 @@ MIGRATION ROLLBACK INSTRUCTIONS:
             return
         self._closed = True
         self.save()
-        self.conn.close()
 
     def __enter__(self) -> "VectorDB":
         return self

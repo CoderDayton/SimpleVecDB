@@ -12,8 +12,7 @@ from .core import VectorDB, VectorCollection, get_optimal_batch_size
 from .async_core import AsyncVectorDB, AsyncVectorCollection
 from .config import config
 try:
-    from .integrations.langchain import SimpleVecDBVectorStore
-    from .integrations.llamaindex import SimpleVecDBLlamaStore
+    from .integrations import SimpleVecDBVectorStore, SimpleVecDBLlamaStore
 except ImportError:
     pass
 from .logging import get_logger, configure_logging, log_operation
