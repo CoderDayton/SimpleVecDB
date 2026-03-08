@@ -1,6 +1,13 @@
 repos:
   - repo: local
     hooks:
+      - id: version-sync
+        name: version sync check
+        entry: python3 scripts/check_version_sync.py
+        language: system
+        files: ^(pyproject\.toml|src/simplevecdb/__init__\.py)$
+        pass_filenames: false
+
       - id: ruff
         name: ruff
         entry: uv run ruff check . --fix
