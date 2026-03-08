@@ -19,8 +19,6 @@ from typing import Any, TYPE_CHECKING
 from pathlib import Path
 import platform
 import multiprocessing
-import itertools
-
 from .types import (
     Document,
     DistanceStrategy,
@@ -31,7 +29,7 @@ from .types import (
     ClusterResult,
     ClusterTagCallback,
 )
-from .utils import _import_optional
+from .utils import _import_optional, _batched
 from .engine.quantization import QuantizationStrategy
 from .engine.search import SearchEngine
 from .engine.catalog import CatalogManager
@@ -52,20 +50,6 @@ if TYPE_CHECKING:
     from .integrations.llamaindex import SimpleVecDBLlamaStore
 
 _logger = logging.getLogger("simplevecdb.core")
-
-
-def _batched(iterable: Iterable[Any], n: int) -> Iterable[Sequence[Any]]:
-    """Batch data into lists of length n. The last batch may be shorter."""
-    if isinstance(iterable, Sequence):
-        for i in range(0, len(iterable), n):
-            yield iterable[i : i + n]
-    else:
-        it = iter(iterable)
-        while True:
-            batch = list(itertools.islice(it, n))
-            if not batch:
-                return
-            yield batch
 
 
 def get_optimal_batch_size() -> int:
@@ -203,7 +187,7 @@ class VectorCollection:
         self._encryption_key = encryption_key
 
         # Sanitize name to prevent issues
-        if not re.match(r"^[a-zA-Z0-9_]+$", name):
+        if not re.match(constants.COLLECTION_NAME_PATTERN, name):
             raise ValueError(
                 f"Invalid collection name '{name}'. Must be alphanumeric + underscores."
             )
@@ -890,20 +874,14 @@ class VectorCollection:
             _logger.debug("Deleted old index file: %s", old_path)
 
         # Create new index with optional custom parameters
-        from .engine.usearch_index import (
-            DEFAULT_CONNECTIVITY,
-            DEFAULT_EXPANSION_ADD,
-            DEFAULT_EXPANSION_SEARCH,
-        )
-
         self._index = UsearchIndex(
             index_path=str(old_path),
             ndim=ndim,
             distance_strategy=self.distance_strategy,
             quantization=self.quantization,
-            connectivity=connectivity or DEFAULT_CONNECTIVITY,
-            expansion_add=expansion_add or DEFAULT_EXPANSION_ADD,
-            expansion_search=expansion_search or DEFAULT_EXPANSION_SEARCH,
+            connectivity=connectivity or constants.USEARCH_DEFAULT_CONNECTIVITY,
+            expansion_add=expansion_add or constants.USEARCH_DEFAULT_EXPANSION_ADD,
+            expansion_search=expansion_search or constants.USEARCH_DEFAULT_EXPANSION_SEARCH,
         )
 
         # Re-add all vectors
@@ -1400,8 +1378,8 @@ class VectorDB:
     def __init__(
         self,
         path: str | Path = ":memory:",
-        distance_strategy: DistanceStrategy = DistanceStrategy.COSINE,
-        quantization: Quantization = Quantization.FLOAT,
+        distance_strategy: DistanceStrategy = DistanceStrategy(constants.DEFAULT_DISTANCE_STRATEGY),
+        quantization: Quantization = Quantization(constants.DEFAULT_QUANTIZATION),
         *,
         encryption_key: str | bytes | None = None,
         auto_migrate: bool = False,

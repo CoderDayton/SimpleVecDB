@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import itertools
 import logging
 import sqlite3
 import sys
 import time
+from collections.abc import Iterable, Sequence
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
@@ -12,6 +14,20 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 # Use standard logging to avoid circular import with logging module
 _logger = logging.getLogger("simplevecdb.utils")
+
+
+def _batched(iterable: Iterable[Any], n: int) -> Iterable[Sequence[Any]]:
+    """Batch data into lists of length n. The last batch may be shorter."""
+    if isinstance(iterable, Sequence):
+        for i in range(0, len(iterable), n):
+            yield iterable[i : i + n]
+    else:
+        it = iter(iterable)
+        while True:
+            batch = list(itertools.islice(it, n))
+            if not batch:
+                return
+            yield batch
 
 
 def _import_optional(name: str) -> Any:

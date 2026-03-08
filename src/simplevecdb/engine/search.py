@@ -139,6 +139,13 @@ class SearchEngine:
 
         validate_filter(filter)
 
+        # For small query counts, sequential search avoids batch overhead
+        if len(queries) <= constants.USEARCH_BATCH_THRESHOLD:
+            return [
+                self.similarity_search(q, k, filter, exact=exact, threads=threads)
+                for q in queries
+            ]
+
         # Stack queries into batch array
         query_array = np.array(queries, dtype=np.float32)
 

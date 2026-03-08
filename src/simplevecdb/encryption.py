@@ -96,23 +96,10 @@ def _normalize_key(key: str | bytes) -> bytes:
     if isinstance(key, bytes) and len(key) == AES_KEY_SIZE:
         return key
 
-    # Use PBKDF2 with a deterministic salt for consistency
-    # This allows the same passphrase to always produce the same key
-    if isinstance(key, str):
-        key_bytes = key.encode("utf-8")
-    else:
-        key_bytes = key
-
-    # Derive a 32-byte key using PBKDF2-HMAC-SHA256 with a fixed salt
-    # This is intentionally deterministic (same input -> same key) while being
-    # computationally expensive enough for password-like passphrases.
-    return hashlib.pbkdf2_hmac(
-        "sha256",
-        key_bytes,
-        _NORMALIZE_KEY_SALT,
-        PBKDF2_ITERATIONS,
-        dklen=AES_KEY_SIZE,
-    )
+    # Use a fixed salt for deterministic key derivation (same input -> same key).
+    # This allows the same passphrase to consistently produce the same key
+    # across SQLCipher and index encryption operations.
+    return _derive_key(key, _NORMALIZE_KEY_SALT)
 
 
 # ============================================================================

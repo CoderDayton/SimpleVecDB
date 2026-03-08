@@ -13,6 +13,8 @@ import re
 from typing import Any, TYPE_CHECKING, Callable
 from collections.abc import Iterable, Sequence
 
+from ..utils import _batched
+
 from ..utils import validate_filter, retry_on_lock
 
 if TYPE_CHECKING:
@@ -546,8 +548,7 @@ class CatalogManager:
 
         updated = 0
         # Batch into chunks of 500 for performance
-        for i in range(0, len(updates), 500):
-            batch = updates[i : i + 500]
+        for batch in _batched(updates, 500):
             ids = [u[0] for u in batch]
 
             # Fetch all existing metadata in one query
