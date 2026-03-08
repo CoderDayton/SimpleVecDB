@@ -11,13 +11,16 @@ from .types import (
 from .core import VectorDB, VectorCollection, get_optimal_batch_size
 from .async_core import AsyncVectorDB, AsyncVectorCollection
 from .config import config
-from .integrations.langchain import SimpleVecDBVectorStore
-from .integrations.llamaindex import SimpleVecDBLlamaStore
+try:
+    from .integrations.langchain import SimpleVecDBVectorStore
+    from .integrations.llamaindex import SimpleVecDBLlamaStore
+except ImportError:
+    pass
 from .logging import get_logger, configure_logging, log_operation
 from .utils import DatabaseLockedError, retry_on_lock, validate_filter
 from .encryption import EncryptionError, EncryptionUnavailableError
 
-__version__ = "2.2.1"
+__version__ = "2.3.0"
 __all__ = [
     # Core classes
     "VectorDB",

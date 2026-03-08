@@ -1,7 +1,20 @@
-"""Integrations package for SimpleVecDB."""
+"""Integrations package for SimpleVecDB.
 
-from .langchain import SimpleVecDBVectorStore
-from .llamaindex import SimpleVecDBLlamaStore
+Requires the 'integrations' extra: pip install simplevecdb[integrations]
+"""
+
+
+def __getattr__(name: str):
+    if name == "SimpleVecDBVectorStore":
+        from .langchain import SimpleVecDBVectorStore
+
+        return SimpleVecDBVectorStore
+    if name == "SimpleVecDBLlamaStore":
+        from .llamaindex import SimpleVecDBLlamaStore
+
+        return SimpleVecDBLlamaStore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "SimpleVecDBVectorStore",

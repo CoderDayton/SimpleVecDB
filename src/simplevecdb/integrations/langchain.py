@@ -1,9 +1,16 @@
 from collections.abc import Iterable
 from typing import Any
 
-from langchain_core.vectorstores import VectorStore
-from langchain_core.embeddings import Embeddings
-from langchain_core.documents import Document as LangChainDocument
+try:
+    from langchain_core.vectorstores import VectorStore
+    from langchain_core.embeddings import Embeddings
+    from langchain_core.documents import Document as LangChainDocument
+except ImportError as exc:
+    raise ImportError(
+        "LangChain packages are no longer included by default. "
+        "As of v2.3.0, install the integrations extra:\n\n"
+        "  pip install simplevecdb[integrations]"
+    ) from exc
 
 from simplevecdb.core import VectorDB  # core class
 from simplevecdb import constants
