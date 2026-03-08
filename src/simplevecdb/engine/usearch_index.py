@@ -266,9 +266,11 @@ class UsearchIndex:
                 vectors = vectors / np.maximum(norms, 1e-12)
 
             # Upsert: remove existing keys first (usearch doesn't allow duplicates)
-            for key in keys:
-                if int(key) in self._index:
-                    self._index.remove(int(key))
+            if self.size > 0:
+                for key in keys:
+                    int_key = int(key)
+                    if int_key in self._index:
+                        self._index.remove(int_key)
 
             self._index.add(keys, vectors, threads=threads)
             self._dirty = True

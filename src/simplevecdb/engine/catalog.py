@@ -67,6 +67,8 @@ class CatalogManager:
         self._table_name = table_name
         self._fts_table_name = fts_table_name
         self._fts_enabled = False
+        self._cluster_table_name = f"{table_name}_clusters"
+        self._cluster_table_ready = False
 
     def create_tables(self) -> None:
         """Create metadata and FTS tables if they don't exist."""
@@ -163,7 +165,7 @@ class CatalogManager:
         """
         if not self._fts_enabled or not ids:
             return
-        placeholders = ",".join("?" for _ in ids)
+        placeholders = ",".join(["?"] * len(ids))
         self.conn.execute(
             f"DELETE FROM {self._fts_table_name} WHERE rowid IN ({placeholders})",
             tuple(ids),
@@ -181,7 +183,7 @@ class CatalogManager:
         """
         if not self._fts_enabled or not ids:
             return
-        placeholders = ",".join("?" for _ in ids)
+        placeholders = ",".join(["?"] * len(ids))
         self.conn.execute(
             f"DELETE FROM {self._fts_table_name} WHERE rowid IN ({placeholders})",
             tuple(ids),
@@ -262,18 +264,20 @@ class CatalogManager:
                 rows,
             )
 
-            # Get the actual rowids (handles both insert and upsert)
-            real_ids = [
-                r[0]
-                for r in self.conn.execute(
+            # Recover inserted IDs: for pure inserts, use lastrowid arithmetic;
+            # for upserts with explicit IDs, use the IDs directly
+            if all(uid is not None for uid in ids_list):
+                real_ids = [int(uid) for uid in ids_list]
+            else:
+                cursor = self.conn.execute(
                     f"SELECT id FROM {self._table_name} ORDER BY id DESC LIMIT ?",
                     (len(texts),),
                 )
-            ]
-            real_ids.reverse()
+                real_ids = [r[0] for r in cursor]
+                real_ids.reverse()
 
             # Update FTS index
-            self.upsert_fts_rows(real_ids, list(texts))
+            self.upsert_fts_rows(real_ids, texts)
 
         _logger.debug("Added %d documents, ids=%s", len(real_ids), real_ids[:5])
         return real_ids
@@ -332,7 +336,7 @@ class CatalogManager:
         if not ids:
             return {}
 
-        placeholders = ",".join("?" for _ in ids)
+        placeholders = ",".join(["?"] * len(ids))
         rows = self.conn.execute(
             f"SELECT id, text, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
             tuple(ids),
@@ -359,7 +363,7 @@ class CatalogManager:
         if not ids:
             return {}
 
-        placeholders = ",".join("?" for _ in ids)
+        placeholders = ",".join(["?"] * len(ids))
         rows = self.conn.execute(
             f"SELECT id, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
             tuple(ids),
@@ -373,11 +377,40 @@ class CatalogManager:
                 result[row_id] = None
         return result
 
+    def get_documents_and_embeddings_by_ids(
+        self, ids: Sequence[int]
+    ) -> dict[int, tuple[str, dict[str, Any], Any]]:
+        """Fetch documents with their embeddings in a single query.
+
+        Args:
+            ids: Document IDs to fetch
+
+        Returns:
+            Dict mapping id -> (text, metadata, embedding_array_or_None)
+        """
+        import numpy as np
+
+        if not ids:
+            return {}
+
+        placeholders = ",".join(["?"] * len(ids))
+        rows = self.conn.execute(
+            f"SELECT id, text, metadata, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
+            tuple(ids),
+        ).fetchall()
+
+        result: dict[int, tuple[str, dict[str, Any], np.ndarray | None]] = {}
+        for row_id, text, meta_json, emb_blob in rows:
+            meta = json.loads(meta_json) if meta_json else {}
+            emb = np.frombuffer(emb_blob, dtype=np.float32) if emb_blob is not None else None
+            result[row_id] = (text, meta, emb)
+        return result
+
     def find_ids_by_texts(self, texts: Sequence[str]) -> list[int]:
         """Find document IDs matching exact text content."""
         if not texts:
             return []
-        placeholders = ",".join("?" for _ in texts)
+        placeholders = ",".join(["?"] * len(texts))
         rows = self.conn.execute(
             f"SELECT id FROM {self._table_name} WHERE text IN ({placeholders})",
             tuple(texts),
@@ -656,30 +689,22 @@ class CatalogManager:
         Returns:
             Tuple of (id, text, metadata) for parent, or None if no parent
         """
-        # First get the parent_id
+        # Single self-join instead of two sequential queries
         row = self.conn.execute(
-            f"SELECT parent_id FROM {self._table_name} WHERE id = ?",
+            f"""SELECT p.id, p.text, p.metadata
+            FROM {self._table_name} c
+            JOIN {self._table_name} p ON p.id = c.parent_id
+            WHERE c.id = ?""",
             (doc_id,),
         ).fetchone()
 
-        if not row or row[0] is None:
-            return None
-
-        parent_id = row[0]
-
-        # Then fetch the parent document
-        parent_row = self.conn.execute(
-            f"SELECT id, text, metadata FROM {self._table_name} WHERE id = ?",
-            (parent_id,),
-        ).fetchone()
-
-        if not parent_row:
+        if not row:
             return None
 
         return (
-            int(parent_row[0]),
-            parent_row[1],
-            json.loads(parent_row[2]) if parent_row[2] else {},
+            int(row[0]),
+            row[1],
+            json.loads(row[2]) if row[2] else {},
         )
 
     def get_descendants(
@@ -804,7 +829,9 @@ class CatalogManager:
 
     def _ensure_cluster_table(self) -> None:
         """Create cluster state table if it doesn't exist."""
-        cluster_table = f"{self._table_name}_clusters"
+        if self._cluster_table_ready:
+            return
+        cluster_table = self._cluster_table_name
         self.conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {cluster_table} (
@@ -818,6 +845,7 @@ class CatalogManager:
             """
         )
         self.conn.commit()
+        self._cluster_table_ready = True
 
     def save_cluster_state(
         self,
@@ -838,7 +866,7 @@ class CatalogManager:
             metadata: Additional metadata (inertia, silhouette, etc.)
         """
         self._ensure_cluster_table()
-        cluster_table = f"{self._table_name}_clusters"
+        cluster_table = self._cluster_table_name
 
         meta_json = json.dumps(metadata) if metadata else None
 
@@ -865,7 +893,7 @@ class CatalogManager:
             Tuple of (algorithm, n_clusters, centroids_bytes, metadata) or None
         """
         self._ensure_cluster_table()
-        cluster_table = f"{self._table_name}_clusters"
+        cluster_table = self._cluster_table_name
 
         row = self.conn.execute(
             f"SELECT algorithm, n_clusters, centroids, metadata FROM {cluster_table} WHERE name = ?",
@@ -882,7 +910,7 @@ class CatalogManager:
     def list_cluster_states(self) -> list[dict[str, Any]]:
         """List all saved cluster configurations."""
         self._ensure_cluster_table()
-        cluster_table = f"{self._table_name}_clusters"
+        cluster_table = self._cluster_table_name
 
         rows = self.conn.execute(
             f"SELECT name, algorithm, n_clusters, created_at, metadata FROM {cluster_table}"
@@ -904,7 +932,7 @@ class CatalogManager:
     def delete_cluster_state(self, name: str) -> bool:
         """Delete a saved cluster configuration."""
         self._ensure_cluster_table()
-        cluster_table = f"{self._table_name}_clusters"
+        cluster_table = self._cluster_table_name
 
         cursor = self.conn.execute(
             f"DELETE FROM {cluster_table} WHERE name = ?", (name,)

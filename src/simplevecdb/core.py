@@ -14,6 +14,7 @@ import sqlite3
 import tempfile
 import numpy as np
 import uuid
+from collections import defaultdict
 from collections.abc import Generator, Iterable, Sequence
 from typing import Any, TYPE_CHECKING
 from pathlib import Path
@@ -569,8 +570,8 @@ class VectorCollection:
 
         # Add to catalog and index
         doc_ids = self._catalog.add_documents(texts, metas, None, embeddings=embeds)
-        emb_np = np.array(embeds, dtype=np.float32)
-        self._index.add(np.array(doc_ids, dtype=np.uint64), emb_np, threads=threads)
+        emb_np = np.asarray(embeds, dtype=np.float32)
+        self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
 
         return doc_ids
 
@@ -1126,13 +1127,10 @@ class VectorCollection:
         """
         docs = self._catalog.get_documents_by_ids(cluster_result.doc_ids)
 
-        cluster_texts: dict[int, list[str]] = {}
+        cluster_texts: dict[int, list[str]] = defaultdict(list)
         for doc_id, label in zip(cluster_result.doc_ids, cluster_result.labels):
-            label_int = int(label)
-            if label_int not in cluster_texts:
-                cluster_texts[label_int] = []
             if doc_id in docs:
-                cluster_texts[label_int].append(docs[doc_id][0])
+                cluster_texts[int(label)].append(docs[doc_id][0])
 
         if method == "custom" and custom_callback:
             return {

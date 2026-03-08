@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import itertools
 import logging
+import random
 import sqlite3
 import sys
 import time
@@ -109,8 +110,6 @@ def retry_on_lock(
 
                         # Add jitter (±25%) to avoid thundering herd
                         if jitter:
-                            import random
-
                             delay *= 0.75 + random.random() * 0.5
 
                         total_wait += delay

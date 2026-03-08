@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import struct
 import numpy as np
 from ..types import Quantization
 
@@ -46,7 +45,7 @@ class QuantizationStrategy:
             ValueError: If quantization mode is unsupported
         """
         if self.quantization == Quantization.FLOAT:
-            return struct.pack("<%sf" % len(vector), *(float(x) for x in vector))
+            return np.asarray(vector, dtype=np.float32).tobytes()
 
         elif self.quantization == Quantization.INT8:
             # Scalar quantization: scale to [-128, 127]

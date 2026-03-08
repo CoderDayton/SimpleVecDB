@@ -347,25 +347,26 @@ class SearchEngine:
         if len(keys) == 0:
             return []
 
-        # Fetch documents with embeddings
+        # Fetch documents with embeddings in a single SQL round-trip
         keys_list = keys.tolist()
-        docs_map = self._catalog.get_documents_by_ids(keys_list)
-        embs_map = self._catalog.get_embeddings_by_ids(keys_list)
+        docs_and_embs = self._catalog.get_documents_and_embeddings_by_ids(keys_list)
 
-        # Build candidates list with filtering
+        # Build candidates list with filtering, pre-normalize embeddings
         candidates: list[tuple[int, Document, float, np.ndarray | None]] = []
         for key, dist in zip(keys_list, distances.tolist()):
-            if key not in docs_map:
+            if key not in docs_and_embs:
                 continue
 
-            text, metadata = docs_map[key]
+            text, metadata, emb = docs_and_embs[key]
 
             # Apply metadata filter
             if filter and not self._matches_filter(metadata, filter):
                 continue
 
             doc = Document(page_content=text, metadata=metadata)
-            emb = embs_map.get(key)
+            # Pre-normalize embedding once (avoid redundant renorm in MMR loop)
+            if emb is not None:
+                emb = emb / (np.linalg.norm(emb) + 1e-12)
             candidates.append((key, doc, float(dist), emb))
 
             if len(candidates) >= fetch_k:
@@ -374,9 +375,10 @@ class SearchEngine:
         if len(candidates) <= k:
             return [doc for _, doc, _, _ in candidates]
 
-        # MMR selection with proper pairwise similarity
+        # MMR selection with vectorized pairwise similarity
         selected: list[Document] = []
         selected_embs: list[np.ndarray] = []
+        lambda_comp = 1.0 - lambda_mult
         unselected = list(range(len(candidates)))
 
         # First selection: most relevant (lowest distance)
@@ -384,12 +386,16 @@ class SearchEngine:
         _, doc, _, emb = candidates[first_idx]
         selected.append(doc)
         if emb is not None:
-            selected_embs.append(emb / (np.linalg.norm(emb) + 1e-12))
+            selected_embs.append(emb)
 
         while len(selected) < k and unselected:
-            mmr_scores: list[tuple[float, int]] = []
+            best_score = -float("inf")
+            best_pos = 0
 
-            for idx in unselected:
+            # Stack selected embeddings for vectorized dot product
+            sel_matrix = np.stack(selected_embs) if selected_embs else None
+
+            for pos, idx in enumerate(unselected):
                 _, _, dist, emb = candidates[idx]
 
                 # Relevance: convert distance to similarity (lower distance = higher similarity)
@@ -398,25 +404,24 @@ class SearchEngine:
 
                 # Redundancy: max similarity to any already-selected doc
                 redundancy = 0.0
-                if emb is not None and selected_embs:
-                    emb_norm = emb / (np.linalg.norm(emb) + 1e-12)
-                    for sel_emb in selected_embs:
-                        sim = float(np.dot(emb_norm, sel_emb))
-                        redundancy = max(redundancy, sim)
+                if emb is not None and sel_matrix is not None:
+                    # Vectorized: single matrix-vector multiply replaces inner loop
+                    sims = sel_matrix @ emb
+                    redundancy = float(sims.max())
 
                 # MMR: balance relevance vs diversity
-                mmr_score = lambda_mult * relevance - (1 - lambda_mult) * redundancy
-                mmr_scores.append((mmr_score, idx))
+                mmr_score = lambda_mult * relevance - lambda_comp * redundancy
+                if mmr_score > best_score:
+                    best_score = mmr_score
+                    best_pos = pos
 
-            # Pick highest MMR score
-            mmr_scores.sort(key=lambda x: x[0], reverse=True)
-            best_idx = mmr_scores[0][1]
+            # Pop by position (O(1) vs O(n) list.remove)
+            best_idx = unselected.pop(best_pos)
 
             _, doc, _, emb = candidates[best_idx]
             selected.append(doc)
             if emb is not None:
-                selected_embs.append(emb / (np.linalg.norm(emb) + 1e-12))
-            unselected.remove(best_idx)
+                selected_embs.append(emb)
 
         return selected
 
@@ -427,14 +432,14 @@ class SearchEngine:
                 from ..embeddings.models import embed_texts
 
                 query_embedding = embed_texts([query])[0]
-                return np.array(query_embedding, dtype=np.float32)
+                return np.asarray(query_embedding, dtype=np.float32)
             except Exception as e:
                 raise ValueError(
                     "Text queries require embeddings – install with [server] extra "
                     "or provide vector query"
                 ) from e
         else:
-            return np.array(query, dtype=np.float32)
+            return np.asarray(query, dtype=np.float32)
 
     def _matches_filter(self, metadata: dict[str, Any], filter: dict[str, Any]) -> bool:
         """Check if metadata matches all filter criteria."""
