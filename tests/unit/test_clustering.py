@@ -583,3 +583,124 @@ class TestClusterPersistence:
             collection.assign_to_cluster("nonexistent", [1, 2, 3])
 
         db.close()
+
+
+class TestClusterEngineDirectly:
+    """Tests targeting ClusterEngine methods directly for coverage."""
+
+    def test_cluster_vectors_empty(self):
+        """Empty vectors returns empty ClusterResult."""
+        from simplevecdb.engine.clustering import ClusterEngine
+
+        engine = ClusterEngine()
+        result = engine.cluster_vectors(
+            np.array([], dtype=np.float32).reshape(0, 4),
+            doc_ids=[],
+        )
+        assert result.n_clusters == 0
+        assert len(result.labels) == 0
+        assert result.doc_ids == []
+
+    def test_cluster_vectors_unknown_algorithm(self):
+        """Unknown algorithm raises ValueError."""
+        from simplevecdb.engine.clustering import ClusterEngine
+
+        engine = ClusterEngine()
+        vectors = np.random.randn(10, 4).astype(np.float32)
+        with pytest.raises(ValueError, match="Unknown algorithm"):
+            engine.cluster_vectors(vectors, list(range(10)), algorithm="bogus")  # type: ignore[arg-type]
+
+    def test_cluster_vectors_minibatch_requires_n_clusters(self):
+        """minibatch_kmeans without n_clusters raises ValueError."""
+        from simplevecdb.engine.clustering import ClusterEngine
+
+        engine = ClusterEngine()
+        vectors = np.random.randn(10, 4).astype(np.float32)
+        with pytest.raises(ValueError, match="n_clusters required"):
+            engine.cluster_vectors(
+                vectors, list(range(10)), algorithm="minibatch_kmeans", n_clusters=None
+            )
+
+    def test_kmeans_missing_sklearn(self, monkeypatch):
+        """_kmeans raises ImportError when sklearn is unavailable."""
+        from simplevecdb.engine import clustering
+
+        monkeypatch.setattr(clustering, "_import_optional", lambda name: None)
+        engine = clustering.ClusterEngine()
+        vectors = np.random.randn(10, 4).astype(np.float32)
+        with pytest.raises(ImportError, match="scikit-learn required"):
+            engine._kmeans(vectors, 2, None)
+
+    def test_minibatch_kmeans_missing_sklearn(self, monkeypatch):
+        """_minibatch_kmeans raises ImportError when sklearn is unavailable."""
+        from simplevecdb.engine import clustering
+
+        monkeypatch.setattr(clustering, "_import_optional", lambda name: None)
+        engine = clustering.ClusterEngine()
+        vectors = np.random.randn(10, 4).astype(np.float32)
+        with pytest.raises(ImportError, match="scikit-learn required"):
+            engine._minibatch_kmeans(vectors, 2, None)
+
+    def test_hdbscan_missing(self, monkeypatch):
+        """_hdbscan raises ImportError when hdbscan is unavailable."""
+        from simplevecdb.engine import clustering
+
+        monkeypatch.setattr(clustering, "_import_optional", lambda name: None)
+        engine = clustering.ClusterEngine()
+        vectors = np.random.randn(10, 4).astype(np.float32)
+        with pytest.raises(ImportError, match="hdbscan required"):
+            engine._hdbscan(vectors, 5)
+
+    def test_generate_keywords_outlier_cluster(self):
+        """Cluster -1 is tagged as 'outliers'."""
+        from simplevecdb.engine.clustering import ClusterEngine
+
+        engine = ClusterEngine()
+        tags = engine.generate_keywords({-1: ["some text"], 0: ["hello world"] * 3})
+        assert tags[-1] == "outliers"
+        assert 0 in tags
+
+    def test_generate_keywords_empty_texts(self):
+        """Empty text list falls back to 'cluster_N'."""
+        from simplevecdb.engine.clustering import ClusterEngine
+
+        engine = ClusterEngine()
+        tags = engine.generate_keywords({0: [], 1: ["hello world"] * 3})
+        assert tags[0] == "cluster_0"
+
+    def test_generate_keywords_missing_sklearn(self, monkeypatch):
+        """generate_keywords raises ImportError when sklearn is unavailable."""
+        from simplevecdb.engine import clustering
+
+        monkeypatch.setattr(clustering, "_import_optional", lambda name: None)
+        engine = clustering.ClusterEngine()
+        with pytest.raises(ImportError, match="scikit-learn required"):
+            engine.generate_keywords({0: ["hello world"]})
+
+    def test_generate_keywords_value_error_fallback(self):
+        """TF-IDF ValueError falls back to 'cluster_N'."""
+        from simplevecdb.engine.clustering import ClusterEngine
+
+        engine = ClusterEngine()
+        # Single empty-ish doc that TF-IDF can't process
+        tags = engine.generate_keywords({0: [""]})
+        assert tags[0] == "cluster_0"
+
+    def test_silhouette_single_cluster(self):
+        """Silhouette returns None for < 2 clusters."""
+        from simplevecdb.engine.clustering import ClusterEngine
+
+        engine = ClusterEngine()
+        vectors = np.random.randn(10, 4).astype(np.float32)
+        labels = np.zeros(10, dtype=np.int32)
+        assert engine._compute_silhouette(vectors, labels, 1) is None
+
+    def test_assign_to_nearest_centroid(self):
+        """Vectors are assigned to the nearest centroid."""
+        from simplevecdb.engine.clustering import ClusterEngine
+
+        engine = ClusterEngine()
+        centroids = np.array([[0, 0], [10, 10]], dtype=np.float32)
+        vectors = np.array([[1, 1], [9, 9], [0.5, 0.5]], dtype=np.float32)
+        labels = engine.assign_to_nearest_centroid(vectors, centroids)
+        assert list(labels) == [0, 1, 0]
