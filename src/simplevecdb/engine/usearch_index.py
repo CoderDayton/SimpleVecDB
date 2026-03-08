@@ -18,16 +18,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..types import DistanceStrategy, Quantization
+from .. import constants
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 _logger = logging.getLogger("simplevecdb.engine.usearch_index")
-
-# Default HNSW parameters (tuned for recall/speed balance)
-DEFAULT_CONNECTIVITY = 16  # M parameter - edges per node
-DEFAULT_EXPANSION_ADD = 128  # efConstruction - build quality
-DEFAULT_EXPANSION_SEARCH = 64  # ef - search quality
 
 
 def _get_metric_kind(distance_strategy: DistanceStrategy) -> Any:
@@ -106,9 +102,9 @@ class UsearchIndex:
         ndim: int | None = None,
         distance_strategy: DistanceStrategy = DistanceStrategy.COSINE,
         quantization: Quantization = Quantization.FLOAT,
-        connectivity: int = DEFAULT_CONNECTIVITY,
-        expansion_add: int = DEFAULT_EXPANSION_ADD,
-        expansion_search: int = DEFAULT_EXPANSION_SEARCH,
+        connectivity: int = constants.USEARCH_DEFAULT_CONNECTIVITY,
+        expansion_add: int = constants.USEARCH_DEFAULT_EXPANSION_ADD,
+        expansion_search: int = constants.USEARCH_DEFAULT_EXPANSION_SEARCH,
     ):
         self._path = Path(index_path)
         self._ndim = ndim
@@ -270,9 +266,11 @@ class UsearchIndex:
                 vectors = vectors / np.maximum(norms, 1e-12)
 
             # Upsert: remove existing keys first (usearch doesn't allow duplicates)
-            for key in keys:
-                if int(key) in self._index:
-                    self._index.remove(int(key))
+            if self.size > 0:
+                for key in keys:
+                    int_key = int(key)
+                    if int_key in self._index:
+                        self._index.remove(int_key)
 
             self._index.add(keys, vectors, threads=threads)
             self._dirty = True

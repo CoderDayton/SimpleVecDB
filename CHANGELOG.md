@@ -5,6 +5,62 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-03-08
+
+### Breaking Changes
+
+- **Integration dependencies are now optional.** LangChain and LlamaIndex packages are no longer installed by default. Install with `pip install simplevecdb[integrations]` to use them. Existing users upgrading from v2.2.x will see a clear ImportError with migration instructions.
+
+### Added
+
+- **`[integrations]` optional extra** — Install LangChain and LlamaIndex dependencies only when needed, reducing default install footprint
+- **Runtime import guards** in integration modules with v2.3.0 migration messaging
+- **Lazy `__getattr__` loading** in `integrations/__init__.py` — integration classes are only imported when accessed
+- **Input validation guards** on search methods:
+  - `similarity_search`, `similarity_search_batch`, `keyword_search`, `hybrid_search` now reject `k <= 0`
+  - `add_texts` validates length consistency of `metadatas`, `embeddings`, `ids`, and `parent_ids` against `texts`
+- **NaN/Inf validation** for float values in metadata filters (`utils.validate_filter`)
+- **Empty list rejection** for list filter values
+- **Double-close protection** on `VectorDB` with `_closed` flag
+- **Context manager protocol** (`__enter__`/`__exit__`) on `VectorDB`
+- **Table name validation** in `check_migration` (defense-in-depth against SQL injection)
+- **Graceful per-future error handling** in `search_collections`
+- **Adaptive batch search threshold** — queries below `USEARCH_BATCH_THRESHOLD` (10) use sequential search to avoid batch overhead
+
+### Changed
+
+- **Python dev target changed to 3.12** (`.python-version`), `requires-python` remains `>= "3.10"`
+- **Version bumped to 2.3.0**
+- **Performance: MMR search vectorized** — pre-normalize embeddings once, use `sel_matrix @ emb` matrix-vector multiply instead of Python inner loop, O(1) `list.pop` replaces O(n) `list.remove`, hoist `1 - lambda_mult` loop invariant
+- **Performance: merged SQL round-trips in MMR** — new `get_documents_and_embeddings_by_ids` fetches text, metadata, and embeddings in a single query (previously two separate SELECTs)
+- **Performance: `get_parent` collapsed** from 2 sequential SELECTs to 1 self-JOIN
+- **Performance: `add_documents` ID recovery** — skip redundant `SELECT ORDER BY DESC` when explicit IDs are provided; removed unnecessary `list(texts)` copy
+- **Performance: FLOAT serialization** — `np.asarray().tobytes()` replaces `struct.pack` with per-element Python loop (single C memcpy)
+- **Performance: `np.array` → `np.asarray`** on every search and insert path to avoid unnecessary copies
+- **Performance: SQL placeholder strings** — `",".join(["?"] * len(ids))` replaces generator expression across all 9 call sites
+- **Performance: batched numpy conversion** in `add_texts` — single `np.asarray` call instead of per-item conversion
+- **Performance: compact JSON separators** in catalog serialization
+- **Performance: deduplicated `.tolist()` calls** in search engine
+- **Performance: `np.unique(ravel())`** for batch key collection in `similarity_search_batch`
+- **Performance: usearch upsert** — skip contains-check loop on empty index, cache `int(key)` once per iteration
+- **Performance: cluster table DDL** — `_cluster_table_ready` flag skips `CREATE TABLE IF NOT EXISTS` on repeated calls; cached `_cluster_table_name`
+- **`_normalize_key`** now delegates to `_derive_key` instead of duplicating PBKDF2 logic
+- **HNSW defaults** in `usearch_index.py` now sourced from `constants.py` (removed local duplicates)
+- **Collection name regex** uses `constants.COLLECTION_NAME_PATTERN` instead of hardcoded pattern
+- **`VectorDB` defaults** for `distance_strategy` and `quantization` sourced from `constants.DEFAULT_DISTANCE_STRATEGY` / `constants.DEFAULT_QUANTIZATION`
+- **`_batched` utility** moved from `core.py` to `utils.py` for reuse; now used in `catalog.py` batch updates
+- **`auto_tag`** uses `defaultdict(list)` instead of manual if-not-in pattern
+- **`import random`** hoisted to module level in `utils.py` (was inside retry loop)
+- **Streaming placeholder bug fixed** — `_process_streaming_batch` now correctly detects `None` placeholders (previously used empty list `[]`, preventing auto-embedding replacement)
+- **README updated** to document `pip install simplevecdb[integrations]` installation
+
+### Removed
+
+- LangChain and LlamaIndex packages from core `[project.dependencies]` (moved to `[project.optional-dependencies] integrations`)
+- Duplicated HNSW default constants from `usearch_index.py` (now single source in `constants.py`)
+- Unused `struct` import from `quantization.py`
+- Unused `itertools` import from `core.py`
+
 ## [2.2.1] - 2026-01-27
 
 ### Changed
@@ -429,6 +485,7 @@ Benchmarks on i9-13900K & RTX 4090 with 10k vectors (384-dim):
 - **Documentation**: https://coderdayton.github.io/simplevecdb/
 - **License**: MIT
 
+[2.3.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.3.0
 [2.2.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.1
 [2.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.0
 [2.1.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.1.0

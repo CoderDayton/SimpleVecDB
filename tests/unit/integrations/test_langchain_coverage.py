@@ -6,6 +6,11 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+try:
+    import langchain_core  # noqa: F401
+except ImportError:
+    pytest.skip("langchain-core not installed", allow_module_level=True)
+
 
 def test_langchain_delete(tmp_path):
     """Test LangChain integration delete method."""

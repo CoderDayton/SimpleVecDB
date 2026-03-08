@@ -15,7 +15,7 @@ SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built
 - **Blazing Fast** — 10-100x faster search via usearch HNSW. Adaptive: brute-force for <10k vectors (perfect recall), HNSW for larger collections.
 - **Truly Portable** — Runs anywhere SQLite runs: Linux, macOS, Windows, even WASM.
 - **Async Ready** — Full async/await support for web servers and concurrent workloads.
-- **Batteries Included** — Optional FastAPI embeddings server + LangChain/LlamaIndex integrations.
+- **Batteries Included** — Optional FastAPI embeddings server + LangChain/LlamaIndex integrations via `[integrations]` extra.
 - **Production Ready** — Hybrid search (BM25 + vector), metadata filtering, multi-collection support, and automatic hardware acceleration.
 
 ### When to Choose SimpleVecDB
@@ -49,6 +49,9 @@ SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built
 # Standard installation (includes clustering, encryption)
 pip install simplevecdb
 
+# With LangChain & LlamaIndex integrations
+pip install "simplevecdb[integrations]"
+
 # With local embeddings server (adds 500MB+ models)
 pip install "simplevecdb[server]"
 ```
@@ -58,7 +61,6 @@ pip install "simplevecdb[server]"
 - Clustering (K-means, MiniBatch K-means, HDBSCAN)
 - Encryption (SQLCipher AES-256)
 - Async support
-- LangChain & LlamaIndex integrations
 
 **Verify Installation:**
 
@@ -146,6 +148,10 @@ See [Setup Guide](ENV_SETUP.md) for configuration: model registry, rate limits, 
 ### Option 3: With LangChain or LlamaIndex
 
 Best for: Existing RAG pipelines, framework-based workflows.
+
+```bash
+pip install "simplevecdb[integrations]"
+```
 
 ```python
 from simplevecdb.integrations.langchain import SimpleVecDBVectorStore
@@ -316,7 +322,7 @@ Supports K-means, MiniBatch K-means, and HDBSCAN. See [Clustering Guide](https:/
 | **Quantization**          | ✅     | FLOAT32, FLOAT16, INT8, BIT for 2-32x compression            |
 | **Parallel Operations**   | ✅     | `threads` parameter for add/search                           |
 | **Metadata Filtering**    | ✅     | SQL `WHERE` clause support                                   |
-| **Framework Integration** | ✅     | LangChain \& LlamaIndex adapters                             |
+| **Framework Integration** | ✅     | LangChain \& LlamaIndex adapters via `[integrations]` extra  |
 | **Hardware Acceleration** | ✅     | Auto-detects CUDA/MPS/CPU + SIMD via usearch                 |
 | **Local Embeddings**      | ✅     | HuggingFace models via `[server]` extras                     |
 | **Built-in Encryption**   | ✅     | SQLCipher AES-256 at-rest encryption via `[encryption]` extras |

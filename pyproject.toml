@@ -1,6 +1,6 @@
 [project]
 name = "simplevecdb"
-version = "2.2.1"
+version = "2.3.0"
 description = "Dead-simple local vector database powered by usearch HNSW."
 authors = [{ name = "Dayton Dunbar", email = "coderdayton14@gmail.com" }]
 license = { text = "MIT" }
@@ -15,14 +15,16 @@ dependencies = [
     "hdbscan>=0.8.33",          # Density-based clustering
     "sqlcipher3-binary>=0.5.0", # Encryption support
     "cryptography>=41.0",       # Encryption utilities
-    "langchain-core>=1.0.7",    # LangChain integration
-    "langchain-openai>=1.0.3",  # LangChain OpenAI support
-    "llama-index>=0.14.8",      # LlamaIndex integration
-    "llama-index-llms-ollama>=0.9.0",      # LlamaIndex Ollama support
-    "llama-index-llms-openai-like>=0.5.3", # LlamaIndex OpenAI-like support
 ]
 
 [project.optional-dependencies]
+integrations = [
+    "langchain-core>=1.0.7",
+    "langchain-openai>=1.0.3",
+    "llama-index>=0.14.8",
+    "llama-index-llms-ollama>=0.9.0",
+    "llama-index-llms-openai-like>=0.5.3",
+]
 server = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -66,9 +68,9 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 exclude = ["exploration", "docs", "htmlcov", "site"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 exclude = ["exploration", "docs", "htmlcov", "site"]

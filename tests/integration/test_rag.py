@@ -3,8 +3,10 @@ import pytest
 from unittest.mock import Mock
 
 # Stub Ollama if not installed
+_ollama_available = False
 try:
     from ollama import Client as OllamaClient
+    _ollama_available = True
 except ImportError:
     OllamaClient = Mock()  # type: ignore
 
@@ -43,7 +45,7 @@ def test_rag_end_to_end(populated_db: VectorDB, monkeypatch):
 
 # Real Ollama test (skip if not available)
 @pytest.mark.skipif(
-    not hasattr(OllamaClient, "generate"), reason="Ollama not installed"
+    not _ollama_available, reason="Ollama not installed"
 )
 def test_rag_with_ollama(populated_db):
     try:

@@ -2,16 +2,23 @@
 from typing import Any, TYPE_CHECKING
 from collections.abc import Sequence
 
-from llama_index.core.vector_stores import (
-    VectorStoreQuery,
-    VectorStoreQueryResult,
-)
-from llama_index.core.schema import TextNode, BaseNode
-from llama_index.core.vector_stores.types import (
-    BasePydanticVectorStore,
-    MetadataFilters,
-    VectorStoreQueryMode,
-)
+try:
+    from llama_index.core.vector_stores import (
+        VectorStoreQuery,
+        VectorStoreQueryResult,
+    )
+    from llama_index.core.schema import TextNode, BaseNode
+    from llama_index.core.vector_stores.types import (
+        BasePydanticVectorStore,
+        MetadataFilters,
+        VectorStoreQueryMode,
+    )
+except ImportError as exc:
+    raise ImportError(
+        "LlamaIndex packages are no longer included by default. "
+        "As of v2.3.0, install the integrations extra:\n\n"
+        "  pip install simplevecdb[integrations]"
+    ) from exc
 
 from simplevecdb.core import VectorDB  # our core
 

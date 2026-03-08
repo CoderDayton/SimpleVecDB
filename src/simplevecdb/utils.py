@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import importlib
+import itertools
 import logging
+import random
 import sqlite3
 import sys
 import time
+from collections.abc import Iterable, Sequence
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
@@ -12,6 +15,20 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 # Use standard logging to avoid circular import with logging module
 _logger = logging.getLogger("simplevecdb.utils")
+
+
+def _batched(iterable: Iterable[Any], n: int) -> Iterable[Sequence[Any]]:
+    """Batch data into lists of length n. The last batch may be shorter."""
+    if isinstance(iterable, Sequence):
+        for i in range(0, len(iterable), n):
+            yield iterable[i : i + n]
+    else:
+        it = iter(iterable)
+        while True:
+            batch = list(itertools.islice(it, n))
+            if not batch:
+                return
+            yield batch
 
 
 def _import_optional(name: str) -> Any:
@@ -93,8 +110,6 @@ def retry_on_lock(
 
                         # Add jitter (±25%) to avoid thundering herd
                         if jitter:
-                            import random
-
                             delay *= 0.75 + random.random() * 0.5
 
                         total_wait += delay
@@ -167,10 +182,29 @@ def validate_filter(filter_dict: dict[str, Any] | None) -> None:
                 f"Filter value for '{key}' must be int, float, str, or list, "
                 f"got {type(value).__name__}: {value!r}"
             )
+        if isinstance(value, float) and (
+            value != value or value == float("inf") or value == float("-inf")
+        ):
+            raise ValueError(
+                f"Filter value for '{key}' must be finite, got {value!r}"
+            )
         if isinstance(value, list):
+            if not value:
+                raise ValueError(
+                    f"Filter list for '{key}' must not be empty"
+                )
             for i, item in enumerate(value):
                 if not isinstance(item, (int, float, str)):
                     raise ValueError(
                         f"Filter list items for '{key}' must be int, float, or str, "
                         f"got {type(item).__name__} at index {i}: {item!r}"
+                    )
+                if isinstance(item, float) and (
+                    item != item
+                    or item == float("inf")
+                    or item == float("-inf")
+                ):
+                    raise ValueError(
+                        f"Filter list item for '{key}' at index {i} must be finite, "
+                        f"got {item!r}"
                     )

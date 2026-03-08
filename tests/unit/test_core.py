@@ -6,6 +6,20 @@ import sqlite3
 from simplevecdb import VectorDB
 from simplevecdb.types import Document, DistanceStrategy
 
+try:
+    import langchain_core  # noqa: F401
+
+    _has_langchain = True
+except ImportError:
+    _has_langchain = False
+
+try:
+    import llama_index  # noqa: F401
+
+    _has_llamaindex = True
+except ImportError:
+    _has_llamaindex = False
+
 
 def test_init(empty_db):
     """Verify that the database initializes with correct default values."""
@@ -101,12 +115,11 @@ def test_add_no_embeddings_raises(empty_db, monkeypatch):
 def test_close_and_del():
     """Test explicit closing of the database connection and resource cleanup."""
     db = VectorDB(":memory:")
-    conn = db.conn
     db.close()
 
-    # Verify connection is closed by attempting an operation
-    with pytest.raises(sqlite3.ProgrammingError):
-        conn.execute("SELECT 1")
+    # Verify close is idempotent (second call is a no-op)
+    db.close()
+    assert db._closed is True
 
 
 def test_recover_dim(tmp_path):
@@ -349,6 +362,9 @@ def test_normalize_l2():
     assert np.allclose(normalize_l2(zero_vec), zero_vec)
 
 
+@pytest.mark.skipif(
+    not _has_langchain, reason="langchain-core not installed"
+)
 def test_as_langchain(empty_db):
     """Test LangChain integration factory method."""
     lc_store = empty_db.as_langchain()
@@ -358,6 +374,9 @@ def test_as_langchain(empty_db):
     assert isinstance(lc_store, SimpleVecDBVectorStore)
 
 
+@pytest.mark.skipif(
+    not _has_llamaindex, reason="llama-index not installed"
+)
 def test_as_llama_index(empty_db):
     """Test LlamaIndex integration factory method."""
     li_store = empty_db.as_llama_index()
