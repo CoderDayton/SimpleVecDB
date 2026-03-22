@@ -717,15 +717,17 @@ class CatalogManager:
 
         Args:
             root_id: ID of the root document
-            max_depth: Maximum depth to traverse (None for unlimited)
+            max_depth: Maximum depth to traverse (None uses safety cap
+                from constants.MAX_HIERARCHY_DEPTH to prevent infinite recursion)
 
         Returns:
             List of (id, text, metadata, depth) tuples
         """
-        # Validate max_depth to prevent SQL injection (it's interpolated into query)
-        if max_depth is not None:
-            max_depth = int(max_depth)
-        depth_clause = f"AND depth < {max_depth}" if max_depth else ""
+        from .. import constants
+
+        # Apply safety cap to prevent infinite recursion from cycles
+        effective_depth = int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
+        depth_clause = f"AND depth < {effective_depth}"
 
         sql = f"""
             WITH RECURSIVE descendants(id, text, metadata, depth) AS (
@@ -758,15 +760,17 @@ class CatalogManager:
 
         Args:
             doc_id: ID of the document
-            max_depth: Maximum depth to traverse (None for unlimited)
+            max_depth: Maximum depth to traverse (None uses safety cap
+                from constants.MAX_HIERARCHY_DEPTH to prevent infinite recursion)
 
         Returns:
             List of (id, text, metadata, depth) tuples, from immediate parent to root
         """
-        # Validate max_depth to prevent SQL injection (it's interpolated into query)
-        if max_depth is not None:
-            max_depth = int(max_depth)
-        depth_clause = f"AND depth < {max_depth}" if max_depth else ""
+        from .. import constants
+
+        # Apply safety cap to prevent infinite recursion from cycles
+        effective_depth = int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
+        depth_clause = f"AND depth < {effective_depth}"
 
         sql = f"""
             WITH RECURSIVE ancestors(id, text, metadata, parent_id, depth) AS (

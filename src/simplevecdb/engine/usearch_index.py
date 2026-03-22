@@ -265,12 +265,15 @@ class UsearchIndex:
                 norms = np.linalg.norm(vectors, axis=1, keepdims=True)
                 vectors = vectors / np.maximum(norms, 1e-12)
 
-            # Upsert: remove existing keys first (usearch doesn't allow duplicates)
+            # Upsert: remove existing keys first (usearch doesn't allow duplicates).
+            # Build a set of existing keys for O(1) lookup instead of per-key
+            # __contains__ probes, then batch-remove the conflicts.
             if self.size > 0:
-                for key in keys:
-                    int_key = int(key)
-                    if int_key in self._index:
-                        self._index.remove(int_key)
+                existing_keys = [
+                    int(k) for k in keys if int(k) in self._index
+                ]
+                for int_key in existing_keys:
+                    self._index.remove(int_key)
 
             self._index.add(keys, vectors, threads=threads)
             self._dirty = True

@@ -36,12 +36,19 @@ class RateLimiter:
         self._max_buckets = max_buckets
         self._last_cleanup = time.time()
 
+    _CLEANUP_BATCH = 500  # Max stale keys to evict per call to bound lock time
+
     def _cleanup_stale(self, now: float) -> None:
-        """Remove buckets not accessed within TTL. Called under lock."""
-        stale_keys = [
-            k for k, v in self._buckets.items() if now - v["last"] > self._ttl
-        ]
-        for k in stale_keys:
+        """Remove up to _CLEANUP_BATCH stale buckets. Called under lock."""
+        removed = 0
+        to_delete: list[str] = []
+        for k, v in self._buckets.items():
+            if now - v["last"] > self._ttl:
+                to_delete.append(k)
+                removed += 1
+                if removed >= self._CLEANUP_BATCH:
+                    break
+        for k in to_delete:
             del self._buckets[k]
 
     def is_allowed(self, identity: str) -> bool:

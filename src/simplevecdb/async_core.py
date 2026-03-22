@@ -30,8 +30,13 @@ from collections.abc import Sequence
 from threading import Lock
 from typing import Any
 
+import logging
+
+from . import constants
 from .core import VectorDB, VectorCollection
 from .types import Document, DistanceStrategy, Quantization
+
+_logger = logging.getLogger(__name__)
 
 
 class AsyncVectorCollection:
@@ -641,10 +646,13 @@ class AsyncVectorDB:
 
     async def close(self) -> None:
         """Close the database connection and shutdown executor."""
-        loop = asyncio.get_running_loop()
         try:
             if self._owns_executor:
-                await loop.run_in_executor(None, self._executor.shutdown, True)
+                # cancel_futures=True cancels pending tasks; wait=False returns
+                # immediately so we don't hang if a running task is stuck.
+                self._executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            _logger.warning("Executor shutdown failed", exc_info=True)
         finally:
             self._db.close()
 

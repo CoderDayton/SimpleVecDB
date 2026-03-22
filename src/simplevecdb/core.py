@@ -1587,13 +1587,21 @@ class VectorDB:
         # Execute searches
         all_results: list[tuple[Document, float, str]] = []
         if parallel and len(targets) > 1:
-            from concurrent.futures import ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
             with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as executor:
                 futures = [executor.submit(_search_one, coll) for coll in targets]
                 for future in futures:
                     try:
-                        all_results.extend(future.result())
+                        all_results.extend(
+                            future.result(timeout=constants.SEARCH_COLLECTION_TIMEOUT)
+                        )
+                    except FuturesTimeoutError:
+                        future.cancel()
+                        _logger.error(
+                            "search_collections: collection search timed out after %.0fs",
+                            constants.SEARCH_COLLECTION_TIMEOUT,
+                        )
                     except Exception:
                         _logger.warning(
                             "search_collections: one collection search failed",
@@ -1841,8 +1849,12 @@ MIGRATION ROLLBACK INSTRUCTIONS:
         if getattr(self, "_closed", False):
             return
         self._closed = True
-        self.save()
-        self.conn.close()
+        try:
+            self.save()
+        except Exception:
+            _logger.warning("Failed to save indexes during close", exc_info=True)
+        finally:
+            self.conn.close()
 
     def __enter__(self) -> "VectorDB":
         return self
