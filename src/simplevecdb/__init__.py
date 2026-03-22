@@ -19,7 +19,9 @@ from .logging import get_logger, configure_logging, log_operation
 from .utils import DatabaseLockedError, retry_on_lock, validate_filter
 from .encryption import EncryptionError, EncryptionUnavailableError
 
-__version__ = "2.3.0"
+from importlib.metadata import version as _pkg_version
+
+__version__ = _pkg_version("simplevecdb")
 __all__ = [
     # Core classes
     "VectorDB",
