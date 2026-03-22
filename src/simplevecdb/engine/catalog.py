@@ -264,17 +264,20 @@ class CatalogManager:
                 rows,
             )
 
-            # Recover inserted IDs: for pure inserts, use lastrowid arithmetic;
-            # for upserts with explicit IDs, use the IDs directly
+            # Recover inserted IDs using last_insert_rowid() arithmetic.
+            # Within a transaction, auto-increment IDs are sequential, so
+            # last_id - N + 1 .. last_id gives the correct range. This avoids
+            # the ORDER BY id DESC race under concurrent inserts.
             if all(uid is not None for uid in ids_list):
                 real_ids = [int(uid) for uid in ids_list]
             else:
-                cursor = self.conn.execute(
-                    f"SELECT id FROM {self._table_name} ORDER BY id DESC LIMIT ?",
-                    (len(texts),),
-                )
-                real_ids = [r[0] for r in cursor]
-                real_ids.reverse()
+                last_id = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                auto_count = sum(1 for uid in ids_list if uid is None)
+                auto_ids = iter(range(last_id - auto_count + 1, last_id + 1))
+                real_ids = [
+                    int(uid) if uid is not None else next(auto_ids)
+                    for uid in ids_list
+                ]
 
             # Update FTS index
             self.upsert_fts_rows(real_ids, texts)
@@ -509,12 +512,9 @@ class CatalogManager:
                 clauses.append(f"json_extract({metadata_column}, ?) = ?")
                 params.extend([json_path, value])
             elif isinstance(value, str):
-                # Escape LIKE special characters to prevent injection
-                escaped_value = (
-                    value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                )
-                clauses.append(f"json_extract({metadata_column}, ?) LIKE ? ESCAPE '\\'")
-                params.extend([json_path, f"%{escaped_value}%"])
+                # Use exact equality for string filters
+                clauses.append(f"json_extract({metadata_column}, ?) = ?")
+                params.extend([json_path, value])
             elif isinstance(value, list):
                 placeholders = ",".join("?" for _ in value)
                 clauses.append(
@@ -579,37 +579,37 @@ class CatalogManager:
         if not updates:
             return 0
 
-        updated = 0
-        # Batch into chunks of 500 for performance
-        for batch in _batched(updates, 500):
-            ids = [u[0] for u in batch]
+        with self.conn:
+            updated = 0
+            # Batch into chunks of 500 for performance
+            for batch in _batched(updates, 500):
+                ids = [u[0] for u in batch]
 
-            # Fetch all existing metadata in one query
-            placeholders = ",".join(["?"] * len(ids))
-            rows = self.conn.execute(
-                f"SELECT id, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
-                ids,
-            ).fetchall()
+                # Fetch all existing metadata in one query
+                placeholders = ",".join(["?"] * len(ids))
+                rows = self.conn.execute(
+                    f"SELECT id, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
+                    ids,
+                ).fetchall()
 
-            current_meta_map = {r[0]: (json.loads(r[1]) if r[1] else {}) for r in rows}
+                current_meta_map = {r[0]: (json.loads(r[1]) if r[1] else {}) for r in rows}
 
-            # Prepare updates
-            update_data = []
-            for doc_id, meta_updates in batch:
-                if doc_id in current_meta_map:
-                    meta = current_meta_map[doc_id]
-                    meta.update(meta_updates)
-                    update_data.append((json.dumps(meta), doc_id))
-                    updated += 1
+                # Prepare updates
+                update_data = []
+                for doc_id, meta_updates in batch:
+                    if doc_id in current_meta_map:
+                        meta = current_meta_map[doc_id]
+                        meta.update(meta_updates)
+                        update_data.append((json.dumps(meta), doc_id))
+                        updated += 1
 
-            if update_data:
-                self.conn.executemany(
-                    f"UPDATE {self._table_name} SET metadata = ? WHERE id = ?",
-                    update_data,
-                )
+                if update_data:
+                    self.conn.executemany(
+                        f"UPDATE {self._table_name} SET metadata = ? WHERE id = ?",
+                        update_data,
+                    )
 
-        self.conn.commit()
-        return updated
+            return updated
 
     def check_legacy_sqlite_vec(self, vec_table_name: str) -> bool:
         """

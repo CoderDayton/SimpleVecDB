@@ -5,14 +5,14 @@ import pytest
 from simplevecdb import VectorDB
 
 
-def test_build_filter_clause_like():
-    """Test build_filter_clause with string LIKE pattern."""
+def test_build_filter_clause_string_equality():
+    """Test build_filter_clause with string uses exact equality."""
     db = VectorDB(":memory:")
     collection = db.collection("default")
-    filter_dict = {"name": "test*"}
+    filter_dict = {"name": "test"}
     clause, params = collection._catalog.build_filter_clause(filter_dict)
-    assert "LIKE" in clause
-    assert "%test*%" in params
+    assert "= ?" in clause
+    assert "test" in params
 
 
 def test_build_filter_clause_in_list():
