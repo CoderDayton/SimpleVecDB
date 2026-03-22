@@ -30,8 +30,13 @@ from collections.abc import Sequence
 from threading import Lock
 from typing import Any
 
+import logging
+
+from . import constants
 from .core import VectorDB, VectorCollection
 from .types import Document, DistanceStrategy, Quantization
+
+_logger = logging.getLogger(__name__)
 
 
 class AsyncVectorCollection:
@@ -61,16 +66,21 @@ class AsyncVectorCollection:
         metadatas: Sequence[dict] | None = None,
         embeddings: Sequence[Sequence[float]] | None = None,
         ids: Sequence[int | None] | None = None,
+        *,
+        parent_ids: Sequence[int | None] | None = None,
+        threads: int = 0,
     ) -> list[int]:
-        """
-        Add texts with optional embeddings and metadata.
+        """Add texts with optional embeddings and metadata.
 
         See VectorCollection.add_texts for full documentation.
         """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
-            lambda: self._collection.add_texts(texts, metadatas, embeddings, ids),
+            lambda: self._collection.add_texts(
+                texts, metadatas, embeddings, ids,
+                parent_ids=parent_ids, threads=threads,
+            ),
         )
 
     async def similarity_search(
@@ -197,6 +207,65 @@ class AsyncVectorCollection:
             lambda: self._collection.delete_by_ids(ids),
         )
 
+    async def get_documents(
+        self,
+        filter_dict: dict[str, Any] | None = None,
+    ) -> list[tuple[int, str, dict[str, Any]]]:
+        """Get all documents with text content and metadata.
+
+        See VectorCollection.get_documents for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.get_documents(filter_dict=filter_dict),
+        )
+
+    async def get_embeddings_by_ids(self, ids: Sequence[int]) -> dict[int, Any]:
+        """Fetch stored embeddings by document IDs.
+
+        See VectorCollection.get_embeddings_by_ids for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.get_embeddings_by_ids(list(ids)),
+        )
+
+    async def update_metadata(
+        self, updates: list[tuple[int, dict[str, Any]]]
+    ) -> int:
+        """Update metadata for multiple documents (shallow merge).
+
+        See VectorCollection.update_metadata for full documentation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.update_metadata(updates),
+        )
+
+    async def count(self) -> int:
+        """Count documents in collection."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._collection.count,
+        )
+
+    async def save(self) -> None:
+        """Save collection to disk."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            self._executor,
+            self._collection.save,
+        )
+
+    @property
+    def dim(self) -> int | None:
+        """Vector dimension (None if no vectors added yet)."""
+        return self._collection.dim
+
     async def remove_texts(
         self,
         texts: Sequence[str] | None = None,
@@ -211,6 +280,72 @@ class AsyncVectorCollection:
         return await loop.run_in_executor(
             self._executor,
             lambda: self._collection.remove_texts(texts, filter),
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Index & Hierarchy (Async)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def rebuild_index(
+        self,
+        *,
+        connectivity: int | None = None,
+        expansion_add: int | None = None,
+        expansion_search: int | None = None,
+    ) -> int:
+        """Rebuild the HNSW index. See VectorCollection.rebuild_index."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.rebuild_index(
+                connectivity=connectivity,
+                expansion_add=expansion_add,
+                expansion_search=expansion_search,
+            ),
+        )
+
+    async def get_children(self, doc_id: int) -> list:
+        """Get direct children of a document."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.get_children(doc_id),
+        )
+
+    async def get_parent(self, doc_id: int):
+        """Get parent document, or None."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.get_parent(doc_id),
+        )
+
+    async def get_descendants(
+        self, doc_id: int, max_depth: int | None = None
+    ) -> list:
+        """Get all descendants recursively."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.get_descendants(doc_id, max_depth),
+        )
+
+    async def get_ancestors(
+        self, doc_id: int, max_depth: int | None = None
+    ) -> list:
+        """Get all ancestors to root."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.get_ancestors(doc_id, max_depth),
+        )
+
+    async def set_parent(self, doc_id: int, parent_id: int | None) -> bool:
+        """Set or remove parent relationship."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.set_parent(doc_id, parent_id),
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -393,6 +528,7 @@ class AsyncVectorCollection:
         )
 
 
+
 class AsyncVectorDB:
     """
     Async wrapper for VectorDB.
@@ -422,15 +558,13 @@ class AsyncVectorDB:
         distance_strategy: DistanceStrategy = DistanceStrategy.COSINE,
         quantization: Quantization = Quantization.FLOAT,
         max_workers: int = 4,
+        *,
+        executor: ThreadPoolExecutor | None = None,
         **kwargs: Any,
     ):
-        self._db = VectorDB(
-            path=path,
-            distance_strategy=distance_strategy,
-            quantization=quantization,
-            **kwargs,
-        )
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._db = VectorDB(path=path, distance_strategy=distance_strategy, quantization=quantization, **kwargs)
+        self._owns_executor = executor is None
+        self._executor = executor if executor is not None else ThreadPoolExecutor(max_workers=max_workers)
         self._collections: dict[tuple, AsyncVectorCollection] = {}
         self._collections_lock = Lock()  # Thread-safe collection caching
 
@@ -512,10 +646,13 @@ class AsyncVectorDB:
 
     async def close(self) -> None:
         """Close the database connection and shutdown executor."""
-        # Run shutdown in executor to avoid blocking event loop
-        loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, self._executor.shutdown, True)
+            if self._owns_executor:
+                # cancel_futures=True cancels pending tasks; wait=False returns
+                # immediately so we don't hang if a running task is stuck.
+                self._executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            _logger.warning("Executor shutdown failed", exc_info=True)
         finally:
             self._db.close()
 

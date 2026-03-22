@@ -14,7 +14,7 @@ SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built
 - **Zero Infrastructure** — Just a `.db` file. No Docker, no Redis, no cloud bills.
 - **Blazing Fast** — 10-100x faster search via usearch HNSW. Adaptive: brute-force for <10k vectors (perfect recall), HNSW for larger collections.
 - **Truly Portable** — Runs anywhere SQLite runs: Linux, macOS, Windows, even WASM.
-- **Async Ready** — Full async/await support for web servers and concurrent workloads.
+- **Async Ready** — Full async/await support with optional executor injection for thread-safe ONNX/usearch sharing.
 - **Batteries Included** — Optional FastAPI embeddings server + LangChain/LlamaIndex integrations via `[integrations]` extra.
 - **Production Ready** — Hybrid search (BM25 + vector), metadata filtering, multi-collection support, and automatic hardware acceleration.
 
@@ -292,6 +292,29 @@ parent = collection.get_parent(child_ids[0])
 descendants = collection.get_descendants(parent_ids[0])
 ```
 
+### Document Management (v2.4+)
+
+Query and update documents without touching private internals:
+
+```python
+# Get all documents (with optional metadata filter)
+docs = collection.get_documents(filter_dict={"category": "tech"})
+for doc_id, text, metadata in docs:
+    print(f"[{doc_id}] {text[:50]}...")
+
+# Fetch stored embeddings
+embeddings = collection.get_embeddings_by_ids([1, 2, 3])
+
+# Batch update metadata (shallow merge)
+collection.update_metadata([
+    (1, {"reviewed": True}),
+    (2, {"reviewed": True, "score": 0.95}),
+])
+
+# Quick stats
+print(f"Collection has {collection.count()} documents, dim={collection.dim}")
+```
+
 ### Vector Clustering (v2.2+)
 
 Discover natural groupings in your embeddings:
@@ -330,6 +353,8 @@ Supports K-means, MiniBatch K-means, and HDBSCAN. See [Clustering Guide](https:/
 | **Document Hierarchies**  | ✅     | Parent/child relationships for chunked docs                  |
 | **Vector Clustering**     | ✅     | K-means, MiniBatch K-means, HDBSCAN with auto-tagging (v2.2+) |
 | **Cluster Persistence**   | ✅     | Save/load cluster centroids for fast assignment (v2.2+)      |
+| **Public Catalog API**    | ✅     | `get_documents`, `get_embeddings_by_ids`, `update_metadata` (v2.4+) |
+| **Executor Injection**    | ✅     | Share thread pool across async instances for ONNX safety (v2.4+) |
 
 ## Performance Benchmarks
 
@@ -400,6 +425,8 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 - [x] Hierarchical document relationships (parent/child)
 - [x] Cross-collection search
 - [x] Vector clustering and auto-tagging (v2.2)
+- [x] Public catalog API for document management (v2.4)
+- [x] Async executor injection for thread-safe sharing (v2.4)
 - [ ] Incremental clustering (online learning)
 - [ ] Cluster visualization exports
 

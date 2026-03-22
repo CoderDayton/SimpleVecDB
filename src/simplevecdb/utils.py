@@ -59,6 +59,7 @@ def retry_on_lock(
     base_delay: float = 0.1,
     max_delay: float = 2.0,
     jitter: bool = True,
+    total_timeout: float = 10.0,
 ) -> Callable[[F], F]:
     """
     Decorator that retries database operations on SQLite lock errors.
@@ -72,6 +73,9 @@ def retry_on_lock(
         base_delay: Initial delay in seconds before first retry (default: 0.1).
         max_delay: Maximum delay between retries in seconds (default: 2.0).
         jitter: Add randomness to delay to avoid thundering herd (default: True).
+        total_timeout: Absolute wall-clock budget in seconds (default: 10.0).
+            Gives up early if cumulative sleep would exceed this, even if
+            max_retries has not been reached.
 
     Returns:
         Decorated function with retry behavior.
@@ -111,6 +115,17 @@ def retry_on_lock(
                         # Add jitter (±25%) to avoid thundering herd
                         if jitter:
                             delay *= 0.75 + random.random() * 0.5
+
+                        # Enforce total_timeout budget
+                        if total_wait + delay > total_timeout:
+                            _logger.warning(
+                                "Database lock retry would exceed total_timeout "
+                                "(%.2fs spent, %.2fs budget) — giving up",
+                                total_wait,
+                                total_timeout,
+                                extra={"operation": func.__name__},
+                            )
+                            break
 
                         total_wait += delay
 

@@ -84,3 +84,18 @@ USEARCH_BATCH_THRESHOLD = 10
 # When filtering, we fetch k * FILTER_OVERFETCH_MULTIPLIER candidates
 # and filter down to k results
 USEARCH_FILTER_OVERFETCH_MULTIPLIER = 3
+
+# ============================================================================
+# Safety Timeouts (seconds)
+# ============================================================================
+# Maximum time to wait for a single collection search in cross-collection search.
+# Prevents one hung collection from blocking the entire search_collections() call.
+SEARCH_COLLECTION_TIMEOUT = 30.0
+
+# Maximum time to wait for executor shutdown during close().
+# Prevents close() from hanging indefinitely if a task is stuck.
+EXECUTOR_SHUTDOWN_TIMEOUT = 10.0
+
+# Safety cap for recursive CTE traversals when no max_depth is specified.
+# Prevents infinite recursion from cycles in parent_id references.
+MAX_HIERARCHY_DEPTH = 100

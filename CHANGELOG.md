@@ -5,6 +5,41 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-03-22
+
+### Added
+
+- **Public catalog API on VectorCollection + AsyncVectorCollection:**
+  - `get_documents(filter_dict=)` — replaces private `_catalog` access
+  - `get_embeddings_by_ids(ids)` — fetch stored embeddings
+  - `update_metadata(updates)` — batch metadata merge
+  - `count()`, `save()`, `dim` property — async wrappers
+  - `add_texts(parent_ids=, threads=)` — full param support on async
+  - `rebuild_index`, `get_children/parent/descendants/ancestors`, `set_parent` — async hierarchy API
+- **Executor injection on AsyncVectorDB** — accept optional `executor` keyword argument so consumers can share a single-threaded executor for ONNX/usearch thread safety; `close()` only shuts down executor when `_owns_executor` is True
+- **Safety constants** in `constants.py`: `SEARCH_COLLECTION_TIMEOUT`, `EXECUTOR_SHUTDOWN_TIMEOUT`, `MAX_HIERARCHY_DEPTH`
+
+### Fixed
+
+- **VectorDB.close()** now calls `conn.close()` — was leaking file descriptors when `save()` succeeded but connection was never closed
+- **VectorDB.close()** wraps `save()` in `try/finally` so `conn.close()` always runs even if index serialization fails
+- **add_documents ID recovery** uses `last_insert_rowid()` arithmetic instead of `ORDER BY id DESC LIMIT N`, which raced under concurrent inserts
+- **String metadata filter** uses exact equality (`=`) instead of `LIKE` substring match — `{"type": "doc"}` no longer matches `"markdown_doc"`
+- **update_metadata_batch** wrapped in single transaction (`with self.conn`) to prevent partial commits on crash
+- **rebuild_index** uses `if x is not None` instead of `x or default` so passing `connectivity=0` no longer silently uses the default
+- **search_collections** parallel futures now have a 30s timeout — one hung collection can no longer block the entire cross-collection search
+- **AsyncVectorDB.close()** uses `shutdown(wait=False, cancel_futures=True)` instead of blocking `shutdown(wait=True)` which could hang forever on stuck tasks
+- **Recursive CTE safety cap** — `get_descendants`/`get_ancestors` apply `MAX_HIERARCHY_DEPTH=100` when `max_depth=None` to prevent infinite recursion from parent_id cycles
+- **RateLimiter cleanup** capped to 500 evictions per call to bound lock hold time under high bucket counts
+- **HuggingFace download** now uses `etag_timeout=30` with local-cache fallback on network failure
+- **embed_texts** rejects batches over 10,000 texts to prevent unbounded CPU time
+- **retry_on_lock** adds `total_timeout=10s` budget — gives up early if cumulative sleep would exceed the budget
+
+### Changed
+
+- **`__version__`** now read from package metadata via `importlib.metadata` (single source of truth in `pyproject.toml`)
+- **Upsert in usearch_index** separates conflict detection from removal for clearer flow
+
 ## [2.3.0] - 2026-03-08
 
 ### Breaking Changes
@@ -485,6 +520,7 @@ Benchmarks on i9-13900K & RTX 4090 with 10k vectors (384-dim):
 - **Documentation**: https://coderdayton.github.io/simplevecdb/
 - **License**: MIT
 
+[2.4.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.4.0
 [2.3.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.3.0
 [2.2.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.1
 [2.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.0

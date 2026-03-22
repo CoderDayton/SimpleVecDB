@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import logging
 import os
+import signal
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 import threading
 
 from ..config import config
+
+_logger = logging.getLogger("simplevecdb.embeddings.models")
+
+# Timeout for HuggingFace snapshot_download (seconds).
+# First-time downloads can be large; subsequent loads are local cache hits.
+_DOWNLOAD_TIMEOUT = 300  # 5 minutes
+# Maximum texts per encode call to prevent unbounded CPU time.
+_MAX_ENCODE_BATCH = 10_000
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing
     from sentence_transformers import SentenceTransformer as SentenceTransformerType
@@ -46,11 +56,23 @@ def load_model(repo_id: str) -> SentenceTransformerType:
     snapshot = _load_snapshot_download()
     st_cls = _load_sentence_transformer_cls()
 
-    model_path = snapshot(
-        repo_id=repo_id,
-        cache_dir=CACHE_DIR,
-        local_files_only=False,  # auto-download first time
-    )
+    try:
+        model_path = snapshot(
+            repo_id=repo_id,
+            cache_dir=CACHE_DIR,
+            local_files_only=False,  # auto-download first time
+            etag_timeout=30,  # HTTP HEAD timeout
+        )
+    except Exception as exc:
+        # Try local-only as fallback (model may already be cached)
+        _logger.warning(
+            "Remote download failed for %s, trying local cache: %s", repo_id, exc
+        )
+        model_path = snapshot(
+            repo_id=repo_id,
+            cache_dir=CACHE_DIR,
+            local_files_only=True,
+        )
 
     # Use PyTorch backend by default (most compatible)
     # ONNX backend has compatibility issues with optimum>=2.0
@@ -90,6 +112,12 @@ def embed_texts(
     """
     if not texts:
         return []
+
+    if len(texts) > _MAX_ENCODE_BATCH:
+        raise ValueError(
+            f"Batch too large ({len(texts)} texts). "
+            f"Maximum is {_MAX_ENCODE_BATCH}. Split into smaller batches."
+        )
 
     model = get_embedder(model_id)
     effective_batch_size = batch_size or config.EMBEDDING_BATCH_SIZE

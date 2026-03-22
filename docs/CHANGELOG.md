@@ -5,106 +5,153 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.2.0] - 2026-01-17
+## [2.4.0] - 2026-03-22
 
 ### Added
 
-- **Vector Clustering & Auto-Tagging** - Discover natural groupings in embeddings
-  - `VectorCollection.cluster()` - Cluster documents by semantic similarity
-    - **K-means**: Classic centroid-based clustering for balanced clusters
-    - **MiniBatch K-means**: Scalable variant for large datasets (default)
-    - **HDBSCAN**: Density-based clustering that auto-discovers cluster count
-  - `VectorCollection.auto_tag()` - Generate descriptive tags for clusters
-    - TF-IDF method (default): Extract keywords with highest TF-IDF scores
-    - Frequency method: Extract most common words per cluster
-    - Custom callback: Implement custom tagging logic (e.g., LLM-based)
-  - `VectorCollection.assign_cluster_metadata()` - Persist cluster IDs to document metadata
-  - `VectorCollection.get_cluster_members()` - Retrieve all documents in a cluster
+- **Public catalog API on VectorCollection + AsyncVectorCollection:**
+  - `get_documents(filter_dict=)` — replaces private `_catalog` access
+  - `get_embeddings_by_ids(ids)` — fetch stored embeddings
+  - `update_metadata(updates)` — batch metadata merge
+  - `count()`, `save()`, `dim` property — async wrappers
+  - `add_texts(parent_ids=, threads=)` — full param support on async
+  - `rebuild_index`, `get_children/parent/descendants/ancestors`, `set_parent` — async hierarchy API
+- **Executor injection on AsyncVectorDB** — accept optional `executor` keyword argument so consumers can share a single-threaded executor for ONNX/usearch thread safety; `close()` only shuts down executor when `_owns_executor` is True
+- **Safety constants** in `constants.py`: `SEARCH_COLLECTION_TIMEOUT`, `EXECUTOR_SHUTDOWN_TIMEOUT`, `MAX_HIERARCHY_DEPTH`
 
-- **Cluster Quality Metrics** - Evaluate clustering results
-  - `ClusterResult.inertia` - Sum of squared distances to centroids (K-means only, lower is better)
-  - `ClusterResult.silhouette_score` - Cluster separation metric (-1 to 1, higher is better)
-  - `ClusterResult.metrics()` - Get all metrics as dictionary
+### Fixed
 
-- **Cluster Persistence** - Save and reuse cluster configurations
-  - `VectorCollection.save_cluster()` - Save cluster centroids and metadata to database
-  - `VectorCollection.load_cluster()` - Load saved cluster configuration
-  - `VectorCollection.list_clusters()` - List all saved cluster configurations
-  - `VectorCollection.delete_cluster()` - Delete a saved cluster configuration
-  - `VectorCollection.assign_to_cluster()` - Assign new documents to saved clusters without re-clustering
-
-- **Async Clustering Support** - Full async/await parity for all clustering operations
-  - `AsyncVectorCollection.cluster()`, `auto_tag()`, `assign_cluster_metadata()`, `get_cluster_members()`
-  - `AsyncVectorCollection.save_cluster()`, `load_cluster()`, `list_clusters()`, `delete_cluster()`, `assign_to_cluster()`
-
-- **New Dependencies** - Now included in standard installation
-  - `scikit-learn>=1.3.0` - K-means, MiniBatch K-means, silhouette score
-  - `hdbscan>=0.8.33` - Density-based clustering
-  - `sqlcipher3-binary>=0.5.0` - Encryption support (previously optional)
-  - `cryptography>=41.0` - Encryption utilities (previously optional)
-
-- **Documentation**
-  - New comprehensive clustering guide: `docs/guides/clustering.md`
-    - Algorithm comparison and selection guide
-    - Quality metrics interpretation
-    - Cluster persistence workflows
-    - Use cases: product categorization, topic discovery, customer segmentation, duplicate detection
-    - Best practices and troubleshooting
-  - New types reference: `docs/api/types.md`
-    - Complete `ClusterResult` API documentation
-    - `Document`, `DistanceStrategy`, `Quantization`, `ClusterAlgorithm` reference
-  - Updated README.md and docs/index.md with clustering sections
-  - Enhanced `docs/api/core.md` with clustering examples
+- **VectorDB.close()** now calls `conn.close()` — was leaking file descriptors when `save()` succeeded but connection was never closed
+- **VectorDB.close()** wraps `save()` in `try/finally` so `conn.close()` always runs even if index serialization fails
+- **add_documents ID recovery** uses `last_insert_rowid()` arithmetic instead of `ORDER BY id DESC LIMIT N`, which raced under concurrent inserts
+- **String metadata filter** uses exact equality (`=`) instead of `LIKE` substring match — `{"type": "doc"}` no longer matches `"markdown_doc"`
+- **update_metadata_batch** wrapped in single transaction (`with self.conn`) to prevent partial commits on crash
+- **rebuild_index** uses `if x is not None` instead of `x or default` so passing `connectivity=0` no longer silently uses the default
+- **search_collections** parallel futures now have a 30s timeout — one hung collection can no longer block the entire cross-collection search
+- **AsyncVectorDB.close()** uses `shutdown(wait=False, cancel_futures=True)` instead of blocking `shutdown(wait=True)` which could hang forever on stuck tasks
+- **Recursive CTE safety cap** — `get_descendants`/`get_ancestors` apply `MAX_HIERARCHY_DEPTH=100` when `max_depth=None` to prevent infinite recursion from parent_id cycles
+- **RateLimiter cleanup** capped to 500 evictions per call to bound lock hold time under high bucket counts
+- **HuggingFace download** now uses `etag_timeout=30` with local-cache fallback on network failure
+- **embed_texts** rejects batches over 10,000 texts to prevent unbounded CPU time
+- **retry_on_lock** adds `total_timeout=10s` budget — gives up early if cumulative sleep would exceed the budget
 
 ### Changed
 
-- **pyproject.toml**: Updated `scikit-learn` minimum version from `1.0` to `1.3.0` for improved clustering stability
+- **`__version__`** now read from package metadata via `importlib.metadata` (single source of truth in `pyproject.toml`)
+- **Upsert in usearch_index** separates conflict detection from removal for clearer flow
 
-### Testing
+## [2.3.0] - 2026-03-08
 
-- Added 26 clustering tests in `tests/unit/test_clustering.py`:
-  - 16 core clustering tests (algorithms, auto-tagging, metadata persistence, edge cases)
-  - 4 cluster metrics tests (inertia, silhouette, metrics method)
-  - 6 cluster persistence tests (save/load/list/delete/assign)
-- Added 3 async clustering tests in `tests/unit/test_async.py`
-- Total test count: 305 (up from 292)
+### Breaking Changes
 
-### Installation
+- **Integration dependencies are now optional.** LangChain and LlamaIndex packages are no longer installed by default. Install with `pip install simplevecdb[integrations]` to use them. Existing users upgrading from v2.2.x will see a clear ImportError with migration instructions.
 
-Clustering and encryption are now included by default:
+### Added
 
-```bash
-pip install simplevecdb
-```
+- **`[integrations]` optional extra** — Install LangChain and LlamaIndex dependencies only when needed, reducing default install footprint
+- **Runtime import guards** in integration modules with v2.3.0 migration messaging
+- **Lazy `__getattr__` loading** in `integrations/__init__.py` — integration classes are only imported when accessed
+- **Input validation guards** on search methods:
+  - `similarity_search`, `similarity_search_batch`, `keyword_search`, `hybrid_search` now reject `k <= 0`
+  - `add_texts` validates length consistency of `metadatas`, `embeddings`, `ids`, and `parent_ids` against `texts`
+- **NaN/Inf validation** for float values in metadata filters (`utils.validate_filter`)
+- **Empty list rejection** for list filter values
+- **Double-close protection** on `VectorDB` with `_closed` flag
+- **Context manager protocol** (`__enter__`/`__exit__`) on `VectorDB`
+- **Table name validation** in `check_migration` (defense-in-depth against SQL injection)
+- **Graceful per-future error handling** in `search_collections`
+- **Adaptive batch search threshold** — queries below `USEARCH_BATCH_THRESHOLD` (10) use sequential search to avoid batch overhead
 
-No extra installation steps required!
+### Changed
 
-### Example
+- **Python dev target changed to 3.12** (`.python-version`), `requires-python` remains `>= "3.10"`
+- **Version bumped to 2.3.0**
+- **Performance: MMR search vectorized** — pre-normalize embeddings once, use `sel_matrix @ emb` matrix-vector multiply instead of Python inner loop, O(1) `list.pop` replaces O(n) `list.remove`, hoist `1 - lambda_mult` loop invariant
+- **Performance: merged SQL round-trips in MMR** — new `get_documents_and_embeddings_by_ids` fetches text, metadata, and embeddings in a single query (previously two separate SELECTs)
+- **Performance: `get_parent` collapsed** from 2 sequential SELECTs to 1 self-JOIN
+- **Performance: `add_documents` ID recovery** — skip redundant `SELECT ORDER BY DESC` when explicit IDs are provided; removed unnecessary `list(texts)` copy
+- **Performance: FLOAT serialization** — `np.asarray().tobytes()` replaces `struct.pack` with per-element Python loop (single C memcpy)
+- **Performance: `np.array` → `np.asarray`** on every search and insert path to avoid unnecessary copies
+- **Performance: SQL placeholder strings** — `",".join(["?"] * len(ids))` replaces generator expression across all 9 call sites
+- **Performance: batched numpy conversion** in `add_texts` — single `np.asarray` call instead of per-item conversion
+- **Performance: compact JSON separators** in catalog serialization
+- **Performance: deduplicated `.tolist()` calls** in search engine
+- **Performance: `np.unique(ravel())`** for batch key collection in `similarity_search_batch`
+- **Performance: usearch upsert** — skip contains-check loop on empty index, cache `int(key)` once per iteration
+- **Performance: cluster table DDL** — `_cluster_table_ready` flag skips `CREATE TABLE IF NOT EXISTS` on repeated calls; cached `_cluster_table_name`
+- **`_normalize_key`** now delegates to `_derive_key` instead of duplicating PBKDF2 logic
+- **HNSW defaults** in `usearch_index.py` now sourced from `constants.py` (removed local duplicates)
+- **Collection name regex** uses `constants.COLLECTION_NAME_PATTERN` instead of hardcoded pattern
+- **`VectorDB` defaults** for `distance_strategy` and `quantization` sourced from `constants.DEFAULT_DISTANCE_STRATEGY` / `constants.DEFAULT_QUANTIZATION`
+- **`_batched` utility** moved from `core.py` to `utils.py` for reuse; now used in `catalog.py` batch updates
+- **`auto_tag`** uses `defaultdict(list)` instead of manual if-not-in pattern
+- **`import random`** hoisted to module level in `utils.py` (was inside retry loop)
+- **Streaming placeholder bug fixed** — `_process_streaming_batch` now correctly detects `None` placeholders (previously used empty list `[]`, preventing auto-embedding replacement)
+- **README updated** to document `pip install simplevecdb[integrations]` installation
 
-```python
-from simplevecdb import VectorDB
+### Removed
 
-db = VectorDB("products.db")
-collection = db.collection("items")
+- LangChain and LlamaIndex packages from core `[project.dependencies]` (moved to `[project.optional-dependencies] integrations`)
+- Duplicated HNSW default constants from `usearch_index.py` (now single source in `constants.py`)
+- Unused `struct` import from `quantization.py`
+- Unused `itertools` import from `core.py`
 
-# Cluster documents
-result = collection.cluster(n_clusters=5, algorithm="minibatch_kmeans")
+## [2.2.1] - 2026-01-27
 
-# Generate tags and persist
-tags = collection.auto_tag(result, method="tfidf", n_keywords=3)
-collection.assign_cluster_metadata(result, tags)
+### Changed
 
-# Save for fast assignment of new documents
-collection.save_cluster("categories", result, metadata={"tags": tags})
+- Moved integration dependencies (langchain-core, langchain-openai, llama-index) from dev to main dependencies for easier installation
+- Added bandit to dev dependencies for security linting in pre-commit
+- Cleaned up duplicate dev dependency definitions
 
-# Later: assign new documents without re-clustering
-new_ids = collection.add_texts(new_texts, embeddings=new_embeddings)
-collection.assign_to_cluster("categories", new_ids)
+## [2.2.0] - 2026-01-26
 
-# Evaluate quality
-print(f"Silhouette Score: {result.silhouette_score:.2f}")  # 0.62
-print(f"Inertia: {result.inertia:.2f}")  # 1523.45
-```
+### Added
+
+- Version 2.2.0 release
+
+## [2.1.0] - 2026-01-01
+
+### Added
+
+- **SQLCipher Encryption Support** - Full at-rest encryption for sensitive data:
+  - `VectorDB(path, encryption_key="...")` enables AES-256 page-level database encryption
+  - Uses SQLCipher for transparent SQLite encryption (PRAGMA key)
+  - Usearch index files encrypted with AES-256-GCM (`.usearch.enc`)
+  - Zero performance overhead during search (decrypt on load, encrypt on save only)
+  - Key derivation: PBKDF2-SHA256 with 480,000 iterations for passphrases
+  - Install with `pip install simplevecdb[encryption]`
+
+- **New encryption module** (`simplevecdb.encryption`):
+  - `create_encrypted_connection()` - SQLCipher connection factory
+  - `is_database_encrypted()` - Check if a database file is encrypted
+  - `encrypt_index_file()` / `decrypt_index_file()` - Index file encryption
+  - `EncryptionError` / `EncryptionUnavailableError` - New exception types
+
+- **Streaming Insert API** - Memory-efficient large-scale ingestion:
+  - `collection.add_texts_streaming(iterable)` - Process from any iterator/generator
+  - Configurable `batch_size` parameter (default: config.EMBEDDING_BATCH_SIZE)
+  - Yields `StreamingProgress` after each batch for monitoring
+  - Optional `on_progress` callback for custom logging/UI updates
+  - New types: `StreamingProgress`, `ProgressCallback`
+
+- **Hierarchical Document Relationships** - Parent/child document structure:
+  - `parent_ids` parameter in `add_texts()` to link documents
+  - `get_children(doc_id)` - Get direct child documents
+  - `get_parent(doc_id)` - Get parent document
+  - `get_descendants(doc_id, max_depth)` - Recursive children traversal
+  - `get_ancestors(doc_id, max_depth)` - Path to root
+  - `set_parent(doc_id, parent_id)` - Update relationships
+  - Uses SQLite recursive CTE for efficient traversal
+  - Auto-migrates existing databases (adds `parent_id` column)
+
+### Changed
+
+- `check_migration()` now gracefully handles encrypted databases (returns `needs_migration=False`)
+
+### Dependencies
+
+- New optional dependency group `[encryption]`: `sqlcipher3-binary>=0.5.0`, `cryptography>=41.0`
 
 ## [2.0.0] - 2025-12-23
 
@@ -473,6 +520,12 @@ Benchmarks on i9-13900K & RTX 4090 with 10k vectors (384-dim):
 - **Documentation**: https://coderdayton.github.io/simplevecdb/
 - **License**: MIT
 
+[2.4.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.4.0
+[2.3.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.3.0
+[2.2.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.1
+[2.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.0
+[2.1.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.1.0
+[2.0.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.0.0
 [1.3.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.3.0
 [1.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.2.0
 [1.1.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.1

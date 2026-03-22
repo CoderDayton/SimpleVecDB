@@ -880,9 +880,9 @@ class VectorCollection:
             ndim=ndim,
             distance_strategy=self.distance_strategy,
             quantization=self.quantization,
-            connectivity=connectivity or constants.USEARCH_DEFAULT_CONNECTIVITY,
-            expansion_add=expansion_add or constants.USEARCH_DEFAULT_EXPANSION_ADD,
-            expansion_search=expansion_search or constants.USEARCH_DEFAULT_EXPANSION_SEARCH,
+            connectivity=connectivity if connectivity is not None else constants.USEARCH_DEFAULT_CONNECTIVITY,
+            expansion_add=expansion_add if expansion_add is not None else constants.USEARCH_DEFAULT_EXPANSION_ADD,
+            expansion_search=expansion_search if expansion_search is not None else constants.USEARCH_DEFAULT_EXPANSION_SEARCH,
         )
 
         # Re-add all vectors
@@ -1350,6 +1350,51 @@ class VectorCollection:
         """Return the number of documents in the collection."""
         return self._catalog.count()
 
+    def get_documents(
+        self,
+        filter_dict: dict[str, Any] | None = None,
+    ) -> list[tuple[int, str, dict[str, Any]]]:
+        """Get all documents with text content and metadata.
+
+        Args:
+            filter_dict: Optional metadata filter to narrow results.
+
+        Returns:
+            List of (doc_id, text, metadata) tuples.
+        """
+        filter_builder = self._catalog.build_filter_clause if filter_dict else None
+        return self._catalog.get_all_docs_with_text(
+            filter_dict=filter_dict,
+            filter_builder=filter_builder,
+        )
+
+    def get_embeddings_by_ids(self, ids: Sequence[int]) -> dict[int, Any]:
+        """Fetch stored embeddings by document IDs.
+
+        Args:
+            ids: Document IDs to fetch embeddings for.
+
+        Returns:
+            Dict mapping doc_id to embedding array (or None).
+        """
+        return self._catalog.get_embeddings_by_ids(list(ids))
+
+    def update_metadata(self, updates: list[tuple[int, dict[str, Any]]]) -> int:
+        """Update metadata for multiple documents (shallow merge).
+
+        Args:
+            updates: List of (doc_id, metadata_dict) tuples.
+
+        Returns:
+            Number of documents updated.
+        """
+        return self._catalog.update_metadata_batch(updates)
+
+    @property
+    def dim(self) -> int | None:
+        """Vector dimension (None if no vectors added yet)."""
+        return self._index.ndim
+
     @property
     def _dim(self) -> int | None:
         """Vector dimension (None if no vectors added yet)."""
@@ -1542,13 +1587,21 @@ class VectorDB:
         # Execute searches
         all_results: list[tuple[Document, float, str]] = []
         if parallel and len(targets) > 1:
-            from concurrent.futures import ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
             with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as executor:
                 futures = [executor.submit(_search_one, coll) for coll in targets]
                 for future in futures:
                     try:
-                        all_results.extend(future.result())
+                        all_results.extend(
+                            future.result(timeout=constants.SEARCH_COLLECTION_TIMEOUT)
+                        )
+                    except FuturesTimeoutError:
+                        future.cancel()
+                        _logger.error(
+                            "search_collections: collection search timed out after %.0fs",
+                            constants.SEARCH_COLLECTION_TIMEOUT,
+                        )
                     except Exception:
                         _logger.warning(
                             "search_collections: one collection search failed",
@@ -1796,7 +1849,12 @@ MIGRATION ROLLBACK INSTRUCTIONS:
         if getattr(self, "_closed", False):
             return
         self._closed = True
-        self.save()
+        try:
+            self.save()
+        except Exception:
+            _logger.warning("Failed to save indexes during close", exc_info=True)
+        finally:
+            self.conn.close()
 
     def __enter__(self) -> "VectorDB":
         return self
