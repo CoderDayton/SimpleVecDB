@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`__repr__`** on `VectorDB`, `VectorCollection`, `AsyncVectorDB`, `AsyncVectorCollection` for debuggable string representations.
 - **FLOAT16 quantization** fully implemented in `serialize()`/`deserialize()` — was previously defined in the enum but raised `ValueError` at runtime.
 - **Pagination** on `get_documents(limit=, offset=)` and catalog methods (`find_ids_by_filter`, `find_ids_by_texts`) — previously returned unbounded result sets.
+- **Embeddings server enhancements:**
+  - Graceful shutdown with SIGTERM/SIGINT draining (10s timeout)
+  - CORS middleware with configurable origins for browser-based clients
+  - Model warm-up on startup (skip with `--no-warmup`)
+  - Input validation: rejects empty strings (422) and texts exceeding 100k chars (413)
+  - Proper `argparse` CLI with `--host`, `--port`, `--no-warmup`, `--help`
+  - Startup banner logging config summary (host, port, model, auth, rate limits)
+  - Nested token array normalization (`list[list[int]]` input format)
+  - Async executor offload for `embed_texts` (non-blocking event loop)
+  - OpenAPI version synced from package metadata
+  - Module `__init__.py` exports (`embed_texts`, `get_embedder`, `load_model`, `app`, `run_server`)
 
 ### Fixed
 
