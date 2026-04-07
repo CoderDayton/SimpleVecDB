@@ -1,7 +1,7 @@
 """Embeddings server API tests."""
 
 import pytest
-from unittest.mock import patch, ANY
+from unittest.mock import patch, ANY, MagicMock
 from fastapi.testclient import TestClient
 
 from simplevecdb.embeddings.server import app, ModelRegistry
@@ -120,44 +120,52 @@ def test_server_run_with_args():
     """Test server.run_server with custom host/port."""
     from simplevecdb.embeddings.server import run_server
 
-    with patch("uvicorn.run") as mock_run:
-        run_server(host="127.0.0.1", port=9000)
-        mock_run.assert_called_once()
-        call_kwargs = mock_run.call_args[1]
-        assert call_kwargs["host"] == "127.0.0.1"
-        assert call_kwargs["port"] == 9000
+    mock_server = MagicMock()
+    with patch("simplevecdb.embeddings.server.uvicorn.Config") as mock_cfg:
+        with patch("simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server):
+            run_server(host="127.0.0.1", port=9000)
+            call_kwargs = mock_cfg.call_args[1]
+            assert call_kwargs["host"] == "127.0.0.1"
+            assert call_kwargs["port"] == 9000
+            mock_server.run.assert_called_once()
 
 
 def test_server_run_default_config():
     """Test server.run_server uses config defaults."""
     from simplevecdb.embeddings.server import run_server
 
-    with patch("uvicorn.run") as mock_run:
-        with patch("simplevecdb.embeddings.server.config") as mock_config:
-            mock_config.SERVER_HOST = "0.0.0.0"
-            mock_config.SERVER_PORT = 8080
+    mock_server = MagicMock()
+    with patch("simplevecdb.embeddings.server.uvicorn.Config") as mock_cfg:
+        with patch("simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server):
+            with patch("simplevecdb.embeddings.server.config") as mock_config:
+                mock_config.SERVER_HOST = "0.0.0.0"
+                mock_config.SERVER_PORT = 8080
+                mock_config.EMBEDDING_SERVER_API_KEYS = set()
+                mock_config.EMBEDDING_MODEL = "test-model"
 
-            run_server()
+                run_server(host="0.0.0.0", port=8080)
 
-            call_kwargs = mock_run.call_args[1]
-            assert call_kwargs["host"] == "0.0.0.0"
-            assert call_kwargs["port"] == 8080
+                call_kwargs = mock_cfg.call_args[1]
+                assert call_kwargs["host"] == "0.0.0.0"
+                assert call_kwargs["port"] == 8080
 
 
 def test_server_run_cli_args():
-    """Test server.run_server parses CLI arguments."""
+    """Test server.run_server parses CLI arguments via argparse."""
     from simplevecdb.embeddings.server import run_server
     import sys
 
-    with patch("uvicorn.run") as mock_run:
-        with patch.object(
-            sys, "argv", ["script", "--host", "192.168.1.1", "--port", "7000"]
-        ):
-            run_server()
+    mock_server = MagicMock()
+    with patch("simplevecdb.embeddings.server.uvicorn.Config") as mock_cfg:
+        with patch("simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server):
+            with patch.object(
+                sys, "argv", ["script", "--host", "192.168.1.1", "--port", "7000"]
+            ):
+                run_server()
 
-            call_kwargs = mock_run.call_args[1]
-            assert call_kwargs["host"] == "192.168.1.1"
-            assert call_kwargs["port"] == 7000
+                call_kwargs = mock_cfg.call_args[1]
+                assert call_kwargs["host"] == "192.168.1.1"
+                assert call_kwargs["port"] == 7000
 
 
 def test_embeddings_default_model():

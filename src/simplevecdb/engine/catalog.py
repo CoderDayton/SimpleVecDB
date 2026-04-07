@@ -136,20 +136,32 @@ class CatalogManager:
             _logger.warning("Could not check/add parent_id column: %s", e)
 
     def _ensure_fts_table(self) -> None:
-        """Create FTS5 virtual table for full-text search."""
+        """Create FTS5 virtual table for full-text search.
+
+        Retries on transient lock errors but permanently disables FTS
+        if the module is unavailable.
+        """
         import sqlite3
 
-        try:
-            self.conn.execute(
-                f"""
-                CREATE VIRTUAL TABLE IF NOT EXISTS {self._fts_table_name}
-                USING fts5(text)
-                """
-            )
-            self._fts_enabled = True
-        except sqlite3.OperationalError:
-            _logger.warning("FTS5 not available - keyword search disabled")
-            self._fts_enabled = False
+        for attempt in range(3):
+            try:
+                self.conn.execute(
+                    f"""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS {self._fts_table_name}
+                    USING fts5(text)
+                    """
+                )
+                self._fts_enabled = True
+                return
+            except sqlite3.OperationalError as e:
+                msg = str(e).lower()
+                if "database is locked" in msg and attempt < 2:
+                    import time
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                _logger.warning("FTS5 not available - keyword search disabled: %s", e)
+                self._fts_enabled = False
+                return
 
     @property
     def fts_enabled(self) -> bool:
@@ -409,23 +421,54 @@ class CatalogManager:
             result[row_id] = (text, meta, emb)
         return result
 
-    def find_ids_by_texts(self, texts: Sequence[str]) -> list[int]:
-        """Find document IDs matching exact text content."""
+    def find_ids_by_texts(
+        self,
+        texts: Sequence[str],
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[int]:
+        """Find document IDs matching exact text content.
+
+        Args:
+            texts: Text strings to search for
+            limit: Maximum number of IDs to return (None = all)
+            offset: Number of IDs to skip (None = 0)
+        """
         if not texts:
             return []
         placeholders = ",".join(["?"] * len(texts))
-        rows = self.conn.execute(
-            f"SELECT id FROM {self._table_name} WHERE text IN ({placeholders})",
-            tuple(texts),
-        ).fetchall()
+        sql = f"SELECT id FROM {self._table_name} WHERE text IN ({placeholders})"
+        params: list[Any] = list(texts)
+
+        if offset is not None and limit is None:
+            raise ValueError("offset requires limit")
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+            if offset is not None:
+                sql += " OFFSET ?"
+                params.append(offset)
+
+        rows = self.conn.execute(sql, tuple(params)).fetchall()
         return [r[0] for r in rows]
 
     def find_ids_by_filter(
         self,
         filter_dict: dict[str, Any],
         filter_builder: Callable[[dict[str, Any], str], tuple[str, list[Any]]],
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[int]:
-        """Find document IDs matching metadata filter."""
+        """Find document IDs matching metadata filter.
+
+        Args:
+            filter_dict: Metadata key-value pairs to filter by
+            filter_builder: Function to build filter clause
+            limit: Maximum number of IDs to return (None = all)
+            offset: Number of IDs to skip (None = 0)
+        """
         if not filter_dict:
             return []
 
@@ -434,10 +477,19 @@ class CatalogManager:
         filter_clause = filter_clause.replace("AND ", "", 1)
         where_clause = f"WHERE {filter_clause}" if filter_clause else ""
 
-        rows = self.conn.execute(
-            f"SELECT id FROM {self._table_name} {where_clause}",
-            tuple(filter_params),
-        ).fetchall()
+        sql = f"SELECT id FROM {self._table_name} {where_clause}"
+        params: list[Any] = list(filter_params)
+
+        if offset is not None and limit is None:
+            raise ValueError("offset requires limit")
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+            if offset is not None:
+                sql += " OFFSET ?"
+                params.append(offset)
+
+        rows = self.conn.execute(sql, tuple(params)).fetchall()
         return [r[0] for r in rows]
 
     def keyword_search(
@@ -536,13 +588,18 @@ class CatalogManager:
         filter_dict: dict[str, Any] | None = None,
         filter_builder: Callable[[dict[str, Any], str], tuple[str, list[Any]]]
         | None = None,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[tuple[int, str, dict[str, Any]]]:
         """
-        Get all documents with their text content.
+        Get documents with their text content, with optional pagination.
 
         Args:
             filter_dict: Optional metadata filter
             filter_builder: Function to build filter clause
+            limit: Maximum number of documents to return (None = all)
+            offset: Number of documents to skip (None = 0)
 
         Returns:
             List of (doc_id, text, metadata) tuples
@@ -557,7 +614,18 @@ class CatalogManager:
             WHERE 1=1 {filter_clause}
             ORDER BY id
         """
-        rows = self.conn.execute(sql, tuple(filter_params)).fetchall()
+        params: list[Any] = list(filter_params)
+
+        if offset is not None and limit is None:
+            raise ValueError("offset requires limit")
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+            if offset is not None:
+                sql += " OFFSET ?"
+                params.append(offset)
+
+        rows = self.conn.execute(sql, tuple(params)).fetchall()
         result = []
         for row_id, text, meta_json in rows:
             meta = json.loads(meta_json) if meta_json else {}

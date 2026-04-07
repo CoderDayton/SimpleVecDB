@@ -140,10 +140,13 @@ hybrid = collection.hybrid_search("powerhouse cell", k=2)
 **Optional: Run embeddings server (OpenAI-compatible)**
 
 ```bash
-simplevecdb-server --port 8000
+simplevecdb-server --port 8000                # Default model, auto warm-up
+simplevecdb-server --host 0.0.0.0 --port 9000 # Bind to all interfaces
+simplevecdb-server --no-warmup                # Skip model preload on startup
+simplevecdb-server --help                     # Show all options
 ```
 
-See [Setup Guide](ENV_SETUP.md) for configuration: model registry, rate limits, API keys, CUDA optimization.
+See [Setup Guide](ENV_SETUP.md) for configuration: model registry, rate limits, API keys, CORS, CUDA optimization.
 
 ### Option 3: With LangChain or LlamaIndex
 
@@ -302,6 +305,10 @@ docs = collection.get_documents(filter_dict={"category": "tech"})
 for doc_id, text, metadata in docs:
     print(f"[{doc_id}] {text[:50]}...")
 
+# Paginated access (v2.5+)
+page1 = collection.get_documents(limit=100)
+page2 = collection.get_documents(limit=100, offset=100)
+
 # Fetch stored embeddings
 embeddings = collection.get_embeddings_by_ids([1, 2, 3])
 
@@ -313,6 +320,9 @@ collection.update_metadata([
 
 # Quick stats
 print(f"Collection has {collection.count()} documents, dim={collection.dim}")
+
+# Delete an entire collection (v2.5+)
+db.delete_collection("old_data")
 ```
 
 ### Vector Clustering (v2.2+)
@@ -355,6 +365,10 @@ Supports K-means, MiniBatch K-means, and HDBSCAN. See [Clustering Guide](https:/
 | **Cluster Persistence**   | ✅     | Save/load cluster centroids for fast assignment (v2.2+)      |
 | **Public Catalog API**    | ✅     | `get_documents`, `get_embeddings_by_ids`, `update_metadata` (v2.4+) |
 | **Executor Injection**    | ✅     | Share thread pool across async instances for ONNX safety (v2.4+) |
+| **Collection Management** | ✅     | `delete_collection()`, paginated `get_documents(limit=, offset=)` (v2.5+) |
+| **Cross-Process Safety**  | ✅     | Advisory file locking on usearch index files (v2.5+) |
+| **FLOAT16 Quantization**  | ✅     | Half-precision storage with 2x compression (v2.5+) |
+| **Embeddings Server**     | ✅     | CORS, graceful shutdown, input validation, model warm-up (v2.5+) |
 
 ## Performance Benchmarks
 
@@ -427,6 +441,9 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 - [x] Vector clustering and auto-tagging (v2.2)
 - [x] Public catalog API for document management (v2.4)
 - [x] Async executor injection for thread-safe sharing (v2.4)
+- [x] Collection management: `delete_collection()`, pagination (v2.5)
+- [x] Cross-process file locking and connection health checks (v2.5)
+- [x] Embeddings server hardening: CORS, graceful shutdown, input validation (v2.5)
 - [ ] Incremental clustering (online learning)
 - [ ] Cluster visualization exports
 

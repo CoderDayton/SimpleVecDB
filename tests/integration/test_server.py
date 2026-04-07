@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from simplevecdb.config import config
 from simplevecdb.embeddings import server
@@ -85,12 +85,14 @@ def test_usage_endpoint_reports_stats():
 
 @pytest.mark.integration
 def test_run_server():
-    """Test run_server function calls uvicorn."""
+    """Test run_server function calls uvicorn.Server."""
     from simplevecdb.embeddings.server import run_server
 
-    with patch("uvicorn.run") as mock_run:
-        run_server(host="1.2.3.4", port=9999)
-        mock_run.assert_called_once()
-        args, kwargs = mock_run.call_args
-        assert kwargs["host"] == "1.2.3.4"
-        assert kwargs["port"] == 9999
+    mock_server = MagicMock()
+    with patch("simplevecdb.embeddings.server.uvicorn.Config") as mock_cfg:
+        with patch("simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server):
+            run_server(host="1.2.3.4", port=9999)
+            call_kwargs = mock_cfg.call_args[1]
+            assert call_kwargs["host"] == "1.2.3.4"
+            assert call_kwargs["port"] == 9999
+            mock_server.run.assert_called_once()

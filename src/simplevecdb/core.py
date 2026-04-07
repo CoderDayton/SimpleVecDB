@@ -178,6 +178,7 @@ class VectorCollection:
         distance_strategy: DistanceStrategy,
         quantization: Quantization,
         encryption_key: str | bytes | None = None,
+        store_embeddings: bool = False,
     ):
         self.conn = conn
         self._db_path = db_path
@@ -186,6 +187,7 @@ class VectorCollection:
         self.quantization = quantization
         self._quantizer = QuantizationStrategy(quantization)
         self._encryption_key = encryption_key
+        self._store_embeddings = store_embeddings
 
         # Sanitize name to prevent issues
         if not re.match(constants.COLLECTION_NAME_PATTERN, name):
@@ -397,12 +399,12 @@ class VectorCollection:
             batch_ids = ids[batch_start:batch_end] if ids else None
             batch_parent_ids = parent_ids[batch_start:batch_end] if parent_ids else None
 
-            # Add to SQLite metadata store (with embeddings for MMR support)
+            # Add to SQLite metadata store
             doc_ids = self._catalog.add_documents(
                 batch_texts,
                 list(batch_metas),
                 batch_ids,
-                embeddings=batch_embeds,
+                embeddings=batch_embeds if self._store_embeddings else None,
                 parent_ids=batch_parent_ids,
             )
 
@@ -748,11 +750,12 @@ class VectorCollection:
         if not ids_list:
             return
 
-        # Delete from usearch
-        self._index.remove(ids_list)
-
-        # Delete from SQLite
+        # Delete from SQLite first (transactional, can rollback on failure)
         self._catalog.delete_by_ids(ids_list)
+
+        # Then remove from usearch (if this fails, catalog is clean and
+        # rebuild_index() can recover the index from stored data)
+        self._index.remove(ids_list)
 
     def remove_texts(
         self,
@@ -845,6 +848,13 @@ class VectorCollection:
 
         # Fetch embeddings from SQLite
         embeddings_map = self._catalog.get_embeddings_by_ids(all_ids)
+
+        if not embeddings_map and not self._store_embeddings:
+            raise RuntimeError(
+                "Cannot rebuild index: no embeddings stored in SQLite. "
+                "Create the collection with store_embeddings=True to enable "
+                "rebuild_index(), or re-add documents with store_embeddings=True."
+            )
 
         # Filter to only docs with embeddings
         valid_pairs = [
@@ -1260,7 +1270,7 @@ class VectorCollection:
 
         centroids = None
         if centroids_bytes is not None:
-            dim = self._dim
+            dim = self.dim
             if dim:
                 centroids = np.frombuffer(centroids_bytes, dtype=np.float32).reshape(
                     n_clusters, dim
@@ -1353,19 +1363,26 @@ class VectorCollection:
     def get_documents(
         self,
         filter_dict: dict[str, Any] | None = None,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[tuple[int, str, dict[str, Any]]]:
-        """Get all documents with text content and metadata.
+        """Get documents with text content and metadata.
 
         Args:
             filter_dict: Optional metadata filter to narrow results.
+            limit: Maximum number of documents to return (None = all).
+            offset: Number of documents to skip (None = 0).
 
         Returns:
-            List of (doc_id, text, metadata) tuples.
+            List of (doc_id, text, metadata) tuples, ordered by ID.
         """
         filter_builder = self._catalog.build_filter_clause if filter_dict else None
         return self._catalog.get_all_docs_with_text(
             filter_dict=filter_dict,
             filter_builder=filter_builder,
+            limit=limit,
+            offset=offset,
         )
 
     def get_embeddings_by_ids(self, ids: Sequence[int]) -> dict[int, Any]:
@@ -1395,10 +1412,11 @@ class VectorCollection:
         """Vector dimension (None if no vectors added yet)."""
         return self._index.ndim
 
-    @property
-    def _dim(self) -> int | None:
-        """Vector dimension (None if no vectors added yet)."""
-        return self._index.ndim
+    def __repr__(self) -> str:
+        return (
+            f"VectorCollection(name={self.name!r}, dim={self.dim}, "
+            f"size={self.count()}, distance={self.distance_strategy.value})"
+        )
 
 
 class VectorDB:
@@ -1452,7 +1470,7 @@ class VectorDB:
         self.quantization = quantization
         self.auto_migrate = auto_migrate
         self._encryption_key = encryption_key
-        self._collections: dict[str, VectorCollection] = {}
+        self._collections: dict[tuple, VectorCollection] = {}
 
         # Create connection (encrypted or plain)
         if encryption_key is not None:
@@ -1467,6 +1485,8 @@ class VectorDB:
                 check_same_thread=False,
                 timeout=30.0,
             )
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
             self._encrypted = True
             _logger.info("Opened encrypted database: %s", self.path)
         else:
@@ -1476,6 +1496,13 @@ class VectorDB:
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA synchronous=NORMAL")
             self._encrypted = False
+
+        # Verify connection is healthy
+        try:
+            self.conn.execute("SELECT 1")
+        except sqlite3.DatabaseError as e:
+            self.conn.close()
+            raise RuntimeError(f"Database health check failed: {e}") from e
 
         # Check for required migration before allowing collection access
         if not auto_migrate and self.path != ":memory:":
@@ -1491,22 +1518,100 @@ class VectorDB:
 
     def list_collections(self) -> list[str]:
         """
-        Return names of all initialized collections.
+        Return names of all persisted collections in the database.
 
-        Only returns collections that have been accessed via `collection()` in this
-        session. Does not scan the database for collections created in previous sessions.
+        Scans the database schema for collection tables, returning both
+        collections accessed this session and those created in previous sessions.
 
         Returns:
-            List of collection names currently cached in this VectorDB instance.
+            Sorted list of collection names stored in this database.
 
         Example:
             >>> db = VectorDB("app.db")
             >>> db.collection("users")
-            >>> db.collection("products")
-            >>> db.list_collections()
-            ['users', 'products']
+            >>> db.close()
+            >>> db2 = VectorDB("app.db")
+            >>> db2.list_collections()
+            ['users']
         """
-        return list(self._collections.keys())
+        rows = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND (name = 'tinyvec_items' OR name LIKE 'items_%')"
+        ).fetchall()
+        # Collect all table names, then filter out FTS/cluster derivatives.
+        # FTS5 creates shadow tables: items_<name>_fts, items_<name>_fts_data,
+        # items_<name>_fts_idx, items_<name>_fts_content, items_<name>_fts_docsize,
+        # items_<name>_fts_config.  Cluster tables: items_<name>_clusters.
+        # We identify derivatives by checking if a suffix is <coll>_fts*
+        # or <coll>_clusters for some other known collection suffix.
+        all_suffixes: set[str] = set()
+        has_default = False
+        for (table_name,) in rows:
+            if table_name == "tinyvec_items":
+                has_default = True
+            elif table_name.startswith("items_"):
+                all_suffixes.add(table_name[6:])
+
+        # A suffix is a real collection if no other suffix is a prefix of it
+        # followed by _fts* or _clusters.
+        _fts_suffixes = ("_fts", "_fts_data", "_fts_idx", "_fts_content",
+                         "_fts_docsize", "_fts_config")
+        derivative_suffixes: set[str] = set()
+        for s in all_suffixes:
+            for fts in _fts_suffixes:
+                derivative_suffixes.add(f"{s}{fts}")
+            derivative_suffixes.add(f"{s}_clusters")
+
+        names: list[str] = []
+        if has_default:
+            names.append("default")
+        for s in sorted(all_suffixes - derivative_suffixes):
+            names.append(s)
+        return names
+
+    def delete_collection(self, name: str) -> None:
+        """
+        Delete a collection and all its data.
+
+        Drops the SQLite tables (items, FTS, clusters) and deletes
+        the usearch index file. Removes the collection from the cache.
+
+        Args:
+            name: Collection name to delete.
+
+        Raises:
+            ValueError: If the collection name is invalid.
+            KeyError: If the collection does not exist.
+        """
+        if not re.match(constants.COLLECTION_NAME_PATTERN, name):
+            raise ValueError(
+                f"Invalid collection name '{name}'. Must be alphanumeric + underscores."
+            )
+        if name not in self.list_collections():
+            raise KeyError(f"Collection '{name}' does not exist.")
+
+        table_name = "tinyvec_items" if name == "default" else f"items_{name}"
+        fts_table = f"{table_name}_fts"
+        cluster_table = f"{table_name}_clusters"
+
+        # Drop SQLite tables
+        self.conn.execute(f"DROP TABLE IF EXISTS {fts_table}")
+        self.conn.execute(f"DROP TABLE IF EXISTS {cluster_table}")
+        self.conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+        self.conn.commit()
+
+        # Delete usearch index file
+        if self.path != ":memory:":
+            index_path = Path(self.path + f".{name}.usearch")
+            if index_path.exists():
+                index_path.unlink()
+
+        # Remove from cache (match any tuple key with this name)
+        keys_to_remove = [k for k in self._collections if k[0] == name]
+        for k in keys_to_remove:
+            del self._collections[k]
+
+        _logger.info("Deleted collection: %s", name)
 
     def search_collections(
         self,
@@ -1562,14 +1667,28 @@ class VectorDB:
         # Resolve and validate collections
         targets: list[VectorCollection] = []
         dims: set[int | None] = set()
+        # Validate explicit collection names exist in DB
+        if collections is not None:
+            persisted = set(self.list_collections())
+            for name in target_names:
+                if name not in persisted:
+                    # Check cache too (collection may exist but not yet persisted)
+                    if not any(k[0] == name for k in self._collections):
+                        raise KeyError(
+                            f"Collection '{name}' not initialized. "
+                            f"Call db.collection('{name}') first."
+                        )
+
         for name in target_names:
-            if name not in self._collections:
-                raise KeyError(
-                    f"Collection '{name}' not initialized. Call db.collection('{name}') first."
-                )
-            coll = self._collections[name]
+            # Find cached collection by name (may have any strategy/quantization)
+            matched = [v for k, v in self._collections.items() if k[0] == name]
+            if matched:
+                coll = matched[0]
+            else:
+                # Auto-initialize with defaults for persisted but uncached collections
+                coll = self.collection(name)
             targets.append(coll)
-            dims.add(coll._dim)
+            dims.add(coll.dim)
 
         # Check dimension consistency (ignore None for empty collections)
         dims.discard(None)
@@ -1629,6 +1748,7 @@ class VectorDB:
         name: str = "default",
         distance_strategy: DistanceStrategy | None = None,
         quantization: Quantization | None = None,
+        store_embeddings: bool = False,
     ) -> VectorCollection:
         """
         Get or create a named collection.
@@ -1640,6 +1760,9 @@ class VectorDB:
             name: Collection name (alphanumeric + underscore only).
             distance_strategy: Override database-level distance metric.
             quantization: Override database-level quantization.
+            store_embeddings: If True, store embeddings as BLOBs in SQLite
+                alongside the usearch index. Required for rebuild_index().
+                Default False to save ~2x storage.
 
         Returns:
             VectorCollection instance.
@@ -1647,7 +1770,7 @@ class VectorDB:
         Raises:
             ValueError: If collection name contains invalid characters.
         """
-        cache_key = name
+        cache_key = (name, distance_strategy, quantization)
         if cache_key not in self._collections:
             self._collections[cache_key] = VectorCollection(
                 conn=self.conn,
@@ -1656,6 +1779,7 @@ class VectorDB:
                 distance_strategy=distance_strategy or self.distance_strategy,
                 quantization=quantization or self.quantization,
                 encryption_key=self._encryption_key,
+                store_embeddings=store_embeddings,
             )
         return self._collections[cache_key]
 
@@ -1843,6 +1967,9 @@ MIGRATION ROLLBACK INSTRUCTIONS:
         """Save all collection indexes to disk."""
         for collection in self._collections.values():
             collection.save()
+
+    def __repr__(self) -> str:
+        return f"VectorDB(path={self.path!r}, collections={self.list_collections()})"
 
     def close(self) -> None:
         """Close the database connection and save indexes."""

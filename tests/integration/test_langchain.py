@@ -60,7 +60,7 @@ def test_langchain_from_texts(tmp_path):
 
     assert isinstance(store, SimpleVecDBVectorStore)
     # Verify DB was created
-    assert store._collection._dim == 10
+    assert store._collection.dim == 10
 
 
 @pytest.mark.integration

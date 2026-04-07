@@ -65,7 +65,7 @@ def test_add_texts_uses_local_embedder_numpy(tmp_path):
 
     assert len(first_ids) == 1
     assert len(second_ids) == 1
-    assert collection._dim == 3
+    assert collection.dim == 3
     db.close()
 
 

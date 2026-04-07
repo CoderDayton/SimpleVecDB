@@ -52,6 +52,9 @@ class QuantizationStrategy:
             scaled = np.clip(np.round(vector * 127), -128, 127).astype(np.int8)
             return scaled.tobytes()
 
+        elif self.quantization == Quantization.FLOAT16:
+            return np.asarray(vector, dtype=np.float16).tobytes()
+
         elif self.quantization == Quantization.BIT:
             # Binary quantization: threshold at 0 → pack bits
             bits = (vector > 0).astype(np.uint8)
@@ -79,6 +82,9 @@ class QuantizationStrategy:
 
         elif self.quantization == Quantization.INT8:
             return np.frombuffer(blob, dtype=np.int8).astype(np.float32) / 127.0
+
+        elif self.quantization == Quantization.FLOAT16:
+            return np.frombuffer(blob, dtype=np.float16).astype(np.float32)
 
         elif self.quantization == Quantization.BIT and dim is not None:
             unpacked = np.unpackbits(np.frombuffer(blob, dtype=np.uint8))

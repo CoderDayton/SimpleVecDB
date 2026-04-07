@@ -8,8 +8,10 @@ import sqlite3
 import sys
 import time
 from collections.abc import Iterable, Sequence
+from contextlib import contextmanager
 from functools import wraps
-from typing import Any, Callable, TypeVar
+from pathlib import Path
+from typing import Any, Callable, Generator, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -166,6 +168,105 @@ def retry_on_lock(
     return decorator
 
 
+def async_retry_on_lock(
+    max_retries: int = 5,
+    base_delay: float = 0.1,
+    max_delay: float = 2.0,
+    jitter: bool = True,
+    total_timeout: float = 10.0,
+) -> Callable[[F], F]:
+    """
+    Async decorator that retries database operations on SQLite lock errors.
+
+    Uses asyncio.sleep instead of time.sleep, avoiding executor thread blocking.
+    Same backoff logic as retry_on_lock.
+
+    Args:
+        max_retries: Maximum number of retry attempts (default: 5).
+        base_delay: Initial delay in seconds before first retry (default: 0.1).
+        max_delay: Maximum delay between retries in seconds (default: 2.0).
+        jitter: Add randomness to delay to avoid thundering herd (default: True).
+        total_timeout: Absolute wall-clock budget in seconds (default: 10.0).
+
+    Returns:
+        Decorated async function with retry behavior.
+
+    Raises:
+        DatabaseLockedError: If all retry attempts fail due to lock contention.
+        sqlite3.OperationalError: For non-lock SQLite errors.
+    """
+    import asyncio
+
+    def decorator(func: F) -> F:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            last_exception: sqlite3.OperationalError | None = None
+            total_wait = 0.0
+
+            for attempt in range(max_retries + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    error_msg = str(e).lower()
+                    if "database is locked" not in error_msg:
+                        raise
+
+                    last_exception = e
+
+                    if attempt < max_retries:
+                        delay = min(base_delay * (2**attempt), max_delay)
+
+                        if jitter:
+                            delay *= 0.75 + random.random() * 0.5
+
+                        if total_wait + delay > total_timeout:
+                            _logger.warning(
+                                "Database lock retry would exceed total_timeout "
+                                "(%.2fs spent, %.2fs budget) — giving up",
+                                total_wait,
+                                total_timeout,
+                                extra={"operation": func.__name__},
+                            )
+                            break
+
+                        total_wait += delay
+
+                        _logger.warning(
+                            "Database locked, retrying in %.3fs (attempt %d/%d)",
+                            delay,
+                            attempt + 1,
+                            max_retries,
+                            extra={
+                                "operation": func.__name__,
+                                "attempt": attempt + 1,
+                                "max_retries": max_retries,
+                                "delay_seconds": round(delay, 3),
+                            },
+                        )
+                        await asyncio.sleep(delay)
+
+            _logger.error(
+                "Database locked after %d attempts (%.2fs total wait)",
+                max_retries + 1,
+                total_wait,
+                extra={
+                    "operation": func.__name__,
+                    "attempts": max_retries + 1,
+                    "total_wait_seconds": round(total_wait, 2),
+                },
+            )
+            raise DatabaseLockedError(
+                f"Database remained locked after {max_retries + 1} attempts "
+                f"(waited {total_wait:.2f}s total)",
+                attempts=max_retries + 1,
+                total_wait=total_wait,
+            ) from last_exception
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
 def validate_filter(filter_dict: dict[str, Any] | None) -> None:
     """
     Validate metadata filter structure before SQL generation.
@@ -223,3 +324,41 @@ def validate_filter(filter_dict: dict[str, Any] | None) -> None:
                         f"Filter list item for '{key}' at index {i} must be finite, "
                         f"got {item!r}"
                     )
+
+
+
+@contextmanager
+def file_lock(path: Path) -> Generator[None, None, None]:
+    """Advisory file lock for cross-process safety.
+
+    Uses fcntl.flock on Unix and msvcrt.locking on Windows.
+    Creates a .lock file alongside the target path.
+
+    Args:
+        path: Path to the file to lock (a .lock sibling is created).
+
+    Yields:
+        None — the lock is held for the duration of the context.
+    """
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    fd = open(lock_path, "w")  # noqa: SIM115
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+        fd.close()
