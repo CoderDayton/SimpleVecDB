@@ -5,6 +5,44 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-04-07
+
+### Added
+
+- **`delete_collection(name)`** — drop a collection's SQLite tables, FTS index, and usearch file in one call. Available on both `VectorDB` and `AsyncVectorDB`.
+- **`store_embeddings` parameter** on `collection()` — opt into storing embedding BLOBs in SQLite (default `False`). Saves ~2x storage; MMR transparently fetches vectors from the usearch index when BLOBs are absent.
+- **`async_retry_on_lock` decorator** — async variant of `retry_on_lock` using `asyncio.sleep` instead of `time.sleep`, avoiding executor thread blocking.
+- **`file_lock` context manager** — advisory cross-process file locking (`fcntl`/`msvcrt`) for usearch index files. Prevents corruption from concurrent processes.
+- **`__repr__`** on `VectorDB`, `VectorCollection`, `AsyncVectorDB`, `AsyncVectorCollection` for debuggable string representations.
+- **FLOAT16 quantization** fully implemented in `serialize()`/`deserialize()` — was previously defined in the enum but raised `ValueError` at runtime.
+- **Pagination** on `get_documents(limit=, offset=)` and catalog methods (`find_ids_by_filter`, `find_ids_by_texts`) — previously returned unbounded result sets.
+
+### Fixed
+
+- **`delete_by_ids` ordering** — SQLite deletion now happens first (transactional, can rollback), then usearch. Previously usearch removed first, leaving orphaned catalog entries on SQLite failure.
+- **`_matches_filter` string semantics** — now uses exact equality, consistent with SQL `build_filter_clause`. Was using substring match (`value in str(meta_value)`).
+- **`list_collections`** — scans `sqlite_master` for persisted collection tables instead of returning only session-cached names. Works across reopened databases.
+- **WAL mode for encrypted databases** — `PRAGMA journal_mode=WAL` and `PRAGMA synchronous=NORMAL` now set for SQLCipher connections (was only set for unencrypted).
+- **`collection()` cache key** — includes `distance_strategy` and `quantization` in cache key (sync version). Previously cached by name only, silently ignoring differing params on cache hit.
+- **`_ensure_fts_table`** — retries up to 3 times on transient "database is locked" errors instead of permanently disabling FTS on first failure.
+- **Connection health check** — `SELECT 1` probe after connection creation; raises `RuntimeError` immediately on corrupt databases.
+
+### Improved
+
+- **Usearch batch operations** — `add()`, `remove()`, and `get()` now use batch usearch APIs instead of per-key loops. Significant speedup for large operations.
+- **Filtered search iterative deepening** — replaces fixed `k*3` overfetch with adaptive doubling (up to `k*30`). Highly selective filters now reliably return `k` results.
+- **Memory-map heuristic** — uses file size threshold (50MB) instead of inaccurate `file_size // 100` vector count estimate for mmap vs load decision.
+- **Apple chip detection** — uses `platform.processor()` instead of spawning a `sysctl` subprocess.
+
+### Removed
+
+- **Duplicate `_dim` property** — removed in favor of the public `dim` property.
+
+### Breaking Changes
+
+- String metadata filters now use exact equality (was substring match).
+- `store_embeddings` defaults to `False` — `rebuild_index()` requires `store_embeddings=True` or re-adding documents.
+
 ## [2.4.0] - 2026-03-22
 
 ### Added

@@ -16,7 +16,13 @@ try:
 except ImportError:
     pass
 from .logging import get_logger, configure_logging, log_operation
-from .utils import DatabaseLockedError, retry_on_lock, validate_filter
+from .utils import (
+    DatabaseLockedError,
+    async_retry_on_lock,
+    file_lock,
+    retry_on_lock,
+    validate_filter,
+)
 from .encryption import EncryptionError, EncryptionUnavailableError
 
 from importlib.metadata import version as _pkg_version
@@ -49,6 +55,8 @@ __all__ = [
     "MigrationRequiredError",
     "EncryptionError",
     "EncryptionUnavailableError",
+    "async_retry_on_lock",
+    "file_lock",
     "retry_on_lock",
     "validate_filter",
 ]

@@ -37,7 +37,7 @@ def test_add_texts_basic(empty_db):
     embs = [[0.1, 0.2], [0.3, 0.4]]
     ids = collection.add_texts(texts, embeddings=embs)
     assert len(ids) == 2
-    assert collection._dim == 2
+    assert collection.dim == 2
 
     # Verify that the text content is persisted in the main table.
     rows = empty_db.conn.execute(
@@ -133,7 +133,7 @@ def test_recover_dim(tmp_path):
 
     # Reopen
     db2 = VectorDB(db_path)
-    assert db2.collection("default")._dim == 10
+    assert db2.collection("default").dim == 10
     db2.close()
 
 
@@ -270,7 +270,7 @@ def test_quantization_int8(quant_db):
     ids = collection.add_texts(texts, embeddings=embs)
 
     assert len(ids) == 2
-    assert collection._dim == 3
+    assert collection.dim == 3
 
     # Search should work with quantized vectors
     results = collection.similarity_search([0.1, 0.2, 0.3], k=1)
@@ -286,7 +286,7 @@ def test_quantization_bit(bit_db):
 
     assert len(ids) == 2
     # BIT quantization rounds up to byte boundary
-    assert collection._dim == 3
+    assert collection.dim == 3
 
     # Search should work with binary vectors
     results = collection.similarity_search([0.1, 0.2, 0.3], k=1)
@@ -490,7 +490,7 @@ def test_rebuild_index(tmp_path):
     """Test rebuild_index() reconstructs index from SQLite embeddings."""
     db_path = str(tmp_path / "rebuild.db")
     db = VectorDB(db_path)
-    collection = db.collection("default")
+    collection = db.collection("default", store_embeddings=True)
 
     # Add some vectors
     texts = ["doc1", "doc2", "doc3"]
@@ -520,7 +520,7 @@ def test_rebuild_index_with_custom_params(tmp_path):
     """Test rebuild_index() with custom HNSW parameters."""
     db_path = str(tmp_path / "rebuild_params.db")
     db = VectorDB(db_path)
-    collection = db.collection("default")
+    collection = db.collection("default", store_embeddings=True)
 
     collection.add_texts(["test"], embeddings=[[0.1] * 64])
 

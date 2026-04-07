@@ -74,7 +74,8 @@ USEARCH_BRUTEFORCE_THRESHOLD = 10000
 # - Instant startup (no full load into RAM)
 # - Lower memory footprint (OS manages page cache)
 # - Slight latency increase for cold pages (acceptable trade-off)
-USEARCH_MMAP_THRESHOLD = 100000
+# Threshold in bytes — 50MB covers ~30k 384-dim f32 vectors.
+USEARCH_MMAP_THRESHOLD = 50 * 1024 * 1024  # 50 MB
 
 # Batch search threshold: auto-batch queries when > this count
 # usearch batch search provides ~10x throughput for multi-query workloads

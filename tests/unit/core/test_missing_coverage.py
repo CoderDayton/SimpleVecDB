@@ -124,7 +124,7 @@ class TestRebuildIndexNoEmbeddings:
     def test_rebuild_index_no_embeddings_raises(self, tmp_path):
         """rebuild_index raises RuntimeError when no embeddings in SQLite."""
         db = VectorDB(str(tmp_path / "rebuild.db"))
-        collection = db.collection("default")
+        collection = db.collection("default", store_embeddings=True)
         # Insert a doc but clear embeddings from catalog
         collection.add_texts(["test"], embeddings=[[0.1, 0.2]])
         # Wipe the embeddings column

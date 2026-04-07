@@ -74,40 +74,68 @@ class SearchEngine:
 
         query_vec = self._resolve_query_vector(query)
 
-        # Over-fetch for filtering
-        fetch_k = k * constants.USEARCH_FILTER_OVERFETCH_MULTIPLIER if filter else k
+        if not filter:
+            # No filter: simple fetch
+            keys, distances = self._index.search(
+                query_vec, k, exact=exact, threads=threads
+            )
+            if len(keys) == 0:
+                return []
+            keys_list = keys.tolist()
+            dist_list = distances.tolist()
+            docs_map = self._catalog.get_documents_by_ids(keys_list)
+            return [
+                (Document(page_content=text, metadata=metadata), float(dist))
+                for key, dist in zip(keys_list, dist_list)
+                if key in docs_map
+                for text, metadata in [docs_map[key]]
+            ][:k]
 
-        keys, distances = self._index.search(
-            query_vec, fetch_k, exact=exact, threads=threads
-        )
-
-        if len(keys) == 0:
-            return []
-
-        # Convert once, reuse
-        keys_list = keys.tolist()
-        dist_list = distances.tolist()
-
-        # Fetch documents and apply filter
-        docs_map = self._catalog.get_documents_by_ids(keys_list)
-
+        # Filtered search: iterative deepening to ensure k results
+        multiplier = constants.USEARCH_FILTER_OVERFETCH_MULTIPLIER
+        max_multiplier = 30
+        index_size = self._index.size
+        added_keys: set[int] = set()
         results: list[tuple[Document, float]] = []
-        for key, dist in zip(keys_list, dist_list):
-            if key not in docs_map:
-                continue
 
-            text, metadata = docs_map[key]
-
-            # Apply metadata filter
-            if filter and not self._matches_filter(metadata, filter):
-                continue
-
-            results.append((Document(page_content=text, metadata=metadata), float(dist)))
-
-            if len(results) >= k:
+        while len(results) < k and multiplier <= max_multiplier:
+            fetch_k = min(k * multiplier, index_size) if index_size > 0 else k * multiplier
+            keys, distances = self._index.search(
+                query_vec, fetch_k, exact=exact, threads=threads
+            )
+            if len(keys) == 0:
                 break
 
-        return results
+            keys_list = keys.tolist()
+            dist_list = distances.tolist()
+
+            # Fetch docs for keys not yet processed
+            new_keys = [key for key in keys_list if key not in added_keys]
+            if not new_keys:
+                break
+            docs_map = self._catalog.get_documents_by_ids(new_keys)
+
+            for key, dist in zip(keys_list, dist_list):
+                if key in added_keys:
+                    continue
+                added_keys.add(key)
+
+                if key not in docs_map:
+                    continue
+
+                text, metadata = docs_map[key]
+                if not self._matches_filter(metadata, filter):
+                    continue
+
+                results.append((Document(page_content=text, metadata=metadata), float(dist)))
+                if len(results) >= k:
+                    break
+
+            if len(results) >= k or fetch_k >= index_size:
+                break
+            multiplier *= 2
+
+        return results[:k]
 
     def similarity_search_batch(
         self,
@@ -351,13 +379,26 @@ class SearchEngine:
         keys_list = keys.tolist()
         docs_and_embs = self._catalog.get_documents_and_embeddings_by_ids(keys_list)
 
+        # If catalog has no stored embeddings, retrieve from usearch index
+        has_catalog_embs = any(
+            emb is not None for _, _, emb in docs_and_embs.values()
+        )
+        index_embs: np.ndarray | None = None
+        if not has_catalog_embs:
+            keys_arr = np.array(keys_list, dtype=np.uint64)
+            index_embs = self._index.get(keys_arr)
+
         # Build candidates list with filtering, pre-normalize embeddings
         candidates: list[tuple[int, Document, float, np.ndarray | None]] = []
-        for key, dist in zip(keys_list, distances.tolist()):
+        for i, (key, dist) in enumerate(zip(keys_list, distances.tolist())):
             if key not in docs_and_embs:
                 continue
 
             text, metadata, emb = docs_and_embs[key]
+
+            # Fall back to index embeddings if catalog has none
+            if emb is None and index_embs is not None:
+                emb = index_embs[i]
 
             # Apply metadata filter
             if filter and not self._matches_filter(metadata, filter):
@@ -451,8 +492,8 @@ class SearchEngine:
                 if meta_value not in value:
                     return False
             elif isinstance(value, str):
-                # String filter: substring match
-                if meta_value is None or value not in str(meta_value):
+                # String filter: exact match (consistent with SQL build_filter_clause)
+                if meta_value != value:
                     return False
             else:
                 # Exact match for int/float

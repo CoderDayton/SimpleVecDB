@@ -14,7 +14,7 @@ def test_recover_dim_no_match(tmp_path):
     collection = db.collection("default")
 
     # New collection should have _dim as None until vectors are added
-    assert collection._dim is None or isinstance(collection._dim, int)
+    assert collection.dim is None or isinstance(collection.dim, int)
 
 
 def test_recover_dim_none(tmp_path):
@@ -24,7 +24,7 @@ def test_recover_dim_none(tmp_path):
     collection = db.collection("default")
 
     # New DB should have _dim as None initially
-    assert collection._dim is None
+    assert collection.dim is None
 
 
 def test_dimension_mismatch_on_add():

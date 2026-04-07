@@ -130,24 +130,24 @@ class UsearchIndex:
         from .. import constants
 
         if self._path.exists():
-            # Check file size to decide load vs view
-            file_size = self._path.stat().st_size
-            # Estimate vector count: file_size / (ndim * dtype_size + overhead)
-            # Conservative estimate assuming f32 and ~50 bytes overhead per vector
-            estimated_vectors = file_size // 100  # Very rough estimate
+            from ..utils import file_lock
 
-            if estimated_vectors > constants.USEARCH_MMAP_THRESHOLD:
-                # Use memory-mapped view for large indexes
-                _logger.debug(
-                    "Using memory-mapped view for large index: %s", self._path
-                )
-                self._index = Index.restore(str(self._path), view=True)
-                self._is_view = True
-            else:
-                # Load into memory for smaller indexes
-                _logger.debug("Loading index into memory: %s", self._path)
-                self._index = Index.restore(str(self._path), view=False)
-                self._is_view = False
+            with file_lock(self._path):
+                # Use file size threshold for mmap decision
+                file_size = self._path.stat().st_size
+
+                if file_size > constants.USEARCH_MMAP_THRESHOLD:
+                    # Use memory-mapped view for large indexes
+                    _logger.debug(
+                        "Using memory-mapped view for large index: %s", self._path
+                    )
+                    self._index = Index.restore(str(self._path), view=True)
+                    self._is_view = True
+                else:
+                    # Load into memory for smaller indexes
+                    _logger.debug("Loading index into memory: %s", self._path)
+                    self._index = Index.restore(str(self._path), view=False)
+                    self._is_view = False
 
             self._ndim = self._index.ndim
             _logger.info(
@@ -266,14 +266,13 @@ class UsearchIndex:
                 vectors = vectors / np.maximum(norms, 1e-12)
 
             # Upsert: remove existing keys first (usearch doesn't allow duplicates).
-            # Build a set of existing keys for O(1) lookup instead of per-key
-            # __contains__ probes, then batch-remove the conflicts.
+            # Use batch remove for efficiency.
             if self.size > 0:
-                existing_keys = [
-                    int(k) for k in keys if int(k) in self._index
-                ]
-                for int_key in existing_keys:
-                    self._index.remove(int_key)
+                existing_mask = np.array(
+                    [int(k) in self._index for k in keys], dtype=bool
+                )
+                if existing_mask.any():
+                    self._index.remove(keys[existing_mask])
 
             self._index.add(keys, vectors, threads=threads)
             self._dirty = True
@@ -375,13 +374,14 @@ class UsearchIndex:
             return 0
 
         with self._write_lock:
-            removed = 0
-            for key in keys:
-                try:
-                    self._index.remove(int(key))
-                    removed += 1
-                except KeyError:
-                    pass  # Key not in index
+            # Filter to only keys that exist in the index
+            existing_mask = np.array(
+                [int(k) in self._index for k in keys], dtype=bool
+            )
+            existing_keys = keys[existing_mask]
+            if len(existing_keys) > 0:
+                self._index.remove(existing_keys)
+            removed = int(existing_mask.sum())
             self._dirty = True
             _logger.debug("Removed %d vectors from index", removed)
             return removed
@@ -397,10 +397,13 @@ class UsearchIndex:
         if self._index is None or not self._dirty:
             return
 
+        from ..utils import file_lock
+
         with self._write_lock:
             # Ensure parent directory exists
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._index.save(str(self._path))
+            with file_lock(self._path):
+                self._index.save(str(self._path))
             self._dirty = False
             _logger.debug("Saved index to %s", self._path)
 
@@ -435,26 +438,35 @@ class UsearchIndex:
             return np.array([], dtype=np.float32).reshape(0, self._ndim or 1)
 
         keys = np.asarray(keys, dtype=np.uint64)
-        vectors = []
-        missing_logged = False
-        for key in keys:
-            try:
-                vec = self._index.get(int(key))
-                vectors.append(np.asarray(vec, dtype=np.float32))
-            except KeyError:
-                if not missing_logged:
-                    _logger.warning(
-                        "Index missing key(s); returning zero vectors. "
-                        "Index may be out of sync with catalog."
-                    )
-                    missing_logged = True
-                vectors.append(np.zeros(self._ndim or 1, dtype=np.float32))
+        ndim = self._ndim or 1
 
-        return (
-            np.stack(vectors)
-            if vectors
-            else np.array([], dtype=np.float32).reshape(0, self._ndim or 1)
+        # Filter to existing keys for batch retrieval
+        existing_mask = np.array(
+            [int(k) in self._index for k in keys], dtype=bool
         )
+
+        if not existing_mask.any():
+            _logger.warning(
+                "Index missing key(s); returning zero vectors. "
+                "Index may be out of sync with catalog."
+            )
+            return np.zeros((len(keys), ndim), dtype=np.float32)
+
+        if existing_mask.all():
+            # Fast path: all keys exist, batch retrieve
+            return np.asarray(self._index[keys], dtype=np.float32)
+
+        # Mixed: some keys missing
+        _logger.warning(
+            "Index missing key(s); returning zero vectors. "
+            "Index may be out of sync with catalog."
+        )
+        result = np.zeros((len(keys), ndim), dtype=np.float32)
+        existing_keys = keys[existing_mask]
+        result[existing_mask] = np.asarray(
+            self._index[existing_keys], dtype=np.float32
+        )
+        return result
 
     def __del__(self) -> None:
         try:

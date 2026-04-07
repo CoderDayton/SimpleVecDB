@@ -1,6 +1,6 @@
 [project]
 name = "simplevecdb"
-version = "2.4.0"
+version = "2.5.0"
 description = "Dead-simple local vector database powered by usearch HNSW."
 authors = [{ name = "Dayton Dunbar", email = "coderdayton14@gmail.com" }]
 license = { text = "MIT" }

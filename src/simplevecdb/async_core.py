@@ -60,6 +60,9 @@ class AsyncVectorCollection:
         """Collection name."""
         return self._collection.name
 
+    def __repr__(self) -> str:
+        return f"AsyncVectorCollection(name={self._collection.name!r})"
+
     async def add_texts(
         self,
         texts: Sequence[str],
@@ -210,15 +213,20 @@ class AsyncVectorCollection:
     async def get_documents(
         self,
         filter_dict: dict[str, Any] | None = None,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[tuple[int, str, dict[str, Any]]]:
-        """Get all documents with text content and metadata.
+        """Get documents with text content and metadata.
 
         See VectorCollection.get_documents for full documentation.
         """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
-            lambda: self._collection.get_documents(filter_dict=filter_dict),
+            lambda: self._collection.get_documents(
+                filter_dict=filter_dict, limit=limit, offset=offset
+            ),
         )
 
     async def get_embeddings_by_ids(self, ids: Sequence[int]) -> dict[int, Any]:
@@ -599,8 +607,15 @@ class AsyncVectorDB:
             return self._collections[cache_key]
 
     def list_collections(self) -> list[str]:
-        """Return names of all initialized collections."""
+        """Return names of all persisted collections in the database."""
         return self._db.list_collections()
+
+    async def delete_collection(self, name: str) -> None:
+        """Delete a collection and all its data."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            self._executor, lambda: self._db.delete_collection(name)
+        )
 
     async def search_collections(
         self,
@@ -643,6 +658,9 @@ class AsyncVectorDB:
         await loop.run_in_executor(
             self._executor, lambda: self._db.vacuum(checkpoint_wal)
         )
+
+    def __repr__(self) -> str:
+        return f"AsyncVectorDB(path={self._db.path!r})"
 
     async def close(self) -> None:
         """Close the database connection and shutdown executor."""

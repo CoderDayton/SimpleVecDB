@@ -207,23 +207,23 @@ def test_get_optimal_batch_size_mps_branches():
     with patch.dict(sys.modules, {"torch": mock_torch}):
         with patch.object(platform, "machine", return_value="arm64"):
             # M3/M4 chips
-            with patch("subprocess.check_output", return_value="apple m3"):
+            with patch.object(platform, "processor", return_value="apple m3"):
                 assert get_optimal_batch_size() == 64
 
             # Max chips
-            with patch("subprocess.check_output", return_value="apple m2 max"):
+            with patch.object(platform, "processor", return_value="apple m2 max"):
                 assert get_optimal_batch_size() == 128
 
             # Ultra chips
-            with patch("subprocess.check_output", return_value="apple m2 ultra"):
+            with patch.object(platform, "processor", return_value="apple m2 ultra"):
                 assert get_optimal_batch_size() == 128
 
             # Base M1/M2 (no M3/M4 and no Max/Ultra)
-            with patch("subprocess.check_output", return_value="apple m1"):
+            with patch.object(platform, "processor", return_value="apple m1"):
                 assert get_optimal_batch_size() == 32
 
-            # Exception fallback
-            with patch("subprocess.check_output", side_effect=Exception("Fail")):
+            # Empty processor string fallback
+            with patch.object(platform, "processor", return_value=""):
                 assert get_optimal_batch_size() == 32
 
 
