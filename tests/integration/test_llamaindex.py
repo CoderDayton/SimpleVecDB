@@ -106,8 +106,8 @@ def test_llamaindex_keyword_and_hybrid_modes(tmp_path):
     db_path = str(tmp_path / "llama_modes.db")
     store = SimpleVecDBLlamaStore(db_path=db_path)
 
-    node1 = TextNode(text="Banana is yellow", embedding=[0.1] * 4)
-    node2 = TextNode(text="Grape is purple", embedding=[0.2] * 4)
+    node1 = TextNode(text="Banana is yellow", embedding=[1.0, 0.0, 0.0, 0.0])
+    node2 = TextNode(text="Grape is purple", embedding=[0.0, 1.0, 0.0, 0.0])
     store.add([node1, node2])
 
     sparse_query = VectorStoreQuery(
@@ -120,7 +120,7 @@ def test_llamaindex_keyword_and_hybrid_modes(tmp_path):
     assert sparse_result.nodes[0].text.startswith("Banana")
 
     dense_query = VectorStoreQuery(
-        query_embedding=[0.2] * 4,
+        query_embedding=[0.0, 1.0, 0.0, 0.0],
         similarity_top_k=1,
         mode=VectorStoreQueryMode.DEFAULT,
     )
@@ -130,7 +130,7 @@ def test_llamaindex_keyword_and_hybrid_modes(tmp_path):
 
     hybrid_query = VectorStoreQuery(
         query_str="banana",
-        query_embedding=[0.2] * 4,
+        query_embedding=[0.0, 1.0, 0.0, 0.0],
         similarity_top_k=1,
         mode=VectorStoreQueryMode.HYBRID,
     )
