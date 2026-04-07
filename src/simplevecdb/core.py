@@ -1600,11 +1600,14 @@ class VectorDB:
         self.conn.execute(f"DROP TABLE IF EXISTS {table_name}")
         self.conn.commit()
 
-        # Delete usearch index file
+        # Delete usearch index file (and encrypted variant if present)
         if self.path != ":memory:":
             index_path = Path(self.path + f".{name}.usearch")
             if index_path.exists():
                 index_path.unlink()
+            encrypted_path = Path(str(index_path) + ".enc")
+            if encrypted_path.exists():
+                encrypted_path.unlink()
 
         # Remove from cache (match any tuple key with this name)
         keys_to_remove = [k for k in self._collections if k[0] == name]
@@ -1770,7 +1773,7 @@ class VectorDB:
         Raises:
             ValueError: If collection name contains invalid characters.
         """
-        cache_key = (name, distance_strategy, quantization)
+        cache_key = (name, distance_strategy, quantization, store_embeddings)
         if cache_key not in self._collections:
             self._collections[cache_key] = VectorCollection(
                 conn=self.conn,
