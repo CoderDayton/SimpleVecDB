@@ -312,7 +312,8 @@ class TestNormalizeInput:
         assert _normalize_input(["a", "b", "c"]) == ["a", "b", "c"]
 
     def test_list_of_ints(self):
-        assert _normalize_input([1, 2, 3]) == ["1", "2", "3"]
+        # Flat token array is a single input per OpenAI spec
+        assert _normalize_input([1, 2, 3]) == ["1 2 3"]
 
     def test_nested_token_arrays(self):
         result = _normalize_input([[1, 2, 3], [4, 5]])

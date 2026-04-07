@@ -270,9 +270,9 @@ def _normalize_input(raw_input: str | list[str] | list[int] | list[list[int]]) -
 
     first = raw_input[0]
 
-    # list[int] — flat token array
+    # list[int] — flat token array (single input per OpenAI spec)
     if isinstance(first, int):
-        return [str(i) for i in raw_input]
+        return [" ".join(str(i) for i in raw_input)]
 
     # list[list[int]] — nested token arrays (#8)
     if isinstance(first, list):

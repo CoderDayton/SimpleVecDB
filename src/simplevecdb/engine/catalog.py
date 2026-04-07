@@ -441,6 +441,8 @@ class CatalogManager:
         sql = f"SELECT id FROM {self._table_name} WHERE text IN ({placeholders})"
         params: list[Any] = list(texts)
 
+        if offset is not None and limit is None:
+            raise ValueError("offset requires limit")
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
@@ -478,6 +480,8 @@ class CatalogManager:
         sql = f"SELECT id FROM {self._table_name} {where_clause}"
         params: list[Any] = list(filter_params)
 
+        if offset is not None and limit is None:
+            raise ValueError("offset requires limit")
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
@@ -612,6 +616,8 @@ class CatalogManager:
         """
         params: list[Any] = list(filter_params)
 
+        if offset is not None and limit is None:
+            raise ValueError("offset requires limit")
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)

@@ -90,13 +90,20 @@ def get_optimal_batch_size() -> int:
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             machine = platform.machine().lower()
             if "arm" in machine or "aarch64" in machine:
-                chip_info = platform.processor().lower()
+                try:
+                    import subprocess
 
-                if "m3" in chip_info or "m4" in chip_info:
-                    return constants.DEFAULT_APPLE_M3_M4_BATCH_SIZE
-                elif "max" in chip_info or "ultra" in chip_info:
-                    return constants.DEFAULT_APPLE_MAX_ULTRA_BATCH_SIZE
-                else:
+                    chip_info = subprocess.check_output(
+                        ["sysctl", "-n", "machdep.cpu.brand_string"], text=True
+                    ).lower()
+
+                    if "m3" in chip_info or "m4" in chip_info:
+                        return constants.DEFAULT_APPLE_M3_M4_BATCH_SIZE
+                    elif "max" in chip_info or "ultra" in chip_info:
+                        return constants.DEFAULT_APPLE_MAX_ULTRA_BATCH_SIZE
+                    else:
+                        return constants.DEFAULT_APPLE_M1_M2_BATCH_SIZE
+                except Exception:
                     return constants.DEFAULT_APPLE_M1_M2_BATCH_SIZE
 
     # 2. Try ONNX Runtime detection
@@ -1531,17 +1538,36 @@ class VectorDB:
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND (name = 'tinyvec_items' OR name LIKE 'items_%')"
         ).fetchall()
-        names: list[str] = []
+        # Collect all table names, then filter out FTS/cluster derivatives.
+        # FTS5 creates shadow tables: items_<name>_fts, items_<name>_fts_data,
+        # items_<name>_fts_idx, items_<name>_fts_content, items_<name>_fts_docsize,
+        # items_<name>_fts_config.  Cluster tables: items_<name>_clusters.
+        # We identify derivatives by checking if a suffix is <coll>_fts*
+        # or <coll>_clusters for some other known collection suffix.
+        all_suffixes: set[str] = set()
+        has_default = False
         for (table_name,) in rows:
             if table_name == "tinyvec_items":
-                names.append("default")
+                has_default = True
             elif table_name.startswith("items_"):
-                # Skip FTS (and FTS sub-tables) and cluster tables
-                suffix = table_name[6:]
-                if "_fts" in suffix or suffix.endswith("_clusters"):
-                    continue
-                names.append(suffix)
-        return sorted(names)
+                all_suffixes.add(table_name[6:])
+
+        # A suffix is a real collection if no other suffix is a prefix of it
+        # followed by _fts* or _clusters.
+        _fts_suffixes = ("_fts", "_fts_data", "_fts_idx", "_fts_content",
+                         "_fts_docsize", "_fts_config")
+        derivative_suffixes: set[str] = set()
+        for s in all_suffixes:
+            for fts in _fts_suffixes:
+                derivative_suffixes.add(f"{s}{fts}")
+            derivative_suffixes.add(f"{s}_clusters")
+
+        names: list[str] = []
+        if has_default:
+            names.append("default")
+        for s in sorted(all_suffixes - derivative_suffixes):
+            names.append(s)
+        return names
 
     def delete_collection(self, name: str) -> None:
         """
@@ -1557,6 +1583,10 @@ class VectorDB:
             ValueError: If the collection name is invalid.
             KeyError: If the collection does not exist.
         """
+        if not re.match(constants.COLLECTION_NAME_PATTERN, name):
+            raise ValueError(
+                f"Invalid collection name '{name}'. Must be alphanumeric + underscores."
+            )
         if name not in self.list_collections():
             raise KeyError(f"Collection '{name}' does not exist.")
 

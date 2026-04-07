@@ -616,6 +616,11 @@ class AsyncVectorDB:
         await loop.run_in_executor(
             self._executor, lambda: self._db.delete_collection(name)
         )
+        # Evict from async-level cache too
+        with self._collections_lock:
+            keys_to_remove = [k for k in self._collections if k[0] == name]
+            for k in keys_to_remove:
+                del self._collections[k]
 
     async def search_collections(
         self,
