@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import itertools
 import logging
+import os
 import random
 import sqlite3
 import sys
@@ -341,7 +342,12 @@ def file_lock(path: Path) -> Generator[None, None, None]:
         None — the lock is held for the duration of the context.
     """
     lock_path = path.with_suffix(path.suffix + ".lock")
-    fd = open(lock_path, "w")  # noqa: SIM115
+    # Open with O_CREAT|O_RDWR — no truncation. A stale lock file from a
+    # crashed prior run is reused as-is (its contents are irrelevant; the
+    # lock is on the FD via fcntl/msvcrt). Permissions are restricted so
+    # other users on the host cannot tamper with the lock target.
+    fd_int = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    fd = os.fdopen(fd_int, "r+b")  # noqa: SIM115
     try:
         if sys.platform == "win32":
             import msvcrt
@@ -351,14 +357,30 @@ def file_lock(path: Path) -> Generator[None, None, None]:
             import fcntl
 
             fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
-        yield
+        try:
+            yield
+        finally:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                # Even if unlock fails (rare), the close below still runs.
+                pass
     finally:
-        if sys.platform == "win32":
-            import msvcrt
-
-            msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
-        fd.close()
+        # Always close the fd so we don't leak file handles when an unlock
+        # call raises. The lock file itself is intentionally NOT unlinked:
+        # flock/LK_LOCK are inode-bound, so removing the path while
+        # another process is still queued on flock(fd) on the old inode
+        # would let a third process create a new path → new inode →
+        # acquire a different lock concurrently. A surviving zero-byte
+        # ``.lock`` sidecar is far cheaper than a torn save.
+        try:
+            fd.close()
+        except OSError:
+            pass

@@ -5,13 +5,13 @@ from __future__ import annotations
 import sqlite3
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
-from simplevecdb import VectorDB, Quantization, DistanceStrategy
-from simplevecdb.core import get_optimal_batch_size, VectorCollection
+from simplevecdb import VectorDB
+from simplevecdb.core import get_optimal_batch_size
 from simplevecdb.types import ClusterResult, MigrationRequiredError
 
 
@@ -283,7 +283,6 @@ class TestCrossCollectionSearchFailure:
         c2.add_texts(["another"], embeddings=[[0.3, 0.4]])
 
         # Make c2's search raise
-        original_search = c2.similarity_search
         def failing_search(*args, **kwargs):
             raise RuntimeError("Simulated failure")
         c2.similarity_search = failing_search
@@ -423,7 +422,7 @@ class TestMigrateFromSqliteVec:
         # Migration may fail when trying to deserialize invalid blob
         # The exact error depends on numpy's frombuffer behavior
         try:
-            collection = db.collection("default")
+            db.collection("default")
             # If it doesn't raise, the data was somehow processable
         except RuntimeError as e:
             assert "Failed to migrate" in str(e)
@@ -469,7 +468,7 @@ class TestResolveIndexPathEncrypted:
 class TestAssignToCluster:
     @pytest.fixture
     def clustered_collection(self, tmp_path):
-        sklearn = pytest.importorskip("sklearn")
+        pytest.importorskip("sklearn")
         db = VectorDB(str(tmp_path / "cluster.db"))
         coll = db.collection("test")
 

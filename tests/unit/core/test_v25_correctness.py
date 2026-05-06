@@ -187,13 +187,15 @@ class TestRepr:
     """__repr__ for VectorCollection, VectorDB, and async wrappers."""
 
     def test_vector_collection_repr_populated(self):
+        # __repr__ no longer issues SQL — no size in the output, since
+        # count() would fail with ProgrammingError on a closed connection
+        # (debuggers and exception formatters auto-stringify objects).
         db = VectorDB(":memory:")
         coll = db.collection("things")
         coll.add_texts(["item"], embeddings=_rand_embedding())
         r = repr(coll)
         assert "things" in r
         assert str(DIM) in r
-        assert "1" in r  # size
         assert "cosine" in r or "l2" in r  # distance
 
     def test_vector_collection_repr_empty(self):
@@ -201,21 +203,21 @@ class TestRepr:
         coll = db.collection("empty")
         r = repr(coll)
         assert "empty" in r
-        assert "None" in r  # dim is None
-        assert "0" in r  # size is 0
+        assert "None" in r  # dim is None when no vectors yet
 
     def test_vector_db_repr(self):
+        # __repr__ no longer hits SQL on every call (it used to enumerate
+        # collections), so the result only carries the path. Collection
+        # listing is available via list_collections() when actually needed.
         db = VectorDB(":memory:")
         db.collection("a").add_texts(["x"], embeddings=_rand_embedding())
         r = repr(db)
         assert ":memory:" in r
-        assert "a" in r
 
     def test_vector_db_repr_empty(self):
         db = VectorDB(":memory:")
         r = repr(db)
         assert ":memory:" in r
-        assert "[]" in r
 
     def test_async_collection_repr(self):
         from simplevecdb.async_core import AsyncVectorCollection

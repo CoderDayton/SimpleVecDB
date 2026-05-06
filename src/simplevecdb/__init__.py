@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from .types import (
+    ClusterResult,
+    ClusterTagCallback,
     Document,
     DistanceStrategy,
     Quantization,
@@ -40,6 +42,8 @@ __all__ = [
     "DistanceStrategy",
     "StreamingProgress",
     "ProgressCallback",
+    "ClusterResult",
+    "ClusterTagCallback",
     # Integrations
     "SimpleVecDBVectorStore",
     "SimpleVecDBLlamaStore",

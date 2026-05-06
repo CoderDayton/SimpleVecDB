@@ -4,10 +4,9 @@ Missing lines: 97, 138, 150-194, 273, 348, 358, 364, 376
 """
 
 import pytest
-import numpy as np
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import patch
 
-from simplevecdb import VectorDB, DistanceStrategy
+from simplevecdb import VectorDB
 
 
 @pytest.fixture

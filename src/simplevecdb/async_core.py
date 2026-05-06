@@ -32,7 +32,6 @@ from typing import Any
 
 import logging
 
-from . import constants
 from .core import VectorDB, VectorCollection
 from .types import Document, DistanceStrategy, Quantization
 
@@ -375,13 +374,25 @@ class AsyncVectorCollection:
 
         See VectorCollection.cluster for full documentation.
         """
+        # Runtime-validate algorithm so we can drop the prior ``# type: ignore``
+        # and produce a clear ValueError instead of a confusing internal
+        # failure deep in the sync code.
+        valid_algorithms = ("kmeans", "minibatch_kmeans", "hdbscan")
+        if algorithm not in valid_algorithms:
+            raise ValueError(
+                f"algorithm must be one of {valid_algorithms!r}; got {algorithm!r}"
+            )
+
+        from typing import cast, Literal
+
+        narrowed = cast(Literal["kmeans", "minibatch_kmeans", "hdbscan"], algorithm)
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             lambda: self._collection.cluster(
                 n_clusters,
-                algorithm,  # type: ignore[arg-type]
+                narrowed,
                 filter=filter,
                 sample_size=sample_size,
                 min_cluster_size=min_cluster_size,
@@ -581,6 +592,7 @@ class AsyncVectorDB:
         name: str = "default",
         distance_strategy: DistanceStrategy | None = None,
         quantization: Quantization | None = None,
+        store_embeddings: bool = False,
     ) -> AsyncVectorCollection:
         """
         Get or create a named vector collection.
@@ -589,17 +601,22 @@ class AsyncVectorDB:
             name: Collection name (alphanumeric + underscore only).
             distance_strategy: Override database-level distance metric.
             quantization: Override database-level quantization.
+            store_embeddings: If True, store embeddings as BLOBs in SQLite
+                alongside the usearch index. Required for ``rebuild_index()``.
+                Mirrors ``VectorDB.collection``; without this argument async
+                callers had no way to enable embedding storage.
 
         Returns:
             AsyncVectorCollection instance.
         """
-        cache_key = (name, distance_strategy, quantization)
+        cache_key = (name, distance_strategy, quantization, store_embeddings)
         with self._collections_lock:
             if cache_key not in self._collections:
                 sync_collection = self._db.collection(
                     name,
                     distance_strategy=distance_strategy,
                     quantization=quantization,
+                    store_embeddings=store_embeddings,
                 )
                 self._collections[cache_key] = AsyncVectorCollection(
                     sync_collection, self._executor
@@ -616,7 +633,8 @@ class AsyncVectorDB:
         await loop.run_in_executor(
             self._executor, lambda: self._db.delete_collection(name)
         )
-        # Evict from async-level cache too
+        # Evict from async-level cache too — match any tuple whose first
+        # element is this name (the cache key now includes store_embeddings).
         with self._collections_lock:
             keys_to_remove = [k for k in self._collections if k[0] == name]
             for k in keys_to_remove:
@@ -668,12 +686,20 @@ class AsyncVectorDB:
         return f"AsyncVectorDB(path={self._db.path!r})"
 
     async def close(self) -> None:
-        """Close the database connection and shutdown executor."""
+        """Close the database connection and shutdown executor.
+
+        Drains in-flight tasks (`wait=True`) before closing the SQLite
+        connection. Otherwise pool threads can still hold cursors against
+        ``self._db.conn`` when ``self._db.close()`` runs the connection's
+        close, producing use-after-close races and silent data loss.
+        Pending (not-yet-started) work is cancelled.
+        """
         try:
             if self._owns_executor:
-                # cancel_futures=True cancels pending tasks; wait=False returns
-                # immediately so we don't hang if a running task is stuck.
-                self._executor.shutdown(wait=False, cancel_futures=True)
+                # cancel_futures=True cancels work that hasn't started yet;
+                # wait=True drains anything already executing so the SQLite
+                # connection is not closed under live threads.
+                self._executor.shutdown(wait=True, cancel_futures=True)
         except Exception:
             _logger.warning("Executor shutdown failed", exc_info=True)
         finally:

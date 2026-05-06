@@ -1,11 +1,38 @@
 [project]
 name = "simplevecdb"
-version = "2.5.0"
+version = "2.6.0"
 description = "Dead-simple local vector database powered by usearch HNSW."
 authors = [{ name = "Dayton Dunbar", email = "coderdayton14@gmail.com" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = [
+    "vector-database",
+    "vectordb",
+    "usearch",
+    "hnsw",
+    "sqlite",
+    "embeddings",
+    "rag",
+    "similarity-search",
+    "langchain",
+    "llamaindex",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
+]
 
 dependencies = [
     "numpy>=1.24",
@@ -15,7 +42,14 @@ dependencies = [
     "hdbscan>=0.8.33",          # Density-based clustering
     "sqlcipher3-binary>=0.5.0", # Encryption support
     "cryptography>=41.0",       # Encryption utilities
+    "python-dotenv>=1.0",       # Loaded by simplevecdb.config at import time
 ]
+
+[project.urls]
+Homepage = "https://github.com/CoderDayton/simplevecdb"
+Repository = "https://github.com/CoderDayton/simplevecdb"
+Issues = "https://github.com/CoderDayton/simplevecdb/issues"
+Changelog = "https://github.com/CoderDayton/simplevecdb/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 integrations = [
@@ -68,9 +102,11 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py312"
+# Aligned with the declared floor in [project] requires-python so the
+# linter actually flags 3.10/3.11-incompatible code.
+target-version = "py310"
 exclude = ["exploration", "docs", "htmlcov", "site"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.10"
 exclude = ["exploration", "docs", "htmlcov", "site"]

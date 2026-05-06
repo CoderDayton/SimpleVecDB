@@ -8,9 +8,9 @@ import pytest
 
 from simplevecdb.core import (
     VectorDB,
-    _batched,
     get_optimal_batch_size,
 )
+from simplevecdb.utils import _batched
 
 
 def test_batched_handles_sequence():

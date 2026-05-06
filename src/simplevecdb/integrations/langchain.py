@@ -30,6 +30,17 @@ class SimpleVecDBVectorStore(VectorStore):
         self._db = VectorDB(path=db_path, **kwargs)
         self._collection = self._db.collection(collection_name)
 
+    @property
+    def embeddings(self) -> Embeddings | None:
+        """LangChain ``VectorStore.embeddings`` contract.
+
+        The base class exposes the embedding model via this property and
+        framework code (``as_retriever()``, tag generation, etc.) reads it.
+        Storing the field as ``self.embedding`` (singular) without overriding
+        this property would silently return ``None`` to those callers.
+        """
+        return self.embedding
+
     @classmethod
     def from_texts(
         cls,
@@ -247,17 +258,28 @@ class SimpleVecDBVectorStore(VectorStore):
             for doc, _ in results
         ]
 
-    # Stub async (wrap sync for now – add true async in v1)
+    # The sync implementations below do blocking I/O and embedding inference.
+    # Calling them directly from an async context blocks the event loop, so
+    # offload via asyncio.to_thread. This is still not "true" async (the
+    # underlying SQLite/usearch calls remain blocking), but it stops a
+    # single request from starving every other coroutine in the loop.
     async def aadd_texts(self, *args, **kwargs):
-        return self.add_texts(*args, **kwargs)
+        import asyncio
+
+        return await asyncio.to_thread(self.add_texts, *args, **kwargs)
 
     async def asimilarity_search(self, *args, **kwargs):
-        return self.similarity_search(*args, **kwargs)
+        import asyncio
 
-    # Other optional: max_marginal_relevance_search (implement via post-processing if needed)
+        return await asyncio.to_thread(self.similarity_search, *args, **kwargs)
+
     async def amax_marginal_relevance_search(
         self,
         *args,
         **kwargs,
     ) -> list[LangChainDocument]:
-        return self.max_marginal_relevance_search(*args, **kwargs)
+        import asyncio
+
+        return await asyncio.to_thread(
+            self.max_marginal_relevance_search, *args, **kwargs
+        )

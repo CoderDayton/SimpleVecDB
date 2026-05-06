@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hmac
 import logging
 import signal
 import time
@@ -22,6 +23,32 @@ _logger = logging.getLogger("simplevecdb.embeddings.server")
 
 # Maximum length (chars) for a single input text to prevent OOM in the encoder.
 _MAX_TEXT_LENGTH = 100_000
+
+
+def _validate_request_item_cap() -> None:
+    """Reject EMBEDDING_SERVER_MAX_REQUEST_ITEMS > _MAX_ENCODE_BATCH at startup.
+
+    Runs at module import so the check fires under any ASGI runner
+    (gunicorn/uvicorn-programmatic), not just ``run_server()``. If the
+    cap is misconfigured, requests would otherwise pass per-request
+    validation and only fail deep inside ``embed_texts``.
+    """
+    from .models import _MAX_ENCODE_BATCH
+
+    # The config field is typed int, but tests routinely patch ``config``
+    # with a MagicMock, leaving unset attributes as MagicMock instances.
+    # Coerce defensively so a missing attribute skips the check rather
+    # than crashing with TypeError.
+    try:
+        request_cap = int(config.EMBEDDING_SERVER_MAX_REQUEST_ITEMS)
+    except (TypeError, ValueError):
+        return
+    if request_cap > _MAX_ENCODE_BATCH:
+        raise RuntimeError(
+            f"EMBEDDING_SERVER_MAX_REQUEST_ITEMS={request_cap} exceeds the "
+            f"embed_texts cap of {_MAX_ENCODE_BATCH}. Lower the env var or "
+            "raise _MAX_ENCODE_BATCH in embeddings/models.py."
+        )
 
 
 # Simple in-memory rate limiter
@@ -102,15 +129,39 @@ app = FastAPI(
     docs_url="/docs",
 )
 
-# (#4) CORS middleware — configurable via EMBEDDING_SERVER_CORS_ORIGINS env var
-_cors_origins = getattr(config, "EMBEDDING_SERVER_CORS_ORIGINS", ["*"])
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# (#4) CORS middleware — configurable via EMBEDDING_SERVER_CORS_ORIGINS env var.
+# Default is no CORS (no allow_origins, no credentials) so the server is safe
+# to deploy without explicit CORS configuration. Operators that want CORS set
+# EMBEDDING_SERVER_CORS_ORIGINS to an explicit list of allowed origins, which
+# enables credentials. The wildcard ("*") + allow_credentials=True combo is
+# rejected by browsers per the CORS spec and is never produced here.
+_cors_origins = getattr(config, "EMBEDDING_SERVER_CORS_ORIGINS", None)
+if _cors_origins:
+    if "*" in _cors_origins:
+        # Wildcard origin must not pair with credentials. Strip credentials
+        # in that case so the server stays compliant; if you actually need
+        # credentialed CORS, set explicit origins instead.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_cors_origins,
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+
+# Validate request-item cap at module load so misconfiguration is caught
+# regardless of how the ASGI app is served (CLI, gunicorn, programmatic
+# uvicorn, etc.).
+_validate_request_item_cap()
 
 
 @app.get("/health")
@@ -122,7 +173,10 @@ async def health_check():
 class ModelRegistry:
     """In-memory mapping of allowed embedding models."""
 
-    def __init__(self, mapping: dict[str, str], allow_unlisted: bool = True):
+    def __init__(self, mapping: dict[str, str], allow_unlisted: bool = False):
+        # Default to locked: programmatic ModelRegistry instances (e.g., in
+        # tests) get the same secure default as the configured server. Until
+        # callers explicitly opt in, unlisted models cannot be served.
         self._mapping = mapping or {"default": DEFAULT_MODEL}
         self._default_alias = "default"
         if self._default_alias not in self._mapping:
@@ -139,6 +193,10 @@ class ModelRegistry:
         if requested in self._repo_ids:
             return requested, requested
         if self._allow_unlisted:
+            # Validation is enforced downstream in load_model() via
+            # _validate_repo_id, which is invoked before any hub call.
+            # Registry-level validation would reject mock model names
+            # used in tests; keep the boundary at the actual download.
             return requested, requested
 
         allowed = sorted(set(self._mapping.keys()) | self._repo_ids)
@@ -197,7 +255,21 @@ class UsageMeter:
             bucket["prompt_tokens"] += prompt_tokens
             bucket["last_request_ts"] = now
 
-    def snapshot(self, identity: str | None = None) -> dict[str, dict[str, float]]:
+    def snapshot(
+        self,
+        identity: str | None = None,
+        *,
+        aggregate: bool = False,
+    ) -> dict[str, dict[str, float]]:
+        """Return per-identity usage stats, or an aggregate total.
+
+        When ``identity`` is given, return only that bucket. Otherwise:
+        - ``aggregate=False`` (default): the full per-identity map.
+        - ``aggregate=True``: a single ``{"_total": {...}}`` bucket
+          summed across identities. The aggregate mode is what the
+          ``/v1/usage`` endpoint exposes when auth is disabled, so the
+          server doesn't leak the list of client IPs that have used it.
+        """
         with self._lock:
             if identity:
                 data = self._stats.get(
@@ -205,6 +277,15 @@ class UsageMeter:
                     {"requests": 0, "prompt_tokens": 0, "last_request_ts": 0.0},
                 )
                 return {identity: dict(data)}
+            if aggregate:
+                total = {"requests": 0.0, "prompt_tokens": 0.0, "last_request_ts": 0.0}
+                for value in self._stats.values():
+                    total["requests"] += value["requests"]
+                    total["prompt_tokens"] += value["prompt_tokens"]
+                    total["last_request_ts"] = max(
+                        total["last_request_ts"], value["last_request_ts"]
+                    )
+                return {"_total": total}
             return {key: dict(value) for key, value in self._stats.items()}
 
 
@@ -228,7 +309,10 @@ def authenticate_request(
     token = api_key_header or (credentials.credentials if credentials else None)
     if not token:
         raise HTTPException(status_code=401, detail="Missing API key")
-    if token not in allowed_keys:
+    # Constant-time comparison so the response time does not leak prefixes of
+    # valid API keys to an attacker probing the endpoint. ``in`` on a set
+    # short-circuits on the first differing character.
+    if not any(hmac.compare_digest(token, k) for k in allowed_keys):
         raise HTTPException(status_code=403, detail="Invalid API key")
     return token
 
@@ -276,7 +360,13 @@ def _normalize_input(raw_input: str | list[str] | list[int] | list[list[int]]) -
 
     # list[list[int]] — nested token arrays (#8)
     if isinstance(first, list):
-        return [" ".join(str(tok) for tok in sub) for sub in raw_input]
+        # mypy can't narrow raw_input to list[list[int]] from
+        # isinstance(first, list); the runtime branch above (line ~358)
+        # already eliminates list[int].
+        return [
+            " ".join(str(tok) for tok in sub)  # type: ignore[union-attr]
+            for sub in raw_input
+        ]
 
     # list[str]
     return [str(item) for item in raw_input]
@@ -393,10 +483,16 @@ async def list_models(
 
 @app.get("/v1/usage")
 async def usage(api_identity: str = Depends(authenticate_request)) -> dict[str, Any]:
-    """Return aggregate or per-key usage statistics."""
-    # If auth is enabled, only return the caller's stats; otherwise expose all.
-    scope = api_identity if config.EMBEDDING_SERVER_API_KEYS else None
-    return {"object": "usage", "data": usage_meter.snapshot(scope)}
+    """Return aggregate or per-key usage statistics.
+
+    When auth is configured, return only the caller's bucket. When auth is
+    disabled, return a single aggregated total — the per-identity buckets
+    are keyed by client IP and exposing the full list to anyone is an
+    information leak.
+    """
+    if config.EMBEDDING_SERVER_API_KEYS:
+        return {"object": "usage", "data": usage_meter.snapshot(api_identity)}
+    return {"object": "usage", "data": usage_meter.snapshot(aggregate=True)}
 
 
 def _build_cli_parser() -> argparse.ArgumentParser:
@@ -492,6 +588,12 @@ def run_server(host: str | None = None, port: int | None = None) -> None:
             "Server is running without authentication. "
             "Set EMBEDDING_SERVER_API_KEYS for production use."
         )
+    # Coordinate the per-request item cap with the encode-call cap. The
+    # validator also runs at module import (see _validate_request_item_cap)
+    # so non-CLI ASGI deployments are covered too; calling it here keeps
+    # CLI startup fail-fast behaviour identical.
+    _validate_request_item_cap()
+
     if host == "0.0.0.0":
         _logger.warning(
             "Server binding to all interfaces (0.0.0.0). "

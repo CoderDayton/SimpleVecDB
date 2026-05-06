@@ -5,5 +5,5 @@ exclude_dirs:
 
 skips:
 
-- B104
+- B104  # 0.0.0.0 binding: SERVER_HOST defaults to 127.0.0.1; bandit can't see runtime defaults, so the warning is a false positive on this codebase. Keep it skipped only because the default is safe — if anyone introduces a hardcoded "0.0.0.0", remove this skip.
 - B608  # SQL injection false positive: table names are validated via _validate_table_name()

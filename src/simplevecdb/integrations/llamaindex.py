@@ -1,4 +1,8 @@
 # src/simplevecdb/integrations/llamaindex.py
+import logging
+import sqlite3
+import uuid
+import warnings
 from typing import Any, TYPE_CHECKING
 from collections.abc import Sequence
 
@@ -20,7 +24,9 @@ except ImportError as exc:
         "  pip install simplevecdb[integrations]"
     ) from exc
 
-from simplevecdb.core import VectorDB  # our core
+_logger = logging.getLogger("simplevecdb.integrations.llamaindex")
+
+from simplevecdb.core import VectorDB  # noqa: E402  (depends on llama_index probe above)
 
 if TYPE_CHECKING:
     from simplevecdb.types import Document
@@ -44,11 +50,88 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         self._collection = self._db.collection(collection_name)
         # Map internal DB IDs to node IDs
         self._id_map: dict[int, str] = {}
+        # Detect a v2.5 (or earlier) collection where the LlamaIndex node_id
+        # was not persisted into metadata. delete(ref_doc_id) silently fails
+        # against such rows because the metadata-fallback query finds
+        # nothing. Emit a one-shot DeprecationWarning so the operator knows
+        # to call migrate_node_id_metadata() before relying on delete().
+        try:
+            self._warn_if_legacy_collection()
+        except Exception:
+            _logger.debug(
+                "Legacy-collection probe failed", exc_info=True
+            )
+
+    def _warn_if_legacy_collection(self) -> None:
+        """Probe one row; warn if it lacks the v2.6 node_id metadata stamp."""
+        sample = self._collection.get_documents(limit=1)
+        if not sample:
+            return
+        _doc_id, _text, metadata = sample[0]
+        if "_simplevecdb_node_id" in (metadata or {}):
+            return
+        warnings.warn(
+            "SimpleVecDBLlamaStore: the underlying collection contains "
+            "documents created before v2.6.0 that do not carry a "
+            "'_simplevecdb_node_id' metadata stamp. delete(node_id) will "
+            "silently no-op against those rows until you call "
+            "store.migrate_node_id_metadata(). NOTE: legacy rows were "
+            "stamped with the integer DB row id (not the original "
+            "LlamaIndex node_id, which was never persisted), so "
+            "delete(original_node_id) cannot be recovered for them; "
+            "re-index to obtain stable node ids.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     @property
     def client(self) -> Any:
         """Return the underlying client (our VectorDB)."""
         return self._db
+
+    def migrate_node_id_metadata(self) -> int:
+        """Backfill ``_simplevecdb_node_id`` for documents inserted before 2.6.0.
+
+        Pre-2.6.0 versions did not persist the LlamaIndex node_id into
+        document metadata, so ``delete(ref_doc_id)`` could not find the
+        right row after a process restart. This helper walks every
+        document in the underlying collection and stamps the internal DB
+        id as the node_id for any row that lacks ``_simplevecdb_node_id``
+        metadata. Idempotent — already-stamped rows are skipped, so a
+        retry after a partial run converges.
+
+        Limitation
+        ----------
+        Pre-2.6.0 rows never had their original LlamaIndex node_id
+        persisted, so the backfill stamps ``str(doc_id)`` (the integer DB
+        rowid) as the node_id. After migration:
+
+        - ``delete(str(doc_id))`` works against migrated rows.
+        - ``delete(<original-llama-uuid>)`` still cannot find these rows;
+          the original ids were never written to disk and cannot be
+          recovered. Re-indexing the upstream documents is the only way
+          to restore stable node ids that match the LlamaIndex side.
+
+        Atomicity: the underlying ``update_metadata`` issues one
+        transaction per chunk of 500 rows. A process kill between chunks
+        leaves the migration half-done; calling this method again will
+        finish it (the per-row idempotency guard skips already-stamped
+        rows).
+
+        Returns:
+            Number of documents updated.
+        """
+        docs = self._collection.get_documents()
+        updates: list[tuple[int, dict[str, Any]]] = []
+        for doc_id, _text, metadata in docs:
+            if not metadata.get("_simplevecdb_node_id"):
+                merged = dict(metadata or {})
+                merged["_simplevecdb_node_id"] = str(doc_id)
+                updates.append((int(doc_id), merged))
+                self._id_map[int(doc_id)] = str(doc_id)
+        if not updates:
+            return 0
+        return self._collection.update_metadata(updates)
 
     @property
     def store_text(self) -> bool:
@@ -59,20 +142,29 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         """
         Add nodes with embeddings.
 
-        Args:
-            nodes: Sequence of LlamaIndex BaseNodes.
-            **kwargs: Unused.
-
-        Returns:
-            List of node IDs.
+        The node_id is persisted into the document's metadata under
+        ``_simplevecdb_node_id`` so it survives process restarts. The
+        in-memory ``_id_map`` is also populated as a fast cache for the
+        current session.
         """
         texts = [node.get_content() for node in nodes]
-        metadatas = [node.metadata for node in nodes]
 
-        # Extract embeddings, ensuring all are valid or set to None
+        # Stamp the node_id into metadata so delete() can recover the mapping
+        # after a restart. When LlamaIndex did not assign a node_id, generate
+        # a UUID up front so the metadata stamp is committed in the same
+        # transaction as the row insert — there is no window where the row
+        # exists without ``_simplevecdb_node_id`` in its metadata.
+        node_ids_resolved: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        for node in nodes:
+            node_id = node.node_id or str(uuid.uuid4())
+            md = dict(node.metadata or {})
+            md["_simplevecdb_node_id"] = node_id
+            node_ids_resolved.append(node_id)
+            metadatas.append(md)
+
         embeddings = None
         if nodes and nodes[0].embedding is not None:
-            # Ensure all embeddings are present (not None)
             emb_list = []
             all_have_embeddings = True
             for node in nodes:
@@ -80,41 +172,60 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
                     all_have_embeddings = False
                     break
                 emb_list.append(node.embedding)
-
             if all_have_embeddings:
                 embeddings = emb_list
 
-        # Add to DB and get internal IDs
         internal_ids = self._collection.add_texts(texts, metadatas, embeddings)
 
-        # Track mapping from internal ID to node ID
-        node_ids = []
-        for i, node in enumerate(nodes):
-            internal_id = internal_ids[i]
-            node_id = node.node_id or str(internal_id)
+        for internal_id, node_id in zip(internal_ids, node_ids_resolved):
             self._id_map[internal_id] = node_id
-            node_ids.append(node_id)
 
-        return node_ids
+        return node_ids_resolved
 
     def delete(self, ref_doc_id: str, **delete_kwargs: Any) -> None:
         """
         Delete by ref_doc_id (node ID).
 
-        Args:
-            ref_doc_id: The node ID to delete.
-            **delete_kwargs: Unused.
+        First consults the in-memory ``_id_map`` for the current session;
+        on a miss (typically after a restart) falls back to a metadata
+        query against ``_simplevecdb_node_id`` so deletion is reliable
+        across process boundaries.
         """
-        # Find internal ID from node ID
-        internal_id = None
+        internal_id: int | None = None
         for int_id, node_id in self._id_map.items():
             if node_id == ref_doc_id:
                 internal_id = int_id
                 break
 
+        if internal_id is None:
+            # Fall back to metadata lookup — mapping was not in this
+            # process's _id_map, so we have to find it on disk. We catch
+            # only TypeError (older catalog signatures lack
+            # ``filter_dict=``) and NotImplementedError (filter mode not
+            # supported); other exceptions — including database errors,
+            # locked-DB, schema mismatches — propagate so the caller
+            # cannot mistake a real failure for a successful no-op.
+            try:
+                docs = self._collection.get_documents(
+                    filter_dict={"_simplevecdb_node_id": ref_doc_id}, limit=1
+                )
+            except (TypeError, NotImplementedError) as exc:
+                _logger.debug(
+                    "filter_dict-based delete fallback unavailable: %s",
+                    exc,
+                )
+                docs = []
+            except sqlite3.DatabaseError:
+                # Database-layer error: surface it instead of swallowing.
+                # A locked or corrupted DB previously turned into a
+                # silent no-op, hiding data-loss bugs.
+                raise
+            if docs:
+                internal_id = int(docs[0][0])
+
         if internal_id is not None:
             self._collection.delete_by_ids([internal_id])
-            del self._id_map[internal_id]
+            self._id_map.pop(internal_id, None)
 
     def delete_nodes(
         self,
@@ -127,9 +238,18 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
 
         Args:
             node_ids: List of node IDs to delete.
-            filters: Metadata filters (unused).
+            filters: Metadata filters. Currently unsupported — passing a
+                non-None ``filters`` raises ``NotImplementedError`` rather
+                than silently ignoring it (which would let callers think
+                the deletion happened).
             **delete_kwargs: Unused.
         """
+        if filters is not None:
+            raise NotImplementedError(
+                "delete_nodes(filters=...) is not yet supported by simplevecdb. "
+                "Resolve the filter to node_ids first via the underlying "
+                "VectorCollection.find_ids_by_filter() or query()."
+            )
         if node_ids:
             for node_id in node_ids:
                 self.delete(node_id)
@@ -158,7 +278,15 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         ids: list[str] = []
 
         for tiny_doc, score in docs_with_scores:
-            node_id = str(hash(tiny_doc.page_content))
+            # Prefer the persisted node_id over an unstable Python hash().
+            # Python's hash() is randomized per process (PYTHONHASHSEED) and
+            # can collide; ``_simplevecdb_node_id`` is stamped into metadata
+            # at insert time, survives restarts, and uniquely identifies the
+            # node.
+            metadata = tiny_doc.metadata or {}
+            node_id = metadata.get("_simplevecdb_node_id") or str(
+                abs(hash(tiny_doc.page_content))
+            )
             node = TextNode(
                 text=tiny_doc.page_content,
                 metadata=tiny_doc.metadata or {},

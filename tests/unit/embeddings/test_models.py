@@ -79,6 +79,7 @@ def test_load_model():
         "/cache/model-path",
         tokenizer_kwargs={"padding": True, "truncation": True, "max_length": 512},
         backend="torch",
+        trust_remote_code=False,
     )
 
 

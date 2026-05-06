@@ -80,11 +80,56 @@ db = VectorDB("secure.db", encryption_key=encryption_key)
 With encryption enabled, files are stored as:
 
 ```
-mydb.db                    # SQLCipher encrypted SQLite database
-mydb.db.default.usearch.enc  # AES-256-GCM encrypted usearch index
+mydb.db                          # SQLCipher encrypted SQLite database
+mydb.db.salt                     # 16-byte random salt sidecar (mode 0o600)
+mydb.db.default.usearch.enc      # AES-256-GCM encrypted usearch index (v1)
+mydb.db.default.usearch.enc.salt # 16-byte salt sidecar for the index
 ```
 
 When opened, the index is decrypted to memory (or a temp file). On `save()` or `close()`, the index is re-encrypted.
+
+### Per-DB random salt (2.6.0+)
+
+Each encrypted database and each encrypted index file gets its own
+random 16-byte salt, written to a sibling `.salt` file with mode
+`0o600`. The salt is the second input to PBKDF2-HMAC-SHA256, so two
+databases that share the same passphrase derive **different** keys.
+
+The sidecar is created with `O_CREAT | O_EXCL` so two processes opening
+the same fresh database concurrently cannot race to write conflicting
+salts; the loser reads the winner's salt and proceeds. An existing
+sidecar is never overwritten — clobbering it would render the database
+permanently unreadable with the original passphrase.
+
+Pre-2.6.0 databases continue to open with a fixed legacy salt when no
+sidecar is present, so existing on-disk data keeps working unchanged.
+
+### v1 index file format (2.6.0+)
+
+Index files written by 2.6.0+ start with a 3-byte version header:
+
+```
+magic   = b"SV"     (2 bytes)
+version = 0x01      (1 byte)
+nonce   = 12 bytes
+ciphertext + GCM tag
+```
+
+The header bytes are bound into the AES-GCM **associated_data**, so
+any tampering with the magic or version (including a downgrade attempt
+that strips them) fails authentication on decrypt. Pre-2.6.0 (v0) blobs
+have no header and continue to decrypt successfully — `decrypt_file`
+detects the format automatically.
+
+### Atomic durability
+
+`encrypt_file` and `decrypt_file` write to a sibling `.tmp` file,
+`fsync()` the data, set mode `0o600`, then `os.replace()` onto the
+target. The parent directory is also fsynced so the rename itself is
+durable on POSIX. A crash mid-write leaves only the orphan temp file —
+the live target is never torn. `encrypt_index_file` only unlinks the
+plaintext after the encrypted output is durably on disk, so an
+interrupted re-encryption never destroys data.
 
 ## Performance
 
@@ -135,10 +180,12 @@ except EncryptionUnavailableError:
 
 ## Security Notes
 
-- **SQLCipher** uses AES-256-CBC with HMAC-SHA512 for authentication
-- **Index encryption** uses AES-256-GCM with random 96-bit nonces
-- **Key derivation** uses PBKDF2-SHA256 with 480,000 iterations (OWASP 2023 recommendation)
-- **The encryption key is held in memory** during database usage
+- **SQLCipher** uses AES-256-CBC with HMAC-SHA512 for authentication.
+- **Index encryption** uses AES-256-GCM with random 96-bit nonces (`secrets.token_bytes`); each save generates a fresh nonce.
+- **Key derivation** uses PBKDF2-HMAC-SHA256 with **600,000 iterations** (OWASP 2024 recommendation) and a per-DB random salt.
+- **v1 file format** binds the magic+version header bytes into AES-GCM `associated_data`, defeating header tampering and downgrade attacks.
+- **Derived keys** are cached in a bounded LRU (max 64 entries, serialized by a thread lock) so repeat opens within a process avoid the 600k-iter cost without leaking key material in long-running multi-tenant processes.
+- **The encryption key is held in memory** during database usage.
 
 ## API Reference
 

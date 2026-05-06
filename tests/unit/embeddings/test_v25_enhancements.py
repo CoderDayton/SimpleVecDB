@@ -2,9 +2,10 @@
 
 import argparse
 import signal
+from typing import Any
 
 import pytest
-from unittest.mock import patch, MagicMock, ANY, call
+from unittest.mock import patch, MagicMock, ANY
 
 from fastapi.testclient import TestClient
 
@@ -12,7 +13,6 @@ import simplevecdb
 from simplevecdb.embeddings.server import (
     app,
     _normalize_input,
-    _validate_texts,
     _build_cli_parser,
     _server_version,
     ModelRegistry,
@@ -163,9 +163,14 @@ class TestModelWarmUp:
 
 
 class TestCORSMiddleware:
-    """App has CORSMiddleware allowing cross-origin requests."""
+    """CORS is opt-in via EMBEDDING_SERVER_CORS_ORIGINS.
 
-    def test_options_preflight_returns_cors_headers(self):
+    The 2.6.0 default is no CORS — operators that need it must set the
+    env var explicitly. This test class verifies the safe default rather
+    than the prior behavior where CORS was always enabled with allow_credentials.
+    """
+
+    def test_options_preflight_no_cors_by_default(self):
         response = client.options(
             "/v1/embeddings",
             headers={
@@ -173,17 +178,10 @@ class TestCORSMiddleware:
                 "Access-Control-Request-Method": "POST",
             },
         )
-        assert "access-control-allow-origin" in response.headers
-
-    def test_cors_allow_origin_value(self):
-        response = client.options(
-            "/v1/embeddings",
-            headers={
-                "Origin": "http://example.com",
-                "Access-Control-Request-Method": "POST",
-            },
-        )
-        assert response.headers["access-control-allow-origin"] == "http://example.com"
+        # With CORS disabled (default), the access-control-allow-origin
+        # header is absent. Configure EMBEDDING_SERVER_CORS_ORIGINS to opt
+        # in; the wildcard form drops allow_credentials automatically.
+        assert "access-control-allow-origin" not in response.headers
 
 
 # ---------------------------------------------------------------------------

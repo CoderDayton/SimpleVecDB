@@ -21,16 +21,18 @@ build/
 *.db
 *.sqlite
 
-# OpenCode
+# Agentic CLI tools (per-developer state)
 .opencode/
 opencode.json
+.claude/
+.codex
 
 # Project specific
 simplevecdb_plan.md
 AGENTS.md
 htmlcov/
 site/
-scripts
+htmlcov/
 .coverage
 NEXT_UPDATES.md
 pro_pack/

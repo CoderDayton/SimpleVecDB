@@ -28,6 +28,15 @@ LOGGER_NAME = "simplevecdb"
 # Default format includes timestamp, level, logger name, and message
 DEFAULT_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+# Per the Python logging HOWTO, libraries should attach a NullHandler to
+# their root logger namespace at import time so callers that have not
+# configured logging do not see "No handlers could be found" warnings.
+# Adding it here is idempotent — duplicate calls do not stack handlers
+# because we check for an existing NullHandler first.
+_root_logger = logging.getLogger(LOGGER_NAME)
+if not any(isinstance(h, logging.NullHandler) for h in _root_logger.handlers):
+    _root_logger.addHandler(logging.NullHandler())
+
 
 def get_logger(name: str | None = None) -> logging.Logger:
     """
@@ -172,43 +181,4 @@ def log_operation(
         raise
 
 
-def log_error(
-    operation: str,
-    error: Exception,
-    logger: logging.Logger | None = None,
-    **context: Any,
-) -> None:
-    """
-    Log an error with operation context.
 
-    Convenience function for logging errors with consistent formatting
-    and context capture.
-
-    Args:
-        operation: Name of the operation that failed.
-        error: The exception that was raised.
-        logger: Logger to use. If None, uses the root simplevecdb logger.
-        **context: Additional context to include in the log message.
-
-    Example:
-        >>> try:
-        ...     risky_operation()
-        ... except sqlite3.OperationalError as e:
-        ...     log_error("database_write", e, table="vectors", row_count=100)
-        ...     raise
-    """
-    if logger is None:
-        logger = get_logger()
-
-    logger.error(
-        "%s failed: %s",
-        operation,
-        error,
-        extra={
-            "operation": operation,
-            "error": str(error),
-            "error_type": type(error).__name__,
-            **context,
-        },
-        exc_info=True,
-    )

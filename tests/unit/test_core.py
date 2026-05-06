@@ -2,7 +2,6 @@
 import pytest
 import numpy as np
 import json
-import sqlite3
 from simplevecdb import VectorDB
 from simplevecdb.types import Document, DistanceStrategy
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from typing import Any, TYPE_CHECKING, Callable
 from collections.abc import Iterable, Sequence
 
@@ -58,6 +59,7 @@ class CatalogManager:
         conn: sqlite3.Connection,
         table_name: str,
         fts_table_name: str,
+        lock: threading.RLock | None = None,
     ):
         # Defense-in-depth: validate table names
         _validate_table_name(table_name)
@@ -69,6 +71,12 @@ class CatalogManager:
         self._fts_enabled = False
         self._cluster_table_name = f"{table_name}_clusters"
         self._cluster_table_ready = False
+        # Serializes Python-level access to the shared sqlite3.Connection. The
+        # connection is opened with check_same_thread=False; SQLite itself is
+        # safe under WAL, but Python's `with conn:` transaction context is not
+        # — two threads entering it simultaneously interleave their writes
+        # under one implicit transaction. The lock prevents that.
+        self._lock: threading.RLock = lock if lock is not None else threading.RLock()
 
     def create_tables(self) -> None:
         """Create metadata and FTS tables if they don't exist."""
@@ -89,6 +97,15 @@ class CatalogManager:
             CREATE INDEX IF NOT EXISTS idx_{self._table_name}_parent
             ON {self._table_name}(parent_id)
             WHERE parent_id IS NOT NULL
+            """
+        )
+        # Index on text for find_ids_by_texts / remove_texts which previously
+        # full-scanned. Costs disk proportional to total text size; payback
+        # is large on collections that frequently look up by text content.
+        self.conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{self._table_name}_text
+            ON {self._table_name}(text)
             """
         )
         # Migrate existing tables that lack columns
@@ -168,8 +185,12 @@ class CatalogManager:
         """Whether FTS5 is available for keyword search."""
         return self._fts_enabled
 
-    def upsert_fts_rows(self, ids: Sequence[int], texts: Sequence[str]) -> None:
+    def _upsert_fts_rows(self, ids: Sequence[int], texts: Sequence[str]) -> None:
         """Update FTS index for given document IDs.
+
+        Internal helper. Must be called inside an active transaction
+        (``with self._lock, self.conn:``) so the FTS shadow table stays in
+        sync with the main table on crash.
 
         Args:
             ids: Document IDs to update
@@ -187,8 +208,11 @@ class CatalogManager:
             f"INSERT INTO {self._fts_table_name}(rowid, text) VALUES (?, ?)", rows
         )
 
-    def delete_fts_rows(self, ids: Sequence[int]) -> None:
+    def _delete_fts_rows(self, ids: Sequence[int]) -> None:
         """Remove documents from FTS index.
+
+        Internal helper. Must be called inside an active transaction so
+        the FTS shadow table stays in sync with the main table on crash.
 
         Args:
             ids: Document IDs to remove
@@ -255,44 +279,83 @@ class CatalogManager:
         _dumps = json.dumps
         meta_strs = [_dumps(m, separators=(",", ":")) for m in metadatas]
 
-        rows = [
-            (uid, txt, meta_str, emb_blob, pid)
-            for uid, txt, meta_str, emb_blob, pid in zip(
-                ids_list, texts, meta_strs, embedding_blobs, parent_ids_list
-            )
-        ]
-
-        with self.conn:
-            self.conn.executemany(
-                f"""
-                INSERT INTO {self._table_name}(id, text, metadata, embedding, parent_id)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    text=excluded.text,
-                    metadata=excluded.metadata,
-                    embedding=excluded.embedding,
-                    parent_id=excluded.parent_id
-                """,
-                rows,
-            )
-
-            # Recover inserted IDs using last_insert_rowid() arithmetic.
-            # Within a transaction, auto-increment IDs are sequential, so
-            # last_id - N + 1 .. last_id gives the correct range. This avoids
-            # the ORDER BY id DESC race under concurrent inserts.
-            if all(uid is not None for uid in ids_list):
-                real_ids = [int(uid) for uid in ids_list]
+        # Split into auto-ID and explicit-ID groups so each can use the
+        # correct INSERT path:
+        #   - Explicit IDs: upsert (ON CONFLICT DO UPDATE) so existing rows
+        #     are updated in place. last_insert_rowid is unsafe here because
+        #     UPSERTs that hit the UPDATE branch do not advance it, breaking
+        #     the prior arithmetic.
+        #   - Auto IDs (None): plain INSERT, then RETURNING id to recover the
+        #     auto-assigned values exactly. Held under self._lock so the
+        #     RETURNING result is uncorrupted by concurrent writers.
+        explicit_rows = []
+        auto_rows = []
+        auto_positions = []
+        for idx, (uid, txt, meta_str, emb_blob, pid) in enumerate(
+            zip(ids_list, texts, meta_strs, embedding_blobs, parent_ids_list)
+        ):
+            if uid is None:
+                auto_rows.append((txt, meta_str, emb_blob, pid))
+                auto_positions.append(idx)
             else:
-                last_id = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                auto_count = sum(1 for uid in ids_list if uid is None)
-                auto_ids = iter(range(last_id - auto_count + 1, last_id + 1))
-                real_ids = [
-                    int(uid) if uid is not None else next(auto_ids)
-                    for uid in ids_list
-                ]
+                explicit_rows.append((uid, txt, meta_str, emb_blob, pid))
+
+        real_ids: list[int] = [-1] * len(ids_list)
+
+        with self._lock, self.conn:
+            if explicit_rows:
+                self.conn.executemany(
+                    f"""
+                    INSERT INTO {self._table_name}(id, text, metadata, embedding, parent_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        text=excluded.text,
+                        metadata=excluded.metadata,
+                        embedding=excluded.embedding,
+                        parent_id=excluded.parent_id
+                    """,
+                    explicit_rows,
+                )
+
+            if auto_rows:
+                # Use a single multi-VALUES INSERT ... RETURNING id so we
+                # recover the auto-assigned IDs in the exact insertion order.
+                placeholders = ",".join(["(?, ?, ?, ?)"] * len(auto_rows))
+                flat_params = [v for r in auto_rows for v in r]
+                cursor = self.conn.execute(
+                    f"INSERT INTO {self._table_name}"
+                    f"(text, metadata, embedding, parent_id) "
+                    f"VALUES {placeholders} RETURNING id",
+                    flat_params,
+                )
+                returned = cursor.fetchall()
+                if len(returned) != len(auto_rows):
+                    raise RuntimeError(
+                        f"INSERT RETURNING id returned {len(returned)} rows, "
+                        f"expected {len(auto_rows)}"
+                    )
+                for pos, row in zip(auto_positions, returned):
+                    real_ids[pos] = int(row[0])
+
+            # Fill in explicit IDs by their original position
+            explicit_iter = iter(explicit_rows)
+            for idx, uid in enumerate(ids_list):
+                if uid is not None:
+                    real_ids[idx] = int(next(explicit_iter)[0])
+
+            # Defense-in-depth: any leftover -1 sentinel here means an
+            # INSERT path partially succeeded — never feed that to FTS as
+            # a rowid. This catches both retry-loop interaction with the
+            # @retry_on_lock decorator and any future code path that
+            # forgets to populate real_ids before the FTS upsert.
+            if any(rid < 0 for rid in real_ids):
+                raise RuntimeError(
+                    "Internal error: add_documents produced an unfilled "
+                    "rowid sentinel; refusing to update FTS with -1."
+                )
 
             # Update FTS index
-            self.upsert_fts_rows(real_ids, texts)
+            self._upsert_fts_rows(real_ids, texts)
 
         _logger.debug("Added %d documents, ids=%s", len(real_ids), real_ids[:5])
         return real_ids
@@ -317,7 +380,7 @@ class CatalogManager:
         placeholders = ",".join("?" for _ in ids)
         params = tuple(ids)
 
-        with self.conn:
+        with self._lock, self.conn:
             # Check which IDs actually exist
             existing = self.conn.execute(
                 f"SELECT id FROM {self._table_name} WHERE id IN ({placeholders})",
@@ -331,7 +394,7 @@ class CatalogManager:
                     f"DELETE FROM {self._table_name} WHERE id IN ({placeholders})",
                     tuple(existing_ids),
                 )
-                self.delete_fts_rows(existing_ids)
+                self._delete_fts_rows(existing_ids)
 
         _logger.debug("Deleted %d documents", len(existing_ids))
         return existing_ids
@@ -352,16 +415,31 @@ class CatalogManager:
             return {}
 
         placeholders = ",".join(["?"] * len(ids))
-        rows = self.conn.execute(
-            f"SELECT id, text, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
-            tuple(ids),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id, text, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
+                tuple(ids),
+            ).fetchall()
 
         result = {}
         for row_id, text, meta_json in rows:
             meta = json.loads(meta_json) if meta_json else {}
             result[row_id] = (text, meta)
         return result
+
+    def list_all_ids(self) -> list[int]:
+        """Return every doc id in the table, serialized through ``self._lock``.
+
+        Used by the rebuild-index path so the SELECT runs under the same
+        re-entrant lock as concurrent writers, eliminating the bare
+        ``self.conn.execute(...)`` that previously relied on caller
+        discipline alone.
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id FROM {self._table_name}"
+            ).fetchall()
+        return [row[0] for row in rows]
 
     def get_embeddings_by_ids(self, ids: Sequence[int]) -> dict[int, Any]:
         """
@@ -379,10 +457,11 @@ class CatalogManager:
             return {}
 
         placeholders = ",".join(["?"] * len(ids))
-        rows = self.conn.execute(
-            f"SELECT id, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
-            tuple(ids),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
+                tuple(ids),
+            ).fetchall()
 
         result: dict[int, np.ndarray | None] = {}
         for row_id, emb_blob in rows:
@@ -409,10 +488,11 @@ class CatalogManager:
             return {}
 
         placeholders = ",".join(["?"] * len(ids))
-        rows = self.conn.execute(
-            f"SELECT id, text, metadata, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
-            tuple(ids),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id, text, metadata, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
+                tuple(ids),
+            ).fetchall()
 
         result: dict[int, tuple[str, dict[str, Any], np.ndarray | None]] = {}
         for row_id, text, meta_json, emb_blob in rows:
@@ -450,7 +530,8 @@ class CatalogManager:
                 sql += " OFFSET ?"
                 params.append(offset)
 
-        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
         return [r[0] for r in rows]
 
     def find_ids_by_filter(
@@ -489,7 +570,8 @@ class CatalogManager:
                 sql += " OFFSET ?"
                 params.append(offset)
 
-        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
         return [r[0] for r in rows]
 
     def keyword_search(
@@ -531,7 +613,8 @@ class CatalogManager:
             LIMIT ?
         """
         params = (query,) + tuple(filter_params) + (k,)
-        rows = self.conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, params).fetchall()
         return [(int(row[0]), float(row[1])) for row in rows]
 
     def build_filter_clause(
@@ -580,7 +663,10 @@ class CatalogManager:
 
     def count(self) -> int:
         """Return total number of documents."""
-        row = self.conn.execute(f"SELECT COUNT(*) FROM {self._table_name}").fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                f"SELECT COUNT(*) FROM {self._table_name}"
+            ).fetchone()
         return row[0] if row else 0
 
     def get_all_docs_with_text(
@@ -625,7 +711,8 @@ class CatalogManager:
                 sql += " OFFSET ?"
                 params.append(offset)
 
-        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
         result = []
         for row_id, text, meta_json in rows:
             meta = json.loads(meta_json) if meta_json else {}
@@ -647,7 +734,7 @@ class CatalogManager:
         if not updates:
             return 0
 
-        with self.conn:
+        with self._lock, self.conn:
             updated = 0
             # Batch into chunks of 500 for performance
             for batch in _batched(updates, 500):
@@ -690,10 +777,11 @@ class CatalogManager:
             True if legacy sqlite-vec data exists
         """
         try:
-            row = self.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                (vec_table_name,),
-            ).fetchone()
+            with self._lock:
+                row = self.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (vec_table_name,),
+                ).fetchone()
             return row is not None
         except Exception:
             return False
@@ -708,10 +796,12 @@ class CatalogManager:
         Returns:
             List of (rowid, embedding_blob) tuples
         """
+        _validate_table_name(vec_table_name)
         try:
-            rows = self.conn.execute(
-                f"SELECT rowid, embedding FROM {vec_table_name}"
-            ).fetchall()
+            with self._lock:
+                rows = self.conn.execute(
+                    f"SELECT rowid, embedding FROM {vec_table_name}"
+                ).fetchall()
             return [(int(r[0]), r[1]) for r in rows]
         except Exception as e:
             _logger.warning("Failed to read legacy vectors: %s", e)
@@ -719,9 +809,10 @@ class CatalogManager:
 
     def drop_legacy_vec_table(self, vec_table_name: str) -> None:
         """Drop legacy sqlite-vec table after migration."""
+        _validate_table_name(vec_table_name)
         try:
-            self.conn.execute(f"DROP TABLE IF EXISTS {vec_table_name}")
-            self.conn.commit()
+            with self._lock, self.conn:
+                self.conn.execute(f"DROP TABLE IF EXISTS {vec_table_name}")
             _logger.info("Dropped legacy sqlite-vec table: %s", vec_table_name)
         except Exception as e:
             _logger.warning("Failed to drop legacy table %s: %s", vec_table_name, e)
@@ -740,10 +831,11 @@ class CatalogManager:
         Returns:
             List of (id, text, metadata) tuples for child documents
         """
-        rows = self.conn.execute(
-            f"SELECT id, text, metadata FROM {self._table_name} WHERE parent_id = ?",
-            (parent_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id, text, metadata FROM {self._table_name} WHERE parent_id = ?",
+                (parent_id,),
+            ).fetchall()
 
         return [(int(r[0]), r[1], json.loads(r[2]) if r[2] else {}) for r in rows]
 
@@ -758,13 +850,14 @@ class CatalogManager:
             Tuple of (id, text, metadata) for parent, or None if no parent
         """
         # Single self-join instead of two sequential queries
-        row = self.conn.execute(
-            f"""SELECT p.id, p.text, p.metadata
-            FROM {self._table_name} c
-            JOIN {self._table_name} p ON p.id = c.parent_id
-            WHERE c.id = ?""",
-            (doc_id,),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                f"""SELECT p.id, p.text, p.metadata
+                FROM {self._table_name} c
+                JOIN {self._table_name} p ON p.id = c.parent_id
+                WHERE c.id = ?""",
+                (doc_id,),
+            ).fetchone()
 
         if not row:
             return None
@@ -793,9 +886,12 @@ class CatalogManager:
         """
         from .. import constants
 
-        # Apply safety cap to prevent infinite recursion from cycles
+        # Apply safety cap to prevent infinite recursion from cycles. The
+        # depth is bound as a parameter rather than f-string interpolated;
+        # int() coercion makes the previous f-string safe today, but the
+        # parameter form is one less line away from injection on a future
+        # refactor.
         effective_depth = int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
-        depth_clause = f"AND depth < {effective_depth}"
 
         sql = f"""
             WITH RECURSIVE descendants(id, text, metadata, depth) AS (
@@ -808,13 +904,14 @@ class CatalogManager:
                 SELECT t.id, t.text, t.metadata, d.depth + 1
                 FROM {self._table_name} t
                 JOIN descendants d ON t.parent_id = d.id
-                WHERE 1=1 {depth_clause}
+                WHERE depth < ?
             )
             SELECT id, text, metadata, depth FROM descendants
             ORDER BY depth, id
         """
 
-        rows = self.conn.execute(sql, (root_id,)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, (root_id, effective_depth)).fetchall()
 
         return [
             (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows
@@ -836,9 +933,9 @@ class CatalogManager:
         """
         from .. import constants
 
-        # Apply safety cap to prevent infinite recursion from cycles
+        # Apply safety cap to prevent infinite recursion from cycles. Bind
+        # the depth as a parameter (see get_descendants for rationale).
         effective_depth = int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
-        depth_clause = f"AND depth < {effective_depth}"
 
         sql = f"""
             WITH RECURSIVE ancestors(id, text, metadata, parent_id, depth) AS (
@@ -851,13 +948,14 @@ class CatalogManager:
                 SELECT t.id, t.text, t.metadata, t.parent_id, a.depth + 1
                 FROM {self._table_name} t
                 JOIN ancestors a ON t.id = a.parent_id
-                WHERE a.parent_id IS NOT NULL {depth_clause}
+                WHERE a.parent_id IS NOT NULL AND a.depth < ?
             )
             SELECT id, text, metadata, depth FROM ancestors
             ORDER BY depth
         """
 
-        rows = self.conn.execute(sql, (doc_id,)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, (doc_id, effective_depth)).fetchall()
 
         return [
             (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows
@@ -877,18 +975,21 @@ class CatalogManager:
         Raises:
             ValueError: If setting parent would create a cycle
         """
-        # Check for cycles: parent_id cannot be doc_id or any of its descendants
-        if parent_id is not None:
-            if parent_id == doc_id:
-                raise ValueError("A document cannot be its own parent")
-            descendants = self.get_descendants(doc_id)
-            descendant_ids = {d[0] for d in descendants}
-            if parent_id in descendant_ids:
-                raise ValueError(
-                    f"Cannot set parent: document {parent_id} is a descendant of {doc_id}"
-                )
+        # Cycle check + UPDATE inside one critical section so a concurrent
+        # writer cannot create a cycle-forming edge between the check and the
+        # UPDATE. The lock serializes; `with self.conn:` wraps the UPDATE in
+        # an implicit transaction that commits on success.
+        with self._lock, self.conn:
+            if parent_id is not None:
+                if parent_id == doc_id:
+                    raise ValueError("A document cannot be its own parent")
+                descendants = self.get_descendants(doc_id)
+                descendant_ids = {d[0] for d in descendants}
+                if parent_id in descendant_ids:
+                    raise ValueError(
+                        f"Cannot set parent: document {parent_id} is a descendant of {doc_id}"
+                    )
 
-        with self.conn:
             cursor = self.conn.execute(
                 f"UPDATE {self._table_name} SET parent_id = ? WHERE id = ?",
                 (parent_id, doc_id),
@@ -904,20 +1005,25 @@ class CatalogManager:
         if self._cluster_table_ready:
             return
         cluster_table = self._cluster_table_name
-        self.conn.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {cluster_table} (
-                name TEXT PRIMARY KEY,
-                algorithm TEXT NOT NULL,
-                n_clusters INTEGER NOT NULL,
-                centroids BLOB,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                metadata TEXT
+        with self._lock, self.conn:
+            # Re-check inside the lock so concurrent first-callers don't
+            # both run the DDL. The CREATE TABLE IF NOT EXISTS is itself
+            # idempotent, but doing the work twice defeats the early-exit.
+            if self._cluster_table_ready:
+                return
+            self.conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {cluster_table} (
+                    name TEXT PRIMARY KEY,
+                    algorithm TEXT NOT NULL,
+                    n_clusters INTEGER NOT NULL,
+                    centroids BLOB,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    metadata TEXT
+                )
+                """
             )
-            """
-        )
-        self.conn.commit()
-        self._cluster_table_ready = True
+            self._cluster_table_ready = True
 
     def save_cluster_state(
         self,
@@ -942,15 +1048,15 @@ class CatalogManager:
 
         meta_json = json.dumps(metadata) if metadata else None
 
-        self.conn.execute(
-            f"""
-            INSERT OR REPLACE INTO {cluster_table}
-            (name, algorithm, n_clusters, centroids, metadata, created_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """,
-            (name, algorithm, n_clusters, centroids, meta_json),
-        )
-        self.conn.commit()
+        with self._lock, self.conn:
+            self.conn.execute(
+                f"""
+                INSERT OR REPLACE INTO {cluster_table}
+                (name, algorithm, n_clusters, centroids, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (name, algorithm, n_clusters, centroids, meta_json),
+            )
 
     def load_cluster_state(
         self, name: str
@@ -967,10 +1073,13 @@ class CatalogManager:
         self._ensure_cluster_table()
         cluster_table = self._cluster_table_name
 
-        row = self.conn.execute(
-            f"SELECT algorithm, n_clusters, centroids, metadata FROM {cluster_table} WHERE name = ?",
-            (name,),
-        ).fetchone()
+        # Serialize on the connection-level lock — sqlite3.Connection is not
+        # safe for concurrent statement execution from multiple threads.
+        with self._lock:
+            row = self.conn.execute(
+                f"SELECT algorithm, n_clusters, centroids, metadata FROM {cluster_table} WHERE name = ?",
+                (name,),
+            ).fetchone()
 
         if not row:
             return None
@@ -984,9 +1093,10 @@ class CatalogManager:
         self._ensure_cluster_table()
         cluster_table = self._cluster_table_name
 
-        rows = self.conn.execute(
-            f"SELECT name, algorithm, n_clusters, created_at, metadata FROM {cluster_table}"
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT name, algorithm, n_clusters, created_at, metadata FROM {cluster_table}"
+            ).fetchall()
 
         result = []
         for name, algorithm, n_clusters, created_at, meta_json in rows:
@@ -1006,8 +1116,8 @@ class CatalogManager:
         self._ensure_cluster_table()
         cluster_table = self._cluster_table_name
 
-        cursor = self.conn.execute(
-            f"DELETE FROM {cluster_table} WHERE name = ?", (name,)
-        )
-        self.conn.commit()
+        with self._lock, self.conn:
+            cursor = self.conn.execute(
+                f"DELETE FROM {cluster_table} WHERE name = ?", (name,)
+            )
         return cursor.rowcount > 0
