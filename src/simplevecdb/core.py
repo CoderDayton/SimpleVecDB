@@ -2039,7 +2039,9 @@ MIGRATION ROLLBACK INSTRUCTIONS:
             collection.save()
 
     def __repr__(self) -> str:
-        return f"VectorDB(path={self.path!r}, collections={self.list_collections()})"
+        # Avoid hitting SQL on every repr() call — debuggers and exception
+        # formatters that auto-stringify objects shouldn't trigger I/O.
+        return f"VectorDB(path={self.path!r})"
 
     def close(self) -> None:
         """Close the database connection and save indexes."""

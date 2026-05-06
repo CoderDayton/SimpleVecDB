@@ -374,13 +374,25 @@ class AsyncVectorCollection:
 
         See VectorCollection.cluster for full documentation.
         """
+        # Runtime-validate algorithm so we can drop the prior ``# type: ignore``
+        # and produce a clear ValueError instead of a confusing internal
+        # failure deep in the sync code.
+        valid_algorithms = ("kmeans", "minibatch_kmeans", "hdbscan")
+        if algorithm not in valid_algorithms:
+            raise ValueError(
+                f"algorithm must be one of {valid_algorithms!r}; got {algorithm!r}"
+            )
+
+        from typing import cast, Literal
+
+        narrowed = cast(Literal["kmeans", "minibatch_kmeans", "hdbscan"], algorithm)
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor,
             lambda: self._collection.cluster(
                 n_clusters,
-                algorithm,  # type: ignore[arg-type]
+                narrowed,
                 filter=filter,
                 sample_size=sample_size,
                 min_cluster_size=min_cluster_size,

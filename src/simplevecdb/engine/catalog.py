@@ -99,6 +99,15 @@ class CatalogManager:
             WHERE parent_id IS NOT NULL
             """
         )
+        # Index on text for find_ids_by_texts / remove_texts which previously
+        # full-scanned. Costs disk proportional to total text size; payback
+        # is large on collections that frequently look up by text content.
+        self.conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{self._table_name}_text
+            ON {self._table_name}(text)
+            """
+        )
         # Migrate existing tables that lack columns
         self._ensure_embedding_column()
         self._ensure_parent_id_column()

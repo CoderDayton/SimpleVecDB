@@ -205,17 +205,18 @@ class TestRepr:
         assert "0" in r  # size is 0
 
     def test_vector_db_repr(self):
+        # __repr__ no longer hits SQL on every call (it used to enumerate
+        # collections), so the result only carries the path. Collection
+        # listing is available via list_collections() when actually needed.
         db = VectorDB(":memory:")
         db.collection("a").add_texts(["x"], embeddings=_rand_embedding())
         r = repr(db)
         assert ":memory:" in r
-        assert "a" in r
 
     def test_vector_db_repr_empty(self):
         db = VectorDB(":memory:")
         r = repr(db)
         assert ":memory:" in r
-        assert "[]" in r
 
     def test_async_collection_repr(self):
         from simplevecdb.async_core import AsyncVectorCollection

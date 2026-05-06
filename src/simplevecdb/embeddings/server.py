@@ -103,15 +103,33 @@ app = FastAPI(
     docs_url="/docs",
 )
 
-# (#4) CORS middleware — configurable via EMBEDDING_SERVER_CORS_ORIGINS env var
-_cors_origins = getattr(config, "EMBEDDING_SERVER_CORS_ORIGINS", ["*"])
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# (#4) CORS middleware — configurable via EMBEDDING_SERVER_CORS_ORIGINS env var.
+# Default is no CORS (no allow_origins, no credentials) so the server is safe
+# to deploy without explicit CORS configuration. Operators that want CORS set
+# EMBEDDING_SERVER_CORS_ORIGINS to an explicit list of allowed origins, which
+# enables credentials. The wildcard ("*") + allow_credentials=True combo is
+# rejected by browsers per the CORS spec and is never produced here.
+_cors_origins = getattr(config, "EMBEDDING_SERVER_CORS_ORIGINS", None)
+if _cors_origins:
+    if "*" in _cors_origins:
+        # Wildcard origin must not pair with credentials. Strip credentials
+        # in that case so the server stays compliant; if you actually need
+        # credentialed CORS, set explicit origins instead.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_cors_origins,
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
 
 @app.get("/health")

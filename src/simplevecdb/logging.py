@@ -181,43 +181,4 @@ def log_operation(
         raise
 
 
-def log_error(
-    operation: str,
-    error: Exception,
-    logger: logging.Logger | None = None,
-    **context: Any,
-) -> None:
-    """
-    Log an error with operation context.
 
-    Convenience function for logging errors with consistent formatting
-    and context capture.
-
-    Args:
-        operation: Name of the operation that failed.
-        error: The exception that was raised.
-        logger: Logger to use. If None, uses the root simplevecdb logger.
-        **context: Additional context to include in the log message.
-
-    Example:
-        >>> try:
-        ...     risky_operation()
-        ... except sqlite3.OperationalError as e:
-        ...     log_error("database_write", e, table="vectors", row_count=100)
-        ...     raise
-    """
-    if logger is None:
-        logger = get_logger()
-
-    logger.error(
-        "%s failed: %s",
-        operation,
-        error,
-        extra={
-            "operation": operation,
-            "error": str(error),
-            "error_type": type(error).__name__,
-            **context,
-        },
-        exc_info=True,
-    )

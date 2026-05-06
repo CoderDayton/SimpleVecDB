@@ -2,11 +2,28 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 import threading
 
 from ..config import config
+
+# HuggingFace repo IDs are of the form "namespace/name" with a constrained
+# character set. Reject anything else before passing to snapshot_download
+# or SentenceTransformer; in particular, this rejects local filesystem paths
+# (absolute or with traversal) so a caller cannot point the loader at
+# arbitrary on-disk directories.
+_REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*/[A-Za-z0-9][A-Za-z0-9_.\-]*$")
+
+
+def _validate_repo_id(repo_id: str) -> None:
+    """Reject repo IDs that don't match the canonical HF format."""
+    if not _REPO_ID_RE.match(repo_id):
+        raise ValueError(
+            f"Invalid model repo_id {repo_id!r}. "
+            "Expected 'namespace/name' with [A-Za-z0-9_.-] characters only."
+        )
 
 _logger = logging.getLogger("simplevecdb.embeddings.models")
 
@@ -52,7 +69,15 @@ def _load_snapshot_download():
 
 
 def load_model(repo_id: str) -> SentenceTransformerType:
-    """Load (and cache on disk) a SentenceTransformer for the given repo id."""
+    """Load (and cache on disk) a SentenceTransformer for the given repo id.
+
+    The repo_id is validated against the canonical HuggingFace format
+    before being passed to ``snapshot_download``/``SentenceTransformer``;
+    this prevents path-traversal style inputs and local filesystem paths.
+    ``trust_remote_code`` is forced off so a malicious model card cannot
+    execute arbitrary code on load.
+    """
+    _validate_repo_id(repo_id)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     snapshot = _load_snapshot_download()
@@ -76,12 +101,14 @@ def load_model(repo_id: str) -> SentenceTransformerType:
             local_files_only=True,
         )
 
-    # Use PyTorch backend by default (most compatible)
-    # ONNX backend has compatibility issues with optimum>=2.0
+    # Use PyTorch backend by default (most compatible). Force
+    # trust_remote_code=False so a model's config.json cannot trigger
+    # execution of arbitrary downloaded Python on load.
     model = st_cls(
         model_path,
         tokenizer_kwargs={"padding": True, "truncation": True, "max_length": 512},
         backend="torch",
+        trust_remote_code=False,
     )
 
     return model

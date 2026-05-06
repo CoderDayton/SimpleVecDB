@@ -92,20 +92,37 @@ def _derive_key(passphrase: str | bytes, salt: bytes) -> bytes:
     )
 
 
-def _normalize_key(key: str | bytes) -> bytes:
+# Cache normalized keys so repeated encrypt/decrypt round-trips don't pay the
+# 480k-iteration PBKDF2 cost more than once per process. Keyed by the
+# (id(key_bytes), salt_id) pair so different keys/salts get distinct entries.
+_NORMALIZE_KEY_CACHE: dict[tuple[bytes, bytes], bytes] = {}
+
+
+def _normalize_key(key: str | bytes, salt: bytes | None = None) -> bytes:
     """
     Normalize encryption key to 32 bytes.
 
-    If key is already 32 bytes, use directly.
-    Otherwise, derive using PBKDF2 with a fixed salt (for SQLCipher compatibility).
+    If key is already 32 bytes, use directly. Otherwise, derive using
+    PBKDF2 with the supplied salt, falling back to the legacy fixed salt
+    when none is provided (preserves backwards compatibility for any
+    encrypted database/index created before per-DB salts were introduced).
     """
     if isinstance(key, bytes) and len(key) == AES_KEY_SIZE:
         return key
 
-    # Use a fixed salt for deterministic key derivation (same input -> same key).
-    # This allows the same passphrase to consistently produce the same key
-    # across SQLCipher and index encryption operations.
-    return _derive_key(key, _NORMALIZE_KEY_SALT)
+    salt_to_use = salt if salt is not None else _NORMALIZE_KEY_SALT
+
+    # Cache key includes both the raw passphrase bytes and the salt so the
+    # same passphrase yields different cache entries for different DBs.
+    key_bytes = key.encode("utf-8") if isinstance(key, str) else bytes(key)
+    cache_key = (key_bytes, salt_to_use)
+    cached = _NORMALIZE_KEY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    derived = _derive_key(key, salt_to_use)
+    _NORMALIZE_KEY_CACHE[cache_key] = derived
+    return derived
 
 
 # ============================================================================

@@ -27,7 +27,6 @@ from simplevecdb.logging import (
     get_logger,
     configure_logging,
     log_operation,
-    log_error,
     LOGGER_NAME,
 )
 
@@ -288,21 +287,6 @@ class TestLogging:
         assert "failing_op started" in output
         assert "failing_op failed" in output
         assert "test error" in output
-
-    def test_log_error(self):
-        """log_error logs exception with context."""
-        stream = StringIO()
-        handler = logging.StreamHandler(stream)
-        configure_logging(level=logging.ERROR, handler=handler)
-
-        try:
-            raise RuntimeError("test exception")
-        except RuntimeError as e:
-            log_error("my_operation", e, table="items")
-
-        output = stream.getvalue()
-        assert "my_operation failed" in output
-        assert "test exception" in output
 
 
 # ============================================================================

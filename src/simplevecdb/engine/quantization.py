@@ -51,8 +51,17 @@ class QuantizationStrategy:
             return np.asarray(vector, dtype=np.float32).tobytes()
 
         elif self.quantization == Quantization.INT8:
-            # Scalar quantization: scale to [-128, 127]
-            scaled = np.clip(np.round(vector * 127), -128, 127).astype(np.int8)
+            # Scalar quantization assumes inputs are in roughly [-1, 1] (e.g.,
+            # L2-normalized embeddings). Out-of-range values silently clip
+            # and lose all magnitude information; reject loudly instead.
+            arr = np.asarray(vector)
+            max_abs = float(np.abs(arr).max()) if arr.size else 0.0
+            if max_abs > 1.0 + 1e-5:
+                raise ValueError(
+                    "INT8 quantization expects vectors in [-1, 1]; "
+                    f"got max(|x|)={max_abs:.4f}. Normalize first."
+                )
+            scaled = np.clip(np.round(arr * 127), -128, 127).astype(np.int8)
             return scaled.tobytes()
 
         elif self.quantization == Quantization.FLOAT16:
