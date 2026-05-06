@@ -59,20 +59,28 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         """
         Add nodes with embeddings.
 
-        Args:
-            nodes: Sequence of LlamaIndex BaseNodes.
-            **kwargs: Unused.
-
-        Returns:
-            List of node IDs.
+        The node_id is persisted into the document's metadata under
+        ``_simplevecdb_node_id`` so it survives process restarts. The
+        in-memory ``_id_map`` is also populated as a fast cache for the
+        current session.
         """
         texts = [node.get_content() for node in nodes]
-        metadatas = [node.metadata for node in nodes]
 
-        # Extract embeddings, ensuring all are valid or set to None
+        # Stamp the node_id into metadata so delete() can recover the mapping
+        # after a restart. Falls back to a stable string of the internal id
+        # only when LlamaIndex did not assign a node_id at all.
+        provisional_node_ids: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        for node in nodes:
+            node_id = node.node_id or ""
+            md = dict(node.metadata or {})
+            if node_id:
+                md["_simplevecdb_node_id"] = node_id
+            provisional_node_ids.append(node_id)
+            metadatas.append(md)
+
         embeddings = None
         if nodes and nodes[0].embedding is not None:
-            # Ensure all embeddings are present (not None)
             emb_list = []
             all_have_embeddings = True
             for node in nodes:
@@ -80,18 +88,14 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
                     all_have_embeddings = False
                     break
                 emb_list.append(node.embedding)
-
             if all_have_embeddings:
                 embeddings = emb_list
 
-        # Add to DB and get internal IDs
         internal_ids = self._collection.add_texts(texts, metadatas, embeddings)
 
-        # Track mapping from internal ID to node ID
-        node_ids = []
-        for i, node in enumerate(nodes):
-            internal_id = internal_ids[i]
-            node_id = node.node_id or str(internal_id)
+        node_ids: list[str] = []
+        for i, internal_id in enumerate(internal_ids):
+            node_id = provisional_node_ids[i] or str(internal_id)
             self._id_map[internal_id] = node_id
             node_ids.append(node_id)
 
@@ -101,20 +105,32 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         """
         Delete by ref_doc_id (node ID).
 
-        Args:
-            ref_doc_id: The node ID to delete.
-            **delete_kwargs: Unused.
+        First consults the in-memory ``_id_map`` for the current session;
+        on a miss (typically after a restart) falls back to a metadata
+        query against ``_simplevecdb_node_id`` so deletion is reliable
+        across process boundaries.
         """
-        # Find internal ID from node ID
-        internal_id = None
+        internal_id: int | None = None
         for int_id, node_id in self._id_map.items():
             if node_id == ref_doc_id:
                 internal_id = int_id
                 break
 
+        if internal_id is None:
+            # Fall back to metadata lookup — mapping was not in this
+            # process's _id_map, so we have to find it on disk.
+            try:
+                docs = self._collection.get_documents(
+                    filter_dict={"_simplevecdb_node_id": ref_doc_id}, limit=1
+                )
+            except Exception:
+                docs = []
+            if docs:
+                internal_id = int(docs[0][0])
+
         if internal_id is not None:
             self._collection.delete_by_ids([internal_id])
-            del self._id_map[internal_id]
+            self._id_map.pop(internal_id, None)
 
     def delete_nodes(
         self,
@@ -158,7 +174,15 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         ids: list[str] = []
 
         for tiny_doc, score in docs_with_scores:
-            node_id = str(hash(tiny_doc.page_content))
+            # Prefer the persisted node_id over an unstable Python hash().
+            # Python's hash() is randomized per process (PYTHONHASHSEED) and
+            # can collide; ``_simplevecdb_node_id`` is stamped into metadata
+            # at insert time, survives restarts, and uniquely identifies the
+            # node.
+            metadata = tiny_doc.metadata or {}
+            node_id = metadata.get("_simplevecdb_node_id") or str(
+                abs(hash(tiny_doc.page_content))
+            )
             node = TextNode(
                 text=tiny_doc.page_content,
                 metadata=tiny_doc.metadata or {},

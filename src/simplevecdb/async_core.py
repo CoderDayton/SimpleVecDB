@@ -32,7 +32,6 @@ from typing import Any
 
 import logging
 
-from . import constants
 from .core import VectorDB, VectorCollection
 from .types import Document, DistanceStrategy, Quantization
 
@@ -581,6 +580,7 @@ class AsyncVectorDB:
         name: str = "default",
         distance_strategy: DistanceStrategy | None = None,
         quantization: Quantization | None = None,
+        store_embeddings: bool = False,
     ) -> AsyncVectorCollection:
         """
         Get or create a named vector collection.
@@ -589,17 +589,22 @@ class AsyncVectorDB:
             name: Collection name (alphanumeric + underscore only).
             distance_strategy: Override database-level distance metric.
             quantization: Override database-level quantization.
+            store_embeddings: If True, store embeddings as BLOBs in SQLite
+                alongside the usearch index. Required for ``rebuild_index()``.
+                Mirrors ``VectorDB.collection``; without this argument async
+                callers had no way to enable embedding storage.
 
         Returns:
             AsyncVectorCollection instance.
         """
-        cache_key = (name, distance_strategy, quantization)
+        cache_key = (name, distance_strategy, quantization, store_embeddings)
         with self._collections_lock:
             if cache_key not in self._collections:
                 sync_collection = self._db.collection(
                     name,
                     distance_strategy=distance_strategy,
                     quantization=quantization,
+                    store_embeddings=store_embeddings,
                 )
                 self._collections[cache_key] = AsyncVectorCollection(
                     sync_collection, self._executor
@@ -616,7 +621,8 @@ class AsyncVectorDB:
         await loop.run_in_executor(
             self._executor, lambda: self._db.delete_collection(name)
         )
-        # Evict from async-level cache too
+        # Evict from async-level cache too — match any tuple whose first
+        # element is this name (the cache key now includes store_embeddings).
         with self._collections_lock:
             keys_to_remove = [k for k in self._collections if k[0] == name]
             for k in keys_to_remove:

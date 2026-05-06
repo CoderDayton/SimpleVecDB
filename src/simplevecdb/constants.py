@@ -100,3 +100,7 @@ EXECUTOR_SHUTDOWN_TIMEOUT = 10.0
 # Safety cap for recursive CTE traversals when no max_depth is specified.
 # Prevents infinite recursion from cycles in parent_id references.
 MAX_HIERARCHY_DEPTH = 100
+
+# Maximum sample size for sklearn.metrics.silhouette_score. The metric is
+# O(n²) in time and memory, so we sample on large datasets.
+SILHOUETTE_MAX_SAMPLE = 10_000

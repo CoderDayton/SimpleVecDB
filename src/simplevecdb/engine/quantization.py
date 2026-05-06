@@ -12,10 +12,13 @@ def normalize_l2(vector: np.ndarray) -> np.ndarray:
         vector: Input vector to normalize
 
     Returns:
-        L2-normalized vector (unit length), or original if zero norm
+        L2-normalized vector (unit length), or original if effectively zero.
     """
-    norm = np.linalg.norm(vector)
-    return vector if norm == 0 else vector / norm
+    norm = float(np.linalg.norm(vector))
+    # An exact ``norm == 0`` check misses subnormal floats (e.g. 1e-40) which
+    # would explode on division. Treat anything below 1e-12 as zero, matching
+    # the guard already used in usearch_index.
+    return vector if norm < 1e-12 else vector / norm
 
 
 class QuantizationStrategy:

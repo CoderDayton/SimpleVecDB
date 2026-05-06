@@ -28,8 +28,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Declared `python-dotenv` dependency** — `simplevecdb.config` already imported and called `load_dotenv` at package import; the missing dependency would `ImportError` on a clean install of the base package without optional extras.
 
-### Fixed (tooling)
+### Fixed (correctness & quality)
 
+- **RRF deduplication keys by document ID, not text** — `hybrid_search` previously deduped by `doc.page_content`, silently merging two distinct documents that happened to share text into one inflated-score result.
+- **NaN/Inf guard at insert** — `add_texts` and `add_texts_streaming` reject non-finite vectors instead of feeding them to HNSW, which would produce undefined neighbours and could corrupt the graph.
+- **`normalize_l2` handles subnormals** — replaced the exact `norm == 0` compare with a `< 1e-12` check (matching the existing usearch_index guard); subnormal floats no longer produce wildly large normalized vectors.
+- **Silhouette score samples on large collections** — `silhouette_score` is O(n²); now caps the evaluation sample at `SILHOUETTE_MAX_SAMPLE = 10_000`. Large collections no longer OOM.
+- **MMR maintains the selected matrix incrementally** — replaced per-iteration `np.stack(selected_embs)` with `np.vstack` of a running matrix. O(k²·d) wasted allocations dropped to O(k·d).
+- **`_parse_bool_env` treats `KEY=` as unset** — empty strings now fall through to the default; previously they were truthy because `"".strip()` is not in the falsey set.
+- **LangChain async methods use `asyncio.to_thread`** — `aadd_texts` / `asimilarity_search` / `amax_marginal_relevance_search` no longer block the event loop.
+- **LlamaIndex `delete()` survives a process restart** — node IDs are persisted into document metadata under `_simplevecdb_node_id`; `delete()` falls back to a metadata query when the in-memory `_id_map` is empty.
+- **LlamaIndex query results carry stable node IDs** — replaced `str(hash(page_content))` (process-randomized, collision-prone) with the persisted `_simplevecdb_node_id`.
+- **`AsyncVectorDB.collection` accepts `store_embeddings`** — async callers can now enable embedding storage (required for `rebuild_index()`); previously they had no way to set it.
+
+### Security
+
+- **API key comparison uses `hmac.compare_digest`** — the prior `token not in allowed_keys` short-circuit leaked key prefixes via response time.
+- **SQLCipher PRAGMA key always uses the `x'hex'` form** — every key path now goes through `_normalize_key` first, eliminating string interpolation of user-supplied passphrase characters into a quoted PRAGMA argument.
+- **`is_database_encrypted` rejects zero-byte files** — previously a missing/empty DB looked like an unencrypted DB because `sqlite3.connect` would create a fresh one.
+
+### Changed (tooling)
+
+- **Ruff and mypy targets aligned with `requires-python>=3.10`** — both were `py312`, hiding 3.10/3.11 incompatibilities. Cleaned three resulting `F401` unused-import warnings (`signal` in models.py, `_batched` and `constants` re-imports).
 - **Pre-commit version-sync hook** — `__init__.py` derives `__version__` dynamically via `importlib.metadata`, so `check_version_sync.py` was failing on every commit looking for a literal `__version__ = "x.y.z"` line that does not exist. The hook now validates only `pyproject.toml`'s version field. `bump_version.py` similarly stops trying to rewrite `__init__.py` and uses an anchored regex to update only the canonical version field.
 
 ## [2.5.0] - 2026-04-07

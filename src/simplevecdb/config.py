@@ -36,8 +36,13 @@ def _parse_api_keys(raw: str | None) -> set[str]:
 
 
 def _parse_bool_env(raw: str | None, default: bool) -> bool:
-    """Handle common truthy/falsey env strings with a fallback default."""
-    if raw is None:
+    """Handle common truthy/falsey env strings with a fallback default.
+
+    Treat ``None`` and empty strings as "unset" (use the default). Without
+    this, ``KEY=`` in a .env file produced ``True`` because ``"".strip()``
+    is not in the falsey set — the opposite of what operators expect.
+    """
+    if raw is None or not raw.strip():
         return default
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 

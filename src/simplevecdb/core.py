@@ -31,7 +31,7 @@ from .types import (
     ClusterResult,
     ClusterTagCallback,
 )
-from .utils import _import_optional, _batched
+from .utils import _import_optional
 from .engine.quantization import QuantizationStrategy
 from .engine.search import SearchEngine
 from .engine.catalog import CatalogManager
@@ -426,6 +426,14 @@ class VectorCollection:
             # Prepare vectors (asarray avoids copy if already ndarray)
             emb_np = np.asarray(batch_embeds, dtype=np.float32)
 
+            # Reject NaN/Inf early. HNSW graph construction with non-finite
+            # vectors silently produces undefined neighbours and can corrupt
+            # the graph; better to fail the add than to poison the index.
+            if not np.all(np.isfinite(emb_np)):
+                raise ValueError(
+                    "Input vectors contain NaN or Inf; refusing to add to index"
+                )
+
             # Add to usearch index
             self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
 
@@ -588,6 +596,10 @@ class VectorCollection:
         # Add to catalog and index
         doc_ids = self._catalog.add_documents(texts, metas, None, embeddings=embeds)
         emb_np = np.asarray(embeds, dtype=np.float32)
+        if not np.all(np.isfinite(emb_np)):
+            raise ValueError(
+                "Input vectors contain NaN or Inf; refusing to add to index"
+            )
         self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
 
         return doc_ids

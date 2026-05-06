@@ -303,37 +303,52 @@ class SearchEngine:
         dense_k = vector_k or max(k, 10)
         sparse_k = keyword_k or max(k, 10)
 
-        # Vector search
+        # Vector search — recover document IDs so RRF dedupes by ID, not by
+        # page_content. Two distinct documents with identical text would
+        # otherwise be silently merged into a single result with inflated
+        # score, dropping one of them.
         vector_input = query_vector if query_vector is not None else query
-        vector_results = self.similarity_search(vector_input, dense_k, filter)
+        vector_query_vec = self._resolve_query_vector(vector_input)
+        vector_keys, vector_dists = self._index.search(vector_query_vec, dense_k)
+        vector_keys_list = [int(k_) for k_ in vector_keys.tolist()]
 
-        # Keyword search
-        keyword_results = self.keyword_search(query, sparse_k, filter)
+        # Keyword search candidates already carry IDs.
+        keyword_candidates = self._catalog.keyword_search(
+            query, sparse_k, filter, self._catalog.build_filter_clause
+        )
 
-        # Reciprocal Rank Fusion
-        rrf_scores: dict[str, float] = {}  # Use text as key for deduplication
-        doc_lookup: dict[str, Document] = {}
+        all_ids = list({*vector_keys_list, *(cid for cid, _ in keyword_candidates)})
+        docs_map = self._catalog.get_documents_by_ids(all_ids) if all_ids else {}
 
-        for rank, (doc, _) in enumerate(vector_results):
-            key = doc.page_content
+        rrf_scores: dict[int, float] = {}
+        doc_lookup: dict[int, Document] = {}
+
+        # Vector ranks
+        rank = 0
+        for key in vector_keys_list:
+            if key not in docs_map:
+                continue
+            text, metadata = docs_map[key]
+            if filter and not self._matches_filter(metadata, filter):
+                continue
             rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
-            doc_lookup[key] = doc
+            doc_lookup[key] = Document(page_content=text, metadata=metadata)
+            rank += 1
 
-        for rank, (doc, _) in enumerate(keyword_results):
-            key = doc.page_content
-            rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
-            doc_lookup[key] = doc
+        # Keyword ranks (BM25 candidates respect the filter via build_filter_clause)
+        for kw_rank, (cid, _) in enumerate(keyword_candidates):
+            if cid not in docs_map:
+                continue
+            text, metadata = docs_map[cid]
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (rrf_k + kw_rank + 1)
+            if cid not in doc_lookup:
+                doc_lookup[cid] = Document(page_content=text, metadata=metadata)
 
-        # Sort by RRF score
-        sorted_keys = sorted(
+        sorted_ids = sorted(
             rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True
         )
 
-        results: list[tuple[Document, float]] = []
-        for key in sorted_keys[:k]:
-            results.append((doc_lookup[key], rrf_scores[key]))
-
-        return results
+        return [(doc_lookup[cid], rrf_scores[cid]) for cid in sorted_ids[:k]]
 
     def max_marginal_relevance_search(
         self,
@@ -416,9 +431,11 @@ class SearchEngine:
         if len(candidates) <= k:
             return [doc for _, doc, _, _ in candidates]
 
-        # MMR selection with vectorized pairwise similarity
+        # MMR selection with vectorized pairwise similarity. Maintain
+        # ``sel_matrix`` incrementally so we don't ``np.stack`` the growing
+        # list of selected embeddings on every outer iteration (previously
+        # O(k²·d) wasted allocations).
         selected: list[Document] = []
-        selected_embs: list[np.ndarray] = []
         lambda_comp = 1.0 - lambda_mult
         unselected = list(range(len(candidates)))
 
@@ -426,15 +443,13 @@ class SearchEngine:
         first_idx = unselected.pop(0)
         _, doc, _, emb = candidates[first_idx]
         selected.append(doc)
-        if emb is not None:
-            selected_embs.append(emb)
+        sel_matrix: np.ndarray | None = (
+            emb[np.newaxis, :].copy() if emb is not None else None
+        )
 
         while len(selected) < k and unselected:
             best_score = -float("inf")
             best_pos = 0
-
-            # Stack selected embeddings for vectorized dot product
-            sel_matrix = np.stack(selected_embs) if selected_embs else None
 
             for pos, idx in enumerate(unselected):
                 _, _, dist, emb = candidates[idx]
@@ -446,23 +461,23 @@ class SearchEngine:
                 # Redundancy: max similarity to any already-selected doc
                 redundancy = 0.0
                 if emb is not None and sel_matrix is not None:
-                    # Vectorized: single matrix-vector multiply replaces inner loop
                     sims = sel_matrix @ emb
                     redundancy = float(sims.max())
 
-                # MMR: balance relevance vs diversity
                 mmr_score = lambda_mult * relevance - lambda_comp * redundancy
                 if mmr_score > best_score:
                     best_score = mmr_score
                     best_pos = pos
 
-            # Pop by position (O(1) vs O(n) list.remove)
             best_idx = unselected.pop(best_pos)
 
             _, doc, _, emb = candidates[best_idx]
             selected.append(doc)
             if emb is not None:
-                selected_embs.append(emb)
+                if sel_matrix is None:
+                    sel_matrix = emb[np.newaxis, :].copy()
+                else:
+                    sel_matrix = np.vstack([sel_matrix, emb[np.newaxis, :]])
 
         return selected
 

@@ -155,19 +155,16 @@ def create_encrypted_connection(
             timeout=timeout,
         )
 
-        # Set the encryption key using PRAGMA
-        # SQLCipher accepts both raw keys (x'hex') and passphrases
-        if isinstance(key, bytes) and len(key) == AES_KEY_SIZE:
-            # Use raw key format
-            hex_key = key.hex()
-            conn.execute(f"PRAGMA key = \"x'{hex_key}'\"")
-        else:
-            # Use passphrase (SQLCipher will derive key internally)
-            if isinstance(key, bytes):
-                key = key.decode("utf-8")
-            # Escape single quotes in passphrase
-            escaped_key = key.replace("'", "''")
-            conn.execute(f"PRAGMA key = '{escaped_key}'")
+        # Set the encryption key using PRAGMA. PRAGMA arguments cannot be
+        # parameterized via ``?`` placeholders, so we must interpolate. To
+        # avoid ever interpolating user-supplied passphrase characters into a
+        # quoted SQL string (where escape rules are subtle and SQLCipher
+        # parsing has surprising edge cases), normalize *every* key path to
+        # 32 bytes via ``_normalize_key`` and feed it as ``x'hex'`` raw-key
+        # form. The hex output is restricted to ``[0-9a-f]`` so no quoting
+        # or escaping is needed.
+        normalized_key = _normalize_key(key)
+        conn.execute(f"PRAGMA key = \"x'{normalized_key.hex()}'\"")
 
         # Verify encryption is working by querying cipher_version
         try:
@@ -203,6 +200,14 @@ def create_encrypted_connection(
         raise EncryptionError(f"Failed to create encrypted connection: {e}") from e
 
 
+def _is_zero_byte(path: Path) -> bool:
+    """Treat a missing or empty file as 'definitely not encrypted'."""
+    try:
+        return path.stat().st_size == 0
+    except OSError:
+        return True
+
+
 def is_database_encrypted(path: str | Path) -> bool:
     """
     Check if a database file is encrypted.
@@ -218,6 +223,12 @@ def is_database_encrypted(path: str | Path) -> bool:
     """
     path = Path(path)
     if not path.exists():
+        return False
+    # A zero-byte file would cause sqlite3 to create a fresh DB and return
+    # False, masking a missing/corrupt database as unencrypted. Treat empty
+    # files as not encrypted but also not a real DB; callers that need to
+    # distinguish should check existence and size themselves.
+    if _is_zero_byte(path):
         return False
 
     try:

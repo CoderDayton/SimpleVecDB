@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from .. import constants
 from ..utils import _import_optional
 
 if TYPE_CHECKING:
@@ -182,7 +183,17 @@ class ClusterEngine:
         if n_valid < 2 or n_unique < 2 or n_unique >= n_valid:
             return None
 
-        return float(sklearn_metrics.silhouette_score(valid_vectors, valid_labels))
+        # silhouette_score is O(n²) in time and memory because it computes a
+        # full pairwise distance matrix. On collections >100k it OOMs. Cap
+        # the sample for evaluation; sklearn does its own random sampling
+        # internally when ``sample_size`` is set.
+        kwargs: dict[str, Any] = {}
+        if n_valid > constants.SILHOUETTE_MAX_SAMPLE:
+            kwargs["sample_size"] = constants.SILHOUETTE_MAX_SAMPLE
+            kwargs["random_state"] = 0
+        return float(
+            sklearn_metrics.silhouette_score(valid_vectors, valid_labels, **kwargs)
+        )
 
     def generate_keywords(
         self,
