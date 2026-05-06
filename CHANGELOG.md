@@ -5,106 +5,313 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.2.0] - 2026-01-17
+## [2.6.0] - 2026-05-06
 
-### Added
+### Review pass 3 — final correctness/security pass before tag
 
-- **Vector Clustering & Auto-Tagging** - Discover natural groupings in embeddings
-  - `VectorCollection.cluster()` - Cluster documents by semantic similarity
-    - **K-means**: Classic centroid-based clustering for balanced clusters
-    - **MiniBatch K-means**: Scalable variant for large datasets (default)
-    - **HDBSCAN**: Density-based clustering that auto-discovers cluster count
-  - `VectorCollection.auto_tag()` - Generate descriptive tags for clusters
-    - TF-IDF method (default): Extract keywords with highest TF-IDF scores
-    - Frequency method: Extract most common words per cluster
-    - Custom callback: Implement custom tagging logic (e.g., LLM-based)
-  - `VectorCollection.assign_cluster_metadata()` - Persist cluster IDs to document metadata
-  - `VectorCollection.get_cluster_members()` - Retrieve all documents in a cluster
+#### Critical fixes
 
-- **Cluster Quality Metrics** - Evaluate clustering results
-  - `ClusterResult.inertia` - Sum of squared distances to centroids (K-means only, lower is better)
-  - `ClusterResult.silhouette_score` - Cluster separation metric (-1 to 1, higher is better)
-  - `ClusterResult.metrics()` - Get all metrics as dictionary
+- **`UsearchIndex.save` lost-update race** — the `_dirty = False` clear was outside the `file_lock` window, so a concurrent `add()` between `os.replace()` and the dirty-flag clear could be silently overwritten. Moved inside `file_lock`.
+- **`UsearchIndex.save` data fsync on `O_RDONLY` fd** — `fsync(2)` on a read-only file descriptor has implementation-defined behavior on Linux (some kernels return `EBADF`, swallowed by the warning branch). Switched to `O_RDWR` so the data fsync is guaranteed.
+- **`_rebuild_index_locked` bare `conn.execute`** — replaced the bare `self.conn.execute("SELECT id FROM ...")` with the new `CatalogManager.list_all_ids()`, which routes the read through `self._lock` instead of relying on RLock re-entrancy from a single caller.
+- **PBKDF2 iteration bump** — raised from 480 000 → 600 000 to match the OWASP 2024 minimum for PBKDF2-HMAC-SHA256.
+- **AES-GCM AAD now binds the v1 header** — `encrypt_file` / `decrypt_file` pass the magic+version bytes as `associated_data`, so any tampering with the header (including downgrade attempts) fails authentication instead of silently succeeding.
+- **Bounded normalize-key cache** — `_NORMALIZE_KEY_CACHE` is now an LRU capped at 64 entries, serialized by a `threading.Lock`. Long-running multi-tenant processes no longer leak derived key material indefinitely.
+- **LlamaIndex `delete()` no longer swallows `sqlite3.DatabaseError`** — narrowed the exception in the metadata-fallback path to `(TypeError, NotImplementedError)`. A locked DB, closed connection, or schema mismatch now propagates to the caller instead of becoming a silent no-op.
+- **Hybrid-search RRF rank symmetry** — vector candidates now use the original HNSW position as their RRF rank (via `enumerate(vector_keys_list)`), matching how keyword candidates use raw BM25 position. Previously, a metadata filter that rejected vector candidates inflated surviving vector scores relative to keyword scores, corrupting result ordering.
+- **`add_documents` FTS sentinel guard** — added a defense-in-depth check that raises `RuntimeError` if any `-1` sentinel rowid remains in `real_ids` before the FTS upsert. Prevents a hypothetical retry-loop interaction from corrupting the FTS index with rowid `-1`.
 
-- **Cluster Persistence** - Save and reuse cluster configurations
-  - `VectorCollection.save_cluster()` - Save cluster centroids and metadata to database
-  - `VectorCollection.load_cluster()` - Load saved cluster configuration
-  - `VectorCollection.list_clusters()` - List all saved cluster configurations
-  - `VectorCollection.delete_cluster()` - Delete a saved cluster configuration
-  - `VectorCollection.assign_to_cluster()` - Assign new documents to saved clusters without re-clustering
+#### Important fixes
 
-- **Async Clustering Support** - Full async/await parity for all clustering operations
-  - `AsyncVectorCollection.cluster()`, `auto_tag()`, `assign_cluster_metadata()`, `get_cluster_members()`
-  - `AsyncVectorCollection.save_cluster()`, `load_cluster()`, `list_clusters()`, `delete_cluster()`, `assign_to_cluster()`
+- **`delete_collection` TOCTOU** — moved the `list_collections()` existence check inside the `with self._lock:` block so two concurrent `delete_collection(name)` calls cannot both pass the check; the second now sees a clean `KeyError` instead of a SQLite error.
+- **Salt sidecar `O_EXCL` guard** — `_resolve_salt(create_if_missing=True)` now creates the sidecar with `O_CREAT | O_EXCL`. If two processes race, the loser reads the winner's salt; if a sidecar already exists out-of-band, it is preserved instead of being clobbered (which would have rendered an existing DB unreadable).
+- **`encrypt_index_file` v0→v1 sidecar migration** — re-encrypting a legacy v0 blob (no sidecar) now creates a fresh sidecar, completing the migration path to per-DB salts. Previously, `is_first_encryption` was keyed on `.enc` presence rather than `.salt` presence.
+- **LlamaIndex legacy-collection warning** — `SimpleVecDBLlamaStore.__init__` now emits a one-shot `DeprecationWarning` when it detects rows lacking `_simplevecdb_node_id`, telling the operator to call `migrate_node_id_metadata()` and noting the inherent limitation that pre-2.6 rows can only be stamped with `str(doc_id)` (the original LlamaIndex node ids were never persisted).
+- **INT8 quantization range break softened** — instead of raising `ValueError` on `max(|x|) > 1.0 + 1e-5`, the strategy now emits a one-shot `DeprecationWarning` and clips. Restores backwards compatibility for callers that relied on the prior silent-clip behavior.
+- **`scripts/check_version_sync.py` now validates `CHANGELOG.md`** — the hook fails if the latest CHANGELOG entry header does not match `pyproject.toml`'s version, preventing a release from shipping with a stale changelog.
 
-- **New Dependencies** - Now included in standard installation
-  - `scikit-learn>=1.3.0` - K-means, MiniBatch K-means, silhouette score
-  - `hdbscan>=0.8.33` - Density-based clustering
-  - `sqlcipher3-binary>=0.5.0` - Encryption support (previously optional)
-  - `cryptography>=41.0` - Encryption utilities (previously optional)
+#### Test coverage added (review pass 3 gaps)
 
-- **Documentation**
-  - New comprehensive clustering guide: `docs/guides/clustering.md`
-    - Algorithm comparison and selection guide
-    - Quality metrics interpretation
-    - Cluster persistence workflows
-    - Use cases: product categorization, topic discovery, customer segmentation, duplicate detection
-    - Best practices and troubleshooting
-  - New types reference: `docs/api/types.md`
-    - Complete `ClusterResult` API documentation
-    - `Document`, `DistanceStrategy`, `Quantization`, `ClusterAlgorithm` reference
-  - Updated README.md and docs/index.md with clustering sections
-  - Enhanced `docs/api/core.md` with clustering examples
+- `tests/unit/test_v26_review_pass_3.py` — covers parent-directory fsync on save, `.tmp` cleanup on save failure, `db._lock is catalog._lock` shared-RLock identity, adversarial inputs to `_validate_table_name`, hybrid-search RRF rank symmetry under filter, and same-text-different-id deduplication.
+- `tests/unit/test_v26_encryption_review_pass_3.py` — covers nonce uniqueness across saves, wrong-key decrypt does not create the output file, AAD-bound header tampering fails authentication, salt sidecar O_EXCL preservation, and v0→v1 migration round-trip.
+- `tests/unit/integrations/test_llamaindex_review_pass_3.py` — covers the `add → query` round-trip preserving the original LlamaIndex node id, end-to-end migration-then-delete on v2.5-shaped data, the legacy-collection `DeprecationWarning` at `__init__` time, and that `sqlite3.DatabaseError` from the metadata-fallback path now propagates instead of being swallowed.
+
+### Fixed (concurrency & durability)
+
+- **Atomic `UsearchIndex.save`** — now writes to a sibling `.tmp`, fsyncs, then `os.replace()`s onto the live path and fsyncs the parent directory. A crash mid-save can no longer corrupt the only copy of the index. Also moved the `_dirty` short-circuit inside `_write_lock` so a concurrent `add` cannot have its dirty flag silently cleared.
+- **Atomic `rebuild_index`** — builds the new index at a sibling `.rebuild` path and atomically swaps it onto the live path; the old index remains the canonical copy until the swap succeeds.
+- **Atomic encrypted save** — `encrypt_file` / `decrypt_file` now write to a sibling `.tmp`, fsync, set mode `0o600`, then `os.replace()`. `encrypt_index_file` only unlinks the plaintext after the encrypted output is durably on disk. A torn write can no longer leave the index unrecoverable.
+- **`VectorDB`-level `RLock`** — a single re-entrant lock now serializes the `_collections` cache (no more check-then-insert TOCTOU on `collection()`) and is shared with every `CatalogManager` so all `with self.conn:` blocks across collections cannot interleave on the shared `sqlite3.Connection`. Reads remain lock-free at the SQLite level via WAL.
+- **`AsyncVectorDB.close` drains** — switched from `executor.shutdown(wait=False)` to `wait=True` so in-flight pool tasks finish their cursors before the SQLite connection is closed. Pending (not-yet-started) work is still cancelled.
+- **`set_parent` cycle check is transactional** — descendant lookup and parent UPDATE now run inside the same `with self._lock, self.conn:` block, closing a TOCTOU window where a concurrent edge could form a cycle.
+- **Cluster persistence** — `_ensure_cluster_table`, `save_cluster_state`, `delete_cluster_state` now use `with self._lock, self.conn:` instead of bare `conn.commit()`; an exception during the execute is properly rolled back.
+- **`add_documents` ID recovery is correct under upsert** — replaced the `last_insert_rowid()` arithmetic (which silently returned wrong IDs for batches mixing explicit and `None` IDs because UPSERTs do not advance the auto-increment counter) with a single `INSERT … RETURNING id` for the auto-ID rows. Explicit-ID rows still take the upsert path.
+- **`delete_collection` closes cached indexes first** — any `VectorCollection` instances cached for the deleted name have their `UsearchIndex` closed before the file is unlinked, so a stale mmap view cannot race the unlink.
 
 ### Changed
 
-- **pyproject.toml**: Updated `scikit-learn` minimum version from `1.0` to `1.3.0` for improved clustering stability
+- **`upsert_fts_rows` / `delete_fts_rows` are now `_upsert_fts_rows` / `_delete_fts_rows`** (private). The FTS shadow table must be updated inside the same transaction as the main table or it can desync on crash; the rename signals the contract.
+- **`get_legacy_vectors`, `drop_legacy_vec_table`** now validate the supplied table name via `_validate_table_name` before interpolating into SQL.
 
-### Testing
+### Added
 
-- Added 26 clustering tests in `tests/unit/test_clustering.py`:
-  - 16 core clustering tests (algorithms, auto-tagging, metadata persistence, edge cases)
-  - 4 cluster metrics tests (inertia, silhouette, metrics method)
-  - 6 cluster persistence tests (save/load/list/delete/assign)
-- Added 3 async clustering tests in `tests/unit/test_async.py`
-- Total test count: 305 (up from 292)
+- **Declared `python-dotenv` dependency** — `simplevecdb.config` already imported and called `load_dotenv` at package import; the missing dependency would `ImportError` on a clean install of the base package without optional extras.
 
-### Installation
+### Fixed (correctness & quality)
 
-Clustering and encryption are now included by default:
+- **RRF deduplication keys by document ID, not text** — `hybrid_search` previously deduped by `doc.page_content`, silently merging two distinct documents that happened to share text into one inflated-score result.
+- **NaN/Inf guard at insert** — `add_texts` and `add_texts_streaming` reject non-finite vectors instead of feeding them to HNSW, which would produce undefined neighbours and could corrupt the graph.
+- **`normalize_l2` handles subnormals** — replaced the exact `norm == 0` compare with a `< 1e-12` check (matching the existing usearch_index guard); subnormal floats no longer produce wildly large normalized vectors.
+- **Silhouette score samples on large collections** — `silhouette_score` is O(n²); now caps the evaluation sample at `SILHOUETTE_MAX_SAMPLE = 10_000`. Large collections no longer OOM.
+- **MMR maintains the selected matrix incrementally** — replaced per-iteration `np.stack(selected_embs)` with `np.vstack` of a running matrix. O(k²·d) wasted allocations dropped to O(k·d).
+- **`_parse_bool_env` treats `KEY=` as unset** — empty strings now fall through to the default; previously they were truthy because `"".strip()` is not in the falsey set.
+- **LangChain async methods use `asyncio.to_thread`** — `aadd_texts` / `asimilarity_search` / `amax_marginal_relevance_search` no longer block the event loop.
+- **LlamaIndex `delete()` survives a process restart** — node IDs are persisted into document metadata under `_simplevecdb_node_id`; `delete()` falls back to a metadata query when the in-memory `_id_map` is empty.
+- **LlamaIndex query results carry stable node IDs** — replaced `str(hash(page_content))` (process-randomized, collision-prone) with the persisted `_simplevecdb_node_id`.
+- **`AsyncVectorDB.collection` accepts `store_embeddings`** — async callers can now enable embedding storage (required for `rebuild_index()`); previously they had no way to set it.
 
-```bash
-pip install simplevecdb
-```
+### Security
 
-No extra installation steps required!
+- **API key comparison uses `hmac.compare_digest`** — the prior `token not in allowed_keys` short-circuit leaked key prefixes via response time.
+- **SQLCipher PRAGMA key always uses the `x'hex'` form** — every key path now goes through `_normalize_key` first, eliminating string interpolation of user-supplied passphrase characters into a quoted PRAGMA argument.
+- **`is_database_encrypted` rejects zero-byte files** — previously a missing/empty DB looked like an unencrypted DB because `sqlite3.connect` would create a fresh one.
 
-### Example
+### Changed (tooling)
 
-```python
-from simplevecdb import VectorDB
+- **Ruff and mypy targets aligned with `requires-python>=3.10`** — both were `py312`, hiding 3.10/3.11 incompatibilities. Cleaned three resulting `F401` unused-import warnings (`signal` in models.py, `_batched` and `constants` re-imports).
+- **Pre-commit version-sync hook** — `__init__.py` derives `__version__` dynamically via `importlib.metadata`, so `check_version_sync.py` was failing on every commit looking for a literal `__version__ = "x.y.z"` line that does not exist. The hook now validates only `pyproject.toml`'s version field. `bump_version.py` similarly stops trying to rewrite `__init__.py` and uses an anchored regex to update only the canonical version field.
 
-db = VectorDB("products.db")
-collection = db.collection("items")
+### Security (2.6.0 final)
 
-# Cluster documents
-result = collection.cluster(n_clusters=5, algorithm="minibatch_kmeans")
+- **Per-DB random PBKDF2 salt** — encrypted databases and index files now generate a random 16-byte salt at creation time, written to a `<resource>.salt` sidecar with mode `0o600`. The previous fixed `b"simplevecdb-sqlcipher-key"` salt let an attacker precompute one rainbow table that broke every simplevecdb installation with the same passphrase. Pre-2.6.0 encrypted resources keep working unchanged: when no sidecar exists, the loader falls back to the legacy fixed salt automatically.
+- **HuggingFace `repo_id` allowlist + `trust_remote_code=False`** — the embeddings server validates model names against a strict regex (`namespace/name` with `[A-Za-z0-9_.-]` only) before passing them to `snapshot_download` / `SentenceTransformer`, blocking path traversal and local-filesystem inputs. `SentenceTransformer` is constructed with `trust_remote_code=False` so a malicious model card cannot trigger arbitrary downloaded Python on load.
+- **CORS is opt-in** — the server no longer adds CORS middleware unless `EMBEDDING_SERVER_CORS_ORIGINS` is set. When the operator does set wildcard origins (`["*"]`), `allow_credentials` is forced off so the spec-violating wildcard-with-credentials combo can't be produced.
 
-# Generate tags and persist
-tags = collection.auto_tag(result, method="tfidf", n_keywords=3)
-collection.assign_cluster_metadata(result, tags)
+### Migration helpers
 
-# Save for fast assignment of new documents
-collection.save_cluster("categories", result, metadata={"tags": tags})
+- **`SimpleVecDBLlamaStore.migrate_node_id_metadata()`** — backfills `_simplevecdb_node_id` for documents inserted before 2.6.0. Pre-2.6.0 versions did not persist the LlamaIndex node_id into metadata, so `delete()` could not find the right row after a process restart. Idempotent — already-stamped rows are skipped.
 
-# Later: assign new documents without re-clustering
-new_ids = collection.add_texts(new_texts, embeddings=new_embeddings)
-collection.assign_to_cluster("categories", new_ids)
+### Added (hygiene & polish)
 
-# Evaluate quality
-print(f"Silhouette Score: {result.silhouette_score:.2f}")  # 0.62
-print(f"Inertia: {result.inertia:.2f}")  # 1523.45
-```
+- **`ClusterResult` and `ClusterTagCallback` exported from `simplevecdb`** — they were return/argument types of public methods but had no public import path; users had to reach into `simplevecdb.types`.
+- **`NullHandler` attached to the package's root logger** at import time, per the Python logging HOWTO. Idempotent — duplicate calls do not stack handlers.
+- **`SimpleVecDBLlamaStore.delete_nodes` raises `NotImplementedError`** when called with `filters`, instead of silently dropping the filter portion and pretending the deletion succeeded.
+- **Recursive CTE depth bound as a parameter** in `get_descendants` / `get_ancestors`. The previous f-string interpolation was safe due to `int()` coercion but is now one less line away from injection on a future refactor.
+- **`Config.from_env()` documented** as returning the import-time-frozen instance; setting env vars after import does not refresh.
+- **`ModelRegistry(allow_unlisted=...)` defaults to `False`** to match the secure-by-default config setting; programmatic instantiations no longer get an open registry by accident.
+- **`/v1/usage` returns aggregated totals when auth is disabled** instead of leaking the per-IP buckets to anyone who hits the endpoint.
+- **Server validates `EMBEDDING_SERVER_MAX_REQUEST_ITEMS <= _MAX_ENCODE_BATCH` at startup** so an out-of-range env var fails fast at boot rather than per request.
+- **`pyproject.toml` gains `[project.urls]`, `classifiers`, and `keywords`** for a useful PyPI listing.
+- **`.bandit` documents the B104 skip** and warns that any future `0.0.0.0` binding requires removing the skip.
+- **Encrypted file format now carries a 3-byte header** (`'SV' + version`) so future format changes are detectable. `decrypt_file` accepts both the new v1 format and the v0 (pre-2.6.0) format, so existing encrypted indexes still load without re-encryption.
+
+### Fixed (review pass 2)
+
+- **NaN/Inf rejection no longer leaves orphan catalog rows** — `add_texts` and `_process_streaming_batch` now validate vectors *before* the SQLite insert. Previously the catalog row committed first and a non-finite vector then raised, leaving rows visible via `get_documents_by_ids` but unreachable through similarity search.
+- **`VectorCollection.__repr__` no longer issues SQL** — the previous `count()` call would raise `ProgrammingError` after `close()`, breaking debuggers and exception formatters that auto-stringify objects. The 2.6.0 fix only covered `VectorDB.__repr__`.
+- **`EMBEDDING_SERVER_MAX_REQUEST_ITEMS` validation runs at module import** — the guard was previously inside `run_server()` and was bypassed under any non-CLI ASGI deployment (gunicorn, programmatic uvicorn).
+- **LlamaIndex empty-`node_id` path is atomic** — `SimpleVecDBLlamaStore.add` now generates a UUID for nodes that arrive without a `node_id` and stamps it into metadata *before* the row insert, so the metadata commit is in the same SQLite transaction as the catalog row. Previously a separate `UPDATE` followed `add_texts`; a crash in the gap left rows un-stampable and cross-restart `delete()` silently no-op'd.
+- **Catalog read paths serialize on `self._lock`** — `get_documents_by_ids`, `get_embeddings_by_ids`, `get_documents_and_embeddings_by_ids`, `find_ids_by_texts`, `find_ids_by_filter`, `keyword_search`, `count`, `get_all_docs_with_text`, `check_legacy_sqlite_vec`, `get_legacy_vectors`, `get_children`, `get_parent`, `get_descendants`, `get_ancestors`, `load_cluster_state`, `list_cluster_states`, and `VectorDB.list_collections` now acquire the connection-level lock around `conn.execute`. `sqlite3.Connection` is not safe for concurrent statement execution from multiple threads even under WAL.
+- **`rebuild_index` is fully serialized** — the entire fetch + build + swap now runs inside `with self._lock:` so concurrent `add` / `delete` cannot mutate the catalog mid-rebuild and produce a stale snapshot.
+- **`_ensure_cluster_table` double-checked under lock** — the `_cluster_table_ready` flag is now re-checked inside the lock and set inside the `with` block. Concurrent first-callers no longer both run the DDL.
+- **`utils.file_lock` opens via `os.open(O_CREAT | O_RDWR, 0o600)`** — no truncation of stale lock files from a crashed prior run, restricted permissions on the lock sentinel.
+
+## [2.5.0] - 2026-04-07
+
+### Added
+
+- **`delete_collection(name)`** — drop a collection's SQLite tables, FTS index, and usearch file in one call. Available on both `VectorDB` and `AsyncVectorDB`.
+- **`store_embeddings` parameter** on `collection()` — opt into storing embedding BLOBs in SQLite (default `False`). Saves ~2x storage; MMR transparently fetches vectors from the usearch index when BLOBs are absent.
+- **`async_retry_on_lock` decorator** — async variant of `retry_on_lock` using `asyncio.sleep` instead of `time.sleep`, avoiding executor thread blocking.
+- **`file_lock` context manager** — advisory cross-process file locking (`fcntl`/`msvcrt`) for usearch index files. Prevents corruption from concurrent processes.
+- **`__repr__`** on `VectorDB`, `VectorCollection`, `AsyncVectorDB`, `AsyncVectorCollection` for debuggable string representations.
+- **FLOAT16 quantization** fully implemented in `serialize()`/`deserialize()` — was previously defined in the enum but raised `ValueError` at runtime.
+- **Pagination** on `get_documents(limit=, offset=)` and catalog methods (`find_ids_by_filter`, `find_ids_by_texts`) — previously returned unbounded result sets.
+- **Embeddings server enhancements:**
+  - Graceful shutdown with SIGTERM/SIGINT draining (10s timeout)
+  - CORS middleware with configurable origins for browser-based clients
+  - Model warm-up on startup (skip with `--no-warmup`)
+  - Input validation: rejects empty strings (422) and texts exceeding 100k chars (413)
+  - Proper `argparse` CLI with `--host`, `--port`, `--no-warmup`, `--help`
+  - Startup banner logging config summary (host, port, model, auth, rate limits)
+  - Nested token array normalization (`list[list[int]]` input format)
+  - Async executor offload for `embed_texts` (non-blocking event loop)
+  - OpenAPI version synced from package metadata
+  - Module `__init__.py` exports (`embed_texts`, `get_embedder`, `load_model`, `app`, `run_server`)
+
+### Fixed
+
+- **`delete_by_ids` ordering** — SQLite deletion now happens first (transactional, can rollback), then usearch. Previously usearch removed first, leaving orphaned catalog entries on SQLite failure.
+- **`_matches_filter` string semantics** — now uses exact equality, consistent with SQL `build_filter_clause`. Was using substring match (`value in str(meta_value)`).
+- **`list_collections`** — scans `sqlite_master` for persisted collection tables instead of returning only session-cached names. Works across reopened databases.
+- **WAL mode for encrypted databases** — `PRAGMA journal_mode=WAL` and `PRAGMA synchronous=NORMAL` now set for SQLCipher connections (was only set for unencrypted).
+- **`collection()` cache key** — includes `distance_strategy` and `quantization` in cache key (sync version). Previously cached by name only, silently ignoring differing params on cache hit.
+- **`_ensure_fts_table`** — retries up to 3 times on transient "database is locked" errors instead of permanently disabling FTS on first failure.
+- **Connection health check** — `SELECT 1` probe after connection creation; raises `RuntimeError` immediately on corrupt databases.
+
+### Improved
+
+- **Usearch batch operations** — `add()`, `remove()`, and `get()` now use batch usearch APIs instead of per-key loops. Significant speedup for large operations.
+- **Filtered search iterative deepening** — replaces fixed `k*3` overfetch with adaptive doubling (up to `k*30`). Highly selective filters now reliably return `k` results.
+- **Memory-map heuristic** — uses file size threshold (50MB) instead of inaccurate `file_size // 100` vector count estimate for mmap vs load decision.
+- **Apple chip detection** — uses `platform.processor()` instead of spawning a `sysctl` subprocess.
+
+### Removed
+
+- **Duplicate `_dim` property** — removed in favor of the public `dim` property.
+
+### Breaking Changes
+
+- String metadata filters now use exact equality (was substring match).
+- `store_embeddings` defaults to `False` — `rebuild_index()` requires `store_embeddings=True` or re-adding documents.
+
+## [2.4.0] - 2026-03-22
+
+### Added
+
+- **Public catalog API on VectorCollection + AsyncVectorCollection:**
+  - `get_documents(filter_dict=)` — replaces private `_catalog` access
+  - `get_embeddings_by_ids(ids)` — fetch stored embeddings
+  - `update_metadata(updates)` — batch metadata merge
+  - `count()`, `save()`, `dim` property — async wrappers
+  - `add_texts(parent_ids=, threads=)` — full param support on async
+  - `rebuild_index`, `get_children/parent/descendants/ancestors`, `set_parent` — async hierarchy API
+- **Executor injection on AsyncVectorDB** — accept optional `executor` keyword argument so consumers can share a single-threaded executor for ONNX/usearch thread safety; `close()` only shuts down executor when `_owns_executor` is True
+- **Safety constants** in `constants.py`: `SEARCH_COLLECTION_TIMEOUT`, `EXECUTOR_SHUTDOWN_TIMEOUT`, `MAX_HIERARCHY_DEPTH`
+
+### Fixed
+
+- **VectorDB.close()** now calls `conn.close()` — was leaking file descriptors when `save()` succeeded but connection was never closed
+- **VectorDB.close()** wraps `save()` in `try/finally` so `conn.close()` always runs even if index serialization fails
+- **add_documents ID recovery** uses `last_insert_rowid()` arithmetic instead of `ORDER BY id DESC LIMIT N`, which raced under concurrent inserts
+- **String metadata filter** uses exact equality (`=`) instead of `LIKE` substring match — `{"type": "doc"}` no longer matches `"markdown_doc"`
+- **update_metadata_batch** wrapped in single transaction (`with self.conn`) to prevent partial commits on crash
+- **rebuild_index** uses `if x is not None` instead of `x or default` so passing `connectivity=0` no longer silently uses the default
+- **search_collections** parallel futures now have a 30s timeout — one hung collection can no longer block the entire cross-collection search
+- **AsyncVectorDB.close()** uses `shutdown(wait=False, cancel_futures=True)` instead of blocking `shutdown(wait=True)` which could hang forever on stuck tasks
+- **Recursive CTE safety cap** — `get_descendants`/`get_ancestors` apply `MAX_HIERARCHY_DEPTH=100` when `max_depth=None` to prevent infinite recursion from parent_id cycles
+- **RateLimiter cleanup** capped to 500 evictions per call to bound lock hold time under high bucket counts
+- **HuggingFace download** now uses `etag_timeout=30` with local-cache fallback on network failure
+- **embed_texts** rejects batches over 10,000 texts to prevent unbounded CPU time
+- **retry_on_lock** adds `total_timeout=10s` budget — gives up early if cumulative sleep would exceed the budget
+
+### Changed
+
+- **`__version__`** now read from package metadata via `importlib.metadata` (single source of truth in `pyproject.toml`)
+- **Upsert in usearch_index** separates conflict detection from removal for clearer flow
+
+## [2.3.0] - 2026-03-08
+
+### Breaking Changes
+
+- **Integration dependencies are now optional.** LangChain and LlamaIndex packages are no longer installed by default. Install with `pip install simplevecdb[integrations]` to use them. Existing users upgrading from v2.2.x will see a clear ImportError with migration instructions.
+
+### Added
+
+- **`[integrations]` optional extra** — Install LangChain and LlamaIndex dependencies only when needed, reducing default install footprint
+- **Runtime import guards** in integration modules with v2.3.0 migration messaging
+- **Lazy `__getattr__` loading** in `integrations/__init__.py` — integration classes are only imported when accessed
+- **Input validation guards** on search methods:
+  - `similarity_search`, `similarity_search_batch`, `keyword_search`, `hybrid_search` now reject `k <= 0`
+  - `add_texts` validates length consistency of `metadatas`, `embeddings`, `ids`, and `parent_ids` against `texts`
+- **NaN/Inf validation** for float values in metadata filters (`utils.validate_filter`)
+- **Empty list rejection** for list filter values
+- **Double-close protection** on `VectorDB` with `_closed` flag
+- **Context manager protocol** (`__enter__`/`__exit__`) on `VectorDB`
+- **Table name validation** in `check_migration` (defense-in-depth against SQL injection)
+- **Graceful per-future error handling** in `search_collections`
+- **Adaptive batch search threshold** — queries below `USEARCH_BATCH_THRESHOLD` (10) use sequential search to avoid batch overhead
+
+### Changed
+
+- **Python dev target changed to 3.12** (`.python-version`), `requires-python` remains `>= "3.10"`
+- **Version bumped to 2.3.0**
+- **Performance: MMR search vectorized** — pre-normalize embeddings once, use `sel_matrix @ emb` matrix-vector multiply instead of Python inner loop, O(1) `list.pop` replaces O(n) `list.remove`, hoist `1 - lambda_mult` loop invariant
+- **Performance: merged SQL round-trips in MMR** — new `get_documents_and_embeddings_by_ids` fetches text, metadata, and embeddings in a single query (previously two separate SELECTs)
+- **Performance: `get_parent` collapsed** from 2 sequential SELECTs to 1 self-JOIN
+- **Performance: `add_documents` ID recovery** — skip redundant `SELECT ORDER BY DESC` when explicit IDs are provided; removed unnecessary `list(texts)` copy
+- **Performance: FLOAT serialization** — `np.asarray().tobytes()` replaces `struct.pack` with per-element Python loop (single C memcpy)
+- **Performance: `np.array` → `np.asarray`** on every search and insert path to avoid unnecessary copies
+- **Performance: SQL placeholder strings** — `",".join(["?"] * len(ids))` replaces generator expression across all 9 call sites
+- **Performance: batched numpy conversion** in `add_texts` — single `np.asarray` call instead of per-item conversion
+- **Performance: compact JSON separators** in catalog serialization
+- **Performance: deduplicated `.tolist()` calls** in search engine
+- **Performance: `np.unique(ravel())`** for batch key collection in `similarity_search_batch`
+- **Performance: usearch upsert** — skip contains-check loop on empty index, cache `int(key)` once per iteration
+- **Performance: cluster table DDL** — `_cluster_table_ready` flag skips `CREATE TABLE IF NOT EXISTS` on repeated calls; cached `_cluster_table_name`
+- **`_normalize_key`** now delegates to `_derive_key` instead of duplicating PBKDF2 logic
+- **HNSW defaults** in `usearch_index.py` now sourced from `constants.py` (removed local duplicates)
+- **Collection name regex** uses `constants.COLLECTION_NAME_PATTERN` instead of hardcoded pattern
+- **`VectorDB` defaults** for `distance_strategy` and `quantization` sourced from `constants.DEFAULT_DISTANCE_STRATEGY` / `constants.DEFAULT_QUANTIZATION`
+- **`_batched` utility** moved from `core.py` to `utils.py` for reuse; now used in `catalog.py` batch updates
+- **`auto_tag`** uses `defaultdict(list)` instead of manual if-not-in pattern
+- **`import random`** hoisted to module level in `utils.py` (was inside retry loop)
+- **Streaming placeholder bug fixed** — `_process_streaming_batch` now correctly detects `None` placeholders (previously used empty list `[]`, preventing auto-embedding replacement)
+- **README updated** to document `pip install simplevecdb[integrations]` installation
+
+### Removed
+
+- LangChain and LlamaIndex packages from core `[project.dependencies]` (moved to `[project.optional-dependencies] integrations`)
+- Duplicated HNSW default constants from `usearch_index.py` (now single source in `constants.py`)
+- Unused `struct` import from `quantization.py`
+- Unused `itertools` import from `core.py`
+
+## [2.2.1] - 2026-01-27
+
+### Changed
+
+- Moved integration dependencies (langchain-core, langchain-openai, llama-index) from dev to main dependencies for easier installation
+- Added bandit to dev dependencies for security linting in pre-commit
+- Cleaned up duplicate dev dependency definitions
+
+## [2.2.0] - 2026-01-26
+
+### Added
+
+- Version 2.2.0 release
+
+## [2.1.0] - 2026-01-01
+
+### Added
+
+- **SQLCipher Encryption Support** - Full at-rest encryption for sensitive data:
+  - `VectorDB(path, encryption_key="...")` enables AES-256 page-level database encryption
+  - Uses SQLCipher for transparent SQLite encryption (PRAGMA key)
+  - Usearch index files encrypted with AES-256-GCM (`.usearch.enc`)
+  - Zero performance overhead during search (decrypt on load, encrypt on save only)
+  - Key derivation: PBKDF2-SHA256 with 480,000 iterations for passphrases
+  - Install with `pip install simplevecdb[encryption]`
+
+- **New encryption module** (`simplevecdb.encryption`):
+  - `create_encrypted_connection()` - SQLCipher connection factory
+  - `is_database_encrypted()` - Check if a database file is encrypted
+  - `encrypt_index_file()` / `decrypt_index_file()` - Index file encryption
+  - `EncryptionError` / `EncryptionUnavailableError` - New exception types
+
+- **Streaming Insert API** - Memory-efficient large-scale ingestion:
+  - `collection.add_texts_streaming(iterable)` - Process from any iterator/generator
+  - Configurable `batch_size` parameter (default: config.EMBEDDING_BATCH_SIZE)
+  - Yields `StreamingProgress` after each batch for monitoring
+  - Optional `on_progress` callback for custom logging/UI updates
+  - New types: `StreamingProgress`, `ProgressCallback`
+
+- **Hierarchical Document Relationships** - Parent/child document structure:
+  - `parent_ids` parameter in `add_texts()` to link documents
+  - `get_children(doc_id)` - Get direct child documents
+  - `get_parent(doc_id)` - Get parent document
+  - `get_descendants(doc_id, max_depth)` - Recursive children traversal
+  - `get_ancestors(doc_id, max_depth)` - Path to root
+  - `set_parent(doc_id, parent_id)` - Update relationships
+  - Uses SQLite recursive CTE for efficient traversal
+  - Auto-migrates existing databases (adds `parent_id` column)
+
+### Changed
+
+- `check_migration()` now gracefully handles encrypted databases (returns `needs_migration=False`)
+
+### Dependencies
+
+- New optional dependency group `[encryption]`: `sqlcipher3-binary>=0.5.0`, `cryptography>=41.0`
 
 ## [2.0.0] - 2025-12-23
 
@@ -473,6 +680,12 @@ Benchmarks on i9-13900K & RTX 4090 with 10k vectors (384-dim):
 - **Documentation**: https://coderdayton.github.io/simplevecdb/
 - **License**: MIT
 
+[2.4.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.4.0
+[2.3.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.3.0
+[2.2.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.1
+[2.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.0
+[2.1.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.1.0
+[2.0.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v2.0.0
 [1.3.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.3.0
 [1.2.0]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.2.0
 [1.1.1]: https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.1

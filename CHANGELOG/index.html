@@ -902,7 +902,7 @@
 <script>
     const updatedAt = document.getElementById("updated_at");
     if (updatedAt) {
-        const date = new Date('2026-01-17T13:26:28-06:00');
+        const date = new Date('2026-05-06T03:40:32-05:00');
         updatedAt.textContent = date.toLocaleDateString();
     }
 </script>
@@ -913,125 +913,317 @@
     <p>All notable changes to SimpleVecDB will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.0.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="220-2026-01-17">[2.2.0] - 2026-01-17</h2>
-<h3 id="added">Added</h3>
+<h2 id="260-2026-05-06">[2.6.0] - 2026-05-06</h2>
+<h3 id="review-pass-3-final-correctnesssecurity-pass-before-tag">Review pass 3 — final correctness/security pass before tag</h3>
+<h4 id="critical-fixes">Critical fixes</h4>
 <ul>
-<li><strong>Vector Clustering &amp; Auto-Tagging</strong> - Discover natural groupings in embeddings</li>
-<li><code>VectorCollection.cluster()</code> - Cluster documents by semantic similarity<ul>
-<li><strong>K-means</strong>: Classic centroid-based clustering for balanced clusters</li>
-<li><strong>MiniBatch K-means</strong>: Scalable variant for large datasets (default)</li>
-<li><strong>HDBSCAN</strong>: Density-based clustering that auto-discovers cluster count</li>
+<li><strong><code>UsearchIndex.save</code> lost-update race</strong> — the <code>_dirty = False</code> clear was outside the <code>file_lock</code> window, so a concurrent <code>add()</code> between <code>os.replace()</code> and the dirty-flag clear could be silently overwritten. Moved inside <code>file_lock</code>.</li>
+<li><strong><code>UsearchIndex.save</code> data fsync on <code>O_RDONLY</code> fd</strong> — <code>fsync(2)</code> on a read-only file descriptor has implementation-defined behavior on Linux (some kernels return <code>EBADF</code>, swallowed by the warning branch). Switched to <code>O_RDWR</code> so the data fsync is guaranteed.</li>
+<li><strong><code>_rebuild_index_locked</code> bare <code>conn.execute</code></strong> — replaced the bare <code>self.conn.execute("SELECT id FROM ...")</code> with the new <code>CatalogManager.list_all_ids()</code>, which routes the read through <code>self._lock</code> instead of relying on RLock re-entrancy from a single caller.</li>
+<li><strong>PBKDF2 iteration bump</strong> — raised from 480 000 → 600 000 to match the OWASP 2024 minimum for PBKDF2-HMAC-SHA256.</li>
+<li><strong>AES-GCM AAD now binds the v1 header</strong> — <code>encrypt_file</code> / <code>decrypt_file</code> pass the magic+version bytes as <code>associated_data</code>, so any tampering with the header (including downgrade attempts) fails authentication instead of silently succeeding.</li>
+<li><strong>Bounded normalize-key cache</strong> — <code>_NORMALIZE_KEY_CACHE</code> is now an LRU capped at 64 entries, serialized by a <code>threading.Lock</code>. Long-running multi-tenant processes no longer leak derived key material indefinitely.</li>
+<li><strong>LlamaIndex <code>delete()</code> no longer swallows <code>sqlite3.DatabaseError</code></strong> — narrowed the exception in the metadata-fallback path to <code>(TypeError, NotImplementedError)</code>. A locked DB, closed connection, or schema mismatch now propagates to the caller instead of becoming a silent no-op.</li>
+<li><strong>Hybrid-search RRF rank symmetry</strong> — vector candidates now use the original HNSW position as their RRF rank (via <code>enumerate(vector_keys_list)</code>), matching how keyword candidates use raw BM25 position. Previously, a metadata filter that rejected vector candidates inflated surviving vector scores relative to keyword scores, corrupting result ordering.</li>
+<li><strong><code>add_documents</code> FTS sentinel guard</strong> — added a defense-in-depth check that raises <code>RuntimeError</code> if any <code>-1</code> sentinel rowid remains in <code>real_ids</code> before the FTS upsert. Prevents a hypothetical retry-loop interaction from corrupting the FTS index with rowid <code>-1</code>.</li>
 </ul>
-</li>
-<li><code>VectorCollection.auto_tag()</code> - Generate descriptive tags for clusters<ul>
-<li>TF-IDF method (default): Extract keywords with highest TF-IDF scores</li>
-<li>Frequency method: Extract most common words per cluster</li>
-<li>Custom callback: Implement custom tagging logic (e.g., LLM-based)</li>
+<h4 id="important-fixes">Important fixes</h4>
+<ul>
+<li><strong><code>delete_collection</code> TOCTOU</strong> — moved the <code>list_collections()</code> existence check inside the <code>with self._lock:</code> block so two concurrent <code>delete_collection(name)</code> calls cannot both pass the check; the second now sees a clean <code>KeyError</code> instead of a SQLite error.</li>
+<li><strong>Salt sidecar <code>O_EXCL</code> guard</strong> — <code>_resolve_salt(create_if_missing=True)</code> now creates the sidecar with <code>O_CREAT | O_EXCL</code>. If two processes race, the loser reads the winner's salt; if a sidecar already exists out-of-band, it is preserved instead of being clobbered (which would have rendered an existing DB unreadable).</li>
+<li><strong><code>encrypt_index_file</code> v0→v1 sidecar migration</strong> — re-encrypting a legacy v0 blob (no sidecar) now creates a fresh sidecar, completing the migration path to per-DB salts. Previously, <code>is_first_encryption</code> was keyed on <code>.enc</code> presence rather than <code>.salt</code> presence.</li>
+<li><strong>LlamaIndex legacy-collection warning</strong> — <code>SimpleVecDBLlamaStore.__init__</code> now emits a one-shot <code>DeprecationWarning</code> when it detects rows lacking <code>_simplevecdb_node_id</code>, telling the operator to call <code>migrate_node_id_metadata()</code> and noting the inherent limitation that pre-2.6 rows can only be stamped with <code>str(doc_id)</code> (the original LlamaIndex node ids were never persisted).</li>
+<li><strong>INT8 quantization range break softened</strong> — instead of raising <code>ValueError</code> on <code>max(|x|) &gt; 1.0 + 1e-5</code>, the strategy now emits a one-shot <code>DeprecationWarning</code> and clips. Restores backwards compatibility for callers that relied on the prior silent-clip behavior.</li>
+<li><strong><code>scripts/check_version_sync.py</code> now validates <code>CHANGELOG.md</code></strong> — the hook fails if the latest CHANGELOG entry header does not match <code>pyproject.toml</code>'s version, preventing a release from shipping with a stale changelog.</li>
 </ul>
-</li>
-<li><code>VectorCollection.assign_cluster_metadata()</code> - Persist cluster IDs to document metadata</li>
-<li>
-<p><code>VectorCollection.get_cluster_members()</code> - Retrieve all documents in a cluster</p>
-</li>
-<li>
-<p><strong>Cluster Quality Metrics</strong> - Evaluate clustering results</p>
-</li>
-<li><code>ClusterResult.inertia</code> - Sum of squared distances to centroids (K-means only, lower is better)</li>
-<li><code>ClusterResult.silhouette_score</code> - Cluster separation metric (-1 to 1, higher is better)</li>
-<li>
-<p><code>ClusterResult.metrics()</code> - Get all metrics as dictionary</p>
-</li>
-<li>
-<p><strong>Cluster Persistence</strong> - Save and reuse cluster configurations</p>
-</li>
-<li><code>VectorCollection.save_cluster()</code> - Save cluster centroids and metadata to database</li>
-<li><code>VectorCollection.load_cluster()</code> - Load saved cluster configuration</li>
-<li><code>VectorCollection.list_clusters()</code> - List all saved cluster configurations</li>
-<li><code>VectorCollection.delete_cluster()</code> - Delete a saved cluster configuration</li>
-<li>
-<p><code>VectorCollection.assign_to_cluster()</code> - Assign new documents to saved clusters without re-clustering</p>
-</li>
-<li>
-<p><strong>Async Clustering Support</strong> - Full async/await parity for all clustering operations</p>
-</li>
-<li><code>AsyncVectorCollection.cluster()</code>, <code>auto_tag()</code>, <code>assign_cluster_metadata()</code>, <code>get_cluster_members()</code></li>
-<li>
-<p><code>AsyncVectorCollection.save_cluster()</code>, <code>load_cluster()</code>, <code>list_clusters()</code>, <code>delete_cluster()</code>, <code>assign_to_cluster()</code></p>
-</li>
-<li>
-<p><strong>New Dependencies</strong> - Now included in standard installation</p>
-</li>
-<li><code>scikit-learn&gt;=1.3.0</code> - K-means, MiniBatch K-means, silhouette score</li>
-<li><code>hdbscan&gt;=0.8.33</code> - Density-based clustering</li>
-<li><code>sqlcipher3-binary&gt;=0.5.0</code> - Encryption support (previously optional)</li>
-<li>
-<p><code>cryptography&gt;=41.0</code> - Encryption utilities (previously optional)</p>
-</li>
-<li>
-<p><strong>Documentation</strong></p>
-</li>
-<li>New comprehensive clustering guide: <code>docs/guides/clustering.md</code><ul>
-<li>Algorithm comparison and selection guide</li>
-<li>Quality metrics interpretation</li>
-<li>Cluster persistence workflows</li>
-<li>Use cases: product categorization, topic discovery, customer segmentation, duplicate detection</li>
-<li>Best practices and troubleshooting</li>
+<h4 id="test-coverage-added-review-pass-3-gaps">Test coverage added (review pass 3 gaps)</h4>
+<ul>
+<li><code>tests/unit/test_v26_review_pass_3.py</code> — covers parent-directory fsync on save, <code>.tmp</code> cleanup on save failure, <code>db._lock is catalog._lock</code> shared-RLock identity, adversarial inputs to <code>_validate_table_name</code>, hybrid-search RRF rank symmetry under filter, and same-text-different-id deduplication.</li>
+<li><code>tests/unit/test_v26_encryption_review_pass_3.py</code> — covers nonce uniqueness across saves, wrong-key decrypt does not create the output file, AAD-bound header tampering fails authentication, salt sidecar O_EXCL preservation, and v0→v1 migration round-trip.</li>
+<li><code>tests/unit/integrations/test_llamaindex_review_pass_3.py</code> — covers the <code>add → query</code> round-trip preserving the original LlamaIndex node id, end-to-end migration-then-delete on v2.5-shaped data, the legacy-collection <code>DeprecationWarning</code> at <code>__init__</code> time, and that <code>sqlite3.DatabaseError</code> from the metadata-fallback path now propagates instead of being swallowed.</li>
 </ul>
-</li>
-<li>New types reference: <code>docs/api/types.md</code><ul>
-<li>Complete <code>ClusterResult</code> API documentation</li>
-<li><code>Document</code>, <code>DistanceStrategy</code>, <code>Quantization</code>, <code>ClusterAlgorithm</code> reference</li>
-</ul>
-</li>
-<li>Updated README.md and docs/index.md with clustering sections</li>
-<li>Enhanced <code>docs/api/core.md</code> with clustering examples</li>
+<h3 id="fixed-concurrency-durability">Fixed (concurrency &amp; durability)</h3>
+<ul>
+<li><strong>Atomic <code>UsearchIndex.save</code></strong> — now writes to a sibling <code>.tmp</code>, fsyncs, then <code>os.replace()</code>s onto the live path and fsyncs the parent directory. A crash mid-save can no longer corrupt the only copy of the index. Also moved the <code>_dirty</code> short-circuit inside <code>_write_lock</code> so a concurrent <code>add</code> cannot have its dirty flag silently cleared.</li>
+<li><strong>Atomic <code>rebuild_index</code></strong> — builds the new index at a sibling <code>.rebuild</code> path and atomically swaps it onto the live path; the old index remains the canonical copy until the swap succeeds.</li>
+<li><strong>Atomic encrypted save</strong> — <code>encrypt_file</code> / <code>decrypt_file</code> now write to a sibling <code>.tmp</code>, fsync, set mode <code>0o600</code>, then <code>os.replace()</code>. <code>encrypt_index_file</code> only unlinks the plaintext after the encrypted output is durably on disk. A torn write can no longer leave the index unrecoverable.</li>
+<li><strong><code>VectorDB</code>-level <code>RLock</code></strong> — a single re-entrant lock now serializes the <code>_collections</code> cache (no more check-then-insert TOCTOU on <code>collection()</code>) and is shared with every <code>CatalogManager</code> so all <code>with self.conn:</code> blocks across collections cannot interleave on the shared <code>sqlite3.Connection</code>. Reads remain lock-free at the SQLite level via WAL.</li>
+<li><strong><code>AsyncVectorDB.close</code> drains</strong> — switched from <code>executor.shutdown(wait=False)</code> to <code>wait=True</code> so in-flight pool tasks finish their cursors before the SQLite connection is closed. Pending (not-yet-started) work is still cancelled.</li>
+<li><strong><code>set_parent</code> cycle check is transactional</strong> — descendant lookup and parent UPDATE now run inside the same <code>with self._lock, self.conn:</code> block, closing a TOCTOU window where a concurrent edge could form a cycle.</li>
+<li><strong>Cluster persistence</strong> — <code>_ensure_cluster_table</code>, <code>save_cluster_state</code>, <code>delete_cluster_state</code> now use <code>with self._lock, self.conn:</code> instead of bare <code>conn.commit()</code>; an exception during the execute is properly rolled back.</li>
+<li><strong><code>add_documents</code> ID recovery is correct under upsert</strong> — replaced the <code>last_insert_rowid()</code> arithmetic (which silently returned wrong IDs for batches mixing explicit and <code>None</code> IDs because UPSERTs do not advance the auto-increment counter) with a single <code>INSERT … RETURNING id</code> for the auto-ID rows. Explicit-ID rows still take the upsert path.</li>
+<li><strong><code>delete_collection</code> closes cached indexes first</strong> — any <code>VectorCollection</code> instances cached for the deleted name have their <code>UsearchIndex</code> closed before the file is unlinked, so a stale mmap view cannot race the unlink.</li>
 </ul>
 <h3 id="changed">Changed</h3>
 <ul>
-<li><strong>pyproject.toml</strong>: Updated <code>scikit-learn</code> minimum version from <code>1.0</code> to <code>1.3.0</code> for improved clustering stability</li>
+<li><strong><code>upsert_fts_rows</code> / <code>delete_fts_rows</code> are now <code>_upsert_fts_rows</code> / <code>_delete_fts_rows</code></strong> (private). The FTS shadow table must be updated inside the same transaction as the main table or it can desync on crash; the rename signals the contract.</li>
+<li><strong><code>get_legacy_vectors</code>, <code>drop_legacy_vec_table</code></strong> now validate the supplied table name via <code>_validate_table_name</code> before interpolating into SQL.</li>
 </ul>
-<h3 id="testing">Testing</h3>
+<h3 id="added">Added</h3>
 <ul>
-<li>Added 26 clustering tests in <code>tests/unit/test_clustering.py</code>:</li>
-<li>16 core clustering tests (algorithms, auto-tagging, metadata persistence, edge cases)</li>
-<li>4 cluster metrics tests (inertia, silhouette, metrics method)</li>
-<li>6 cluster persistence tests (save/load/list/delete/assign)</li>
-<li>Added 3 async clustering tests in <code>tests/unit/test_async.py</code></li>
-<li>Total test count: 305 (up from 292)</li>
+<li><strong>Declared <code>python-dotenv</code> dependency</strong> — <code>simplevecdb.config</code> already imported and called <code>load_dotenv</code> at package import; the missing dependency would <code>ImportError</code> on a clean install of the base package without optional extras.</li>
 </ul>
-<h3 id="installation">Installation</h3>
-<p>Clustering and encryption are now included by default:</p>
-<div class="codehilite"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>simplevecdb
-</code></pre></div>
-
-<p>No extra installation steps required!</p>
-<h3 id="example">Example</h3>
-<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorDB</span>
-
-<span class="n">db</span> <span class="o">=</span> <span class="n">VectorDB</span><span class="p">(</span><span class="s2">&quot;products.db&quot;</span><span class="p">)</span>
-<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">collection</span><span class="p">(</span><span class="s2">&quot;items&quot;</span><span class="p">)</span>
-
-<span class="c1"># Cluster documents</span>
-<span class="n">result</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">cluster</span><span class="p">(</span><span class="n">n_clusters</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;minibatch_kmeans&quot;</span><span class="p">)</span>
-
-<span class="c1"># Generate tags and persist</span>
-<span class="n">tags</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">auto_tag</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;tfidf&quot;</span><span class="p">,</span> <span class="n">n_keywords</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-<span class="n">collection</span><span class="o">.</span><span class="n">assign_cluster_metadata</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">tags</span><span class="p">)</span>
-
-<span class="c1"># Save for fast assignment of new documents</span>
-<span class="n">collection</span><span class="o">.</span><span class="n">save_cluster</span><span class="p">(</span><span class="s2">&quot;categories&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;tags&quot;</span><span class="p">:</span> <span class="n">tags</span><span class="p">})</span>
-
-<span class="c1"># Later: assign new documents without re-clustering</span>
-<span class="n">new_ids</span> <span class="o">=</span> <span class="n">collection</span><span class="o">.</span><span class="n">add_texts</span><span class="p">(</span><span class="n">new_texts</span><span class="p">,</span> <span class="n">embeddings</span><span class="o">=</span><span class="n">new_embeddings</span><span class="p">)</span>
-<span class="n">collection</span><span class="o">.</span><span class="n">assign_to_cluster</span><span class="p">(</span><span class="s2">&quot;categories&quot;</span><span class="p">,</span> <span class="n">new_ids</span><span class="p">)</span>
-
-<span class="c1"># Evaluate quality</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Silhouette Score: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">silhouette_score</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 0.62</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Inertia: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">inertia</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 1523.45</span>
-</code></pre></div>
-
-<h2 id="200-2025-12-23">[2.0.0] - 2025-12-23</h2>
+<h3 id="fixed-correctness-quality">Fixed (correctness &amp; quality)</h3>
+<ul>
+<li><strong>RRF deduplication keys by document ID, not text</strong> — <code>hybrid_search</code> previously deduped by <code>doc.page_content</code>, silently merging two distinct documents that happened to share text into one inflated-score result.</li>
+<li><strong>NaN/Inf guard at insert</strong> — <code>add_texts</code> and <code>add_texts_streaming</code> reject non-finite vectors instead of feeding them to HNSW, which would produce undefined neighbours and could corrupt the graph.</li>
+<li><strong><code>normalize_l2</code> handles subnormals</strong> — replaced the exact <code>norm == 0</code> compare with a <code>&lt; 1e-12</code> check (matching the existing usearch_index guard); subnormal floats no longer produce wildly large normalized vectors.</li>
+<li><strong>Silhouette score samples on large collections</strong> — <code>silhouette_score</code> is O(n²); now caps the evaluation sample at <code>SILHOUETTE_MAX_SAMPLE = 10_000</code>. Large collections no longer OOM.</li>
+<li><strong>MMR maintains the selected matrix incrementally</strong> — replaced per-iteration <code>np.stack(selected_embs)</code> with <code>np.vstack</code> of a running matrix. O(k²·d) wasted allocations dropped to O(k·d).</li>
+<li><strong><code>_parse_bool_env</code> treats <code>KEY=</code> as unset</strong> — empty strings now fall through to the default; previously they were truthy because <code>"".strip()</code> is not in the falsey set.</li>
+<li><strong>LangChain async methods use <code>asyncio.to_thread</code></strong> — <code>aadd_texts</code> / <code>asimilarity_search</code> / <code>amax_marginal_relevance_search</code> no longer block the event loop.</li>
+<li><strong>LlamaIndex <code>delete()</code> survives a process restart</strong> — node IDs are persisted into document metadata under <code>_simplevecdb_node_id</code>; <code>delete()</code> falls back to a metadata query when the in-memory <code>_id_map</code> is empty.</li>
+<li><strong>LlamaIndex query results carry stable node IDs</strong> — replaced <code>str(hash(page_content))</code> (process-randomized, collision-prone) with the persisted <code>_simplevecdb_node_id</code>.</li>
+<li><strong><code>AsyncVectorDB.collection</code> accepts <code>store_embeddings</code></strong> — async callers can now enable embedding storage (required for <code>rebuild_index()</code>); previously they had no way to set it.</li>
+</ul>
+<h3 id="security">Security</h3>
+<ul>
+<li><strong>API key comparison uses <code>hmac.compare_digest</code></strong> — the prior <code>token not in allowed_keys</code> short-circuit leaked key prefixes via response time.</li>
+<li><strong>SQLCipher PRAGMA key always uses the <code>x'hex'</code> form</strong> — every key path now goes through <code>_normalize_key</code> first, eliminating string interpolation of user-supplied passphrase characters into a quoted PRAGMA argument.</li>
+<li><strong><code>is_database_encrypted</code> rejects zero-byte files</strong> — previously a missing/empty DB looked like an unencrypted DB because <code>sqlite3.connect</code> would create a fresh one.</li>
+</ul>
+<h3 id="changed-tooling">Changed (tooling)</h3>
+<ul>
+<li><strong>Ruff and mypy targets aligned with <code>requires-python&gt;=3.10</code></strong> — both were <code>py312</code>, hiding 3.10/3.11 incompatibilities. Cleaned three resulting <code>F401</code> unused-import warnings (<code>signal</code> in models.py, <code>_batched</code> and <code>constants</code> re-imports).</li>
+<li><strong>Pre-commit version-sync hook</strong> — <code>__init__.py</code> derives <code>__version__</code> dynamically via <code>importlib.metadata</code>, so <code>check_version_sync.py</code> was failing on every commit looking for a literal <code>__version__ = "x.y.z"</code> line that does not exist. The hook now validates only <code>pyproject.toml</code>'s version field. <code>bump_version.py</code> similarly stops trying to rewrite <code>__init__.py</code> and uses an anchored regex to update only the canonical version field.</li>
+</ul>
+<h3 id="security-260-final">Security (2.6.0 final)</h3>
+<ul>
+<li><strong>Per-DB random PBKDF2 salt</strong> — encrypted databases and index files now generate a random 16-byte salt at creation time, written to a <code>&lt;resource&gt;.salt</code> sidecar with mode <code>0o600</code>. The previous fixed <code>b"simplevecdb-sqlcipher-key"</code> salt let an attacker precompute one rainbow table that broke every simplevecdb installation with the same passphrase. Pre-2.6.0 encrypted resources keep working unchanged: when no sidecar exists, the loader falls back to the legacy fixed salt automatically.</li>
+<li><strong>HuggingFace <code>repo_id</code> allowlist + <code>trust_remote_code=False</code></strong> — the embeddings server validates model names against a strict regex (<code>namespace/name</code> with <code>[A-Za-z0-9_.-]</code> only) before passing them to <code>snapshot_download</code> / <code>SentenceTransformer</code>, blocking path traversal and local-filesystem inputs. <code>SentenceTransformer</code> is constructed with <code>trust_remote_code=False</code> so a malicious model card cannot trigger arbitrary downloaded Python on load.</li>
+<li><strong>CORS is opt-in</strong> — the server no longer adds CORS middleware unless <code>EMBEDDING_SERVER_CORS_ORIGINS</code> is set. When the operator does set wildcard origins (<code>["*"]</code>), <code>allow_credentials</code> is forced off so the spec-violating wildcard-with-credentials combo can't be produced.</li>
+</ul>
+<h3 id="migration-helpers">Migration helpers</h3>
+<ul>
+<li><strong><code>SimpleVecDBLlamaStore.migrate_node_id_metadata()</code></strong> — backfills <code>_simplevecdb_node_id</code> for documents inserted before 2.6.0. Pre-2.6.0 versions did not persist the LlamaIndex node_id into metadata, so <code>delete()</code> could not find the right row after a process restart. Idempotent — already-stamped rows are skipped.</li>
+</ul>
+<h3 id="added-hygiene-polish">Added (hygiene &amp; polish)</h3>
+<ul>
+<li><strong><code>ClusterResult</code> and <code>ClusterTagCallback</code> exported from <code>simplevecdb</code></strong> — they were return/argument types of public methods but had no public import path; users had to reach into <code>simplevecdb.types</code>.</li>
+<li><strong><code>NullHandler</code> attached to the package's root logger</strong> at import time, per the Python logging HOWTO. Idempotent — duplicate calls do not stack handlers.</li>
+<li><strong><code>SimpleVecDBLlamaStore.delete_nodes</code> raises <code>NotImplementedError</code></strong> when called with <code>filters</code>, instead of silently dropping the filter portion and pretending the deletion succeeded.</li>
+<li><strong>Recursive CTE depth bound as a parameter</strong> in <code>get_descendants</code> / <code>get_ancestors</code>. The previous f-string interpolation was safe due to <code>int()</code> coercion but is now one less line away from injection on a future refactor.</li>
+<li><strong><code>Config.from_env()</code> documented</strong> as returning the import-time-frozen instance; setting env vars after import does not refresh.</li>
+<li><strong><code>ModelRegistry(allow_unlisted=...)</code> defaults to <code>False</code></strong> to match the secure-by-default config setting; programmatic instantiations no longer get an open registry by accident.</li>
+<li><strong><code>/v1/usage</code> returns aggregated totals when auth is disabled</strong> instead of leaking the per-IP buckets to anyone who hits the endpoint.</li>
+<li><strong>Server validates <code>EMBEDDING_SERVER_MAX_REQUEST_ITEMS &lt;= _MAX_ENCODE_BATCH</code> at startup</strong> so an out-of-range env var fails fast at boot rather than per request.</li>
+<li><strong><code>pyproject.toml</code> gains <code>[project.urls]</code>, <code>classifiers</code>, and <code>keywords</code></strong> for a useful PyPI listing.</li>
+<li><strong><code>.bandit</code> documents the B104 skip</strong> and warns that any future <code>0.0.0.0</code> binding requires removing the skip.</li>
+<li><strong>Encrypted file format now carries a 3-byte header</strong> (<code>'SV' + version</code>) so future format changes are detectable. <code>decrypt_file</code> accepts both the new v1 format and the v0 (pre-2.6.0) format, so existing encrypted indexes still load without re-encryption.</li>
+</ul>
+<h3 id="fixed-review-pass-2">Fixed (review pass 2)</h3>
+<ul>
+<li><strong>NaN/Inf rejection no longer leaves orphan catalog rows</strong> — <code>add_texts</code> and <code>_process_streaming_batch</code> now validate vectors <em>before</em> the SQLite insert. Previously the catalog row committed first and a non-finite vector then raised, leaving rows visible via <code>get_documents_by_ids</code> but unreachable through similarity search.</li>
+<li><strong><code>VectorCollection.__repr__</code> no longer issues SQL</strong> — the previous <code>count()</code> call would raise <code>ProgrammingError</code> after <code>close()</code>, breaking debuggers and exception formatters that auto-stringify objects. The 2.6.0 fix only covered <code>VectorDB.__repr__</code>.</li>
+<li><strong><code>EMBEDDING_SERVER_MAX_REQUEST_ITEMS</code> validation runs at module import</strong> — the guard was previously inside <code>run_server()</code> and was bypassed under any non-CLI ASGI deployment (gunicorn, programmatic uvicorn).</li>
+<li><strong>LlamaIndex empty-<code>node_id</code> path is atomic</strong> — <code>SimpleVecDBLlamaStore.add</code> now generates a UUID for nodes that arrive without a <code>node_id</code> and stamps it into metadata <em>before</em> the row insert, so the metadata commit is in the same SQLite transaction as the catalog row. Previously a separate <code>UPDATE</code> followed <code>add_texts</code>; a crash in the gap left rows un-stampable and cross-restart <code>delete()</code> silently no-op'd.</li>
+<li><strong>Catalog read paths serialize on <code>self._lock</code></strong> — <code>get_documents_by_ids</code>, <code>get_embeddings_by_ids</code>, <code>get_documents_and_embeddings_by_ids</code>, <code>find_ids_by_texts</code>, <code>find_ids_by_filter</code>, <code>keyword_search</code>, <code>count</code>, <code>get_all_docs_with_text</code>, <code>check_legacy_sqlite_vec</code>, <code>get_legacy_vectors</code>, <code>get_children</code>, <code>get_parent</code>, <code>get_descendants</code>, <code>get_ancestors</code>, <code>load_cluster_state</code>, <code>list_cluster_states</code>, and <code>VectorDB.list_collections</code> now acquire the connection-level lock around <code>conn.execute</code>. <code>sqlite3.Connection</code> is not safe for concurrent statement execution from multiple threads even under WAL.</li>
+<li><strong><code>rebuild_index</code> is fully serialized</strong> — the entire fetch + build + swap now runs inside <code>with self._lock:</code> so concurrent <code>add</code> / <code>delete</code> cannot mutate the catalog mid-rebuild and produce a stale snapshot.</li>
+<li><strong><code>_ensure_cluster_table</code> double-checked under lock</strong> — the <code>_cluster_table_ready</code> flag is now re-checked inside the lock and set inside the <code>with</code> block. Concurrent first-callers no longer both run the DDL.</li>
+<li><strong><code>utils.file_lock</code> opens via <code>os.open(O_CREAT | O_RDWR, 0o600)</code></strong> — no truncation of stale lock files from a crashed prior run, restricted permissions on the lock sentinel.</li>
+</ul>
+<h2 id="250-2026-04-07">[2.5.0] - 2026-04-07</h2>
+<h3 id="added_1">Added</h3>
+<ul>
+<li><strong><code>delete_collection(name)</code></strong> — drop a collection's SQLite tables, FTS index, and usearch file in one call. Available on both <code>VectorDB</code> and <code>AsyncVectorDB</code>.</li>
+<li><strong><code>store_embeddings</code> parameter</strong> on <code>collection()</code> — opt into storing embedding BLOBs in SQLite (default <code>False</code>). Saves ~2x storage; MMR transparently fetches vectors from the usearch index when BLOBs are absent.</li>
+<li><strong><code>async_retry_on_lock</code> decorator</strong> — async variant of <code>retry_on_lock</code> using <code>asyncio.sleep</code> instead of <code>time.sleep</code>, avoiding executor thread blocking.</li>
+<li><strong><code>file_lock</code> context manager</strong> — advisory cross-process file locking (<code>fcntl</code>/<code>msvcrt</code>) for usearch index files. Prevents corruption from concurrent processes.</li>
+<li><strong><code>__repr__</code></strong> on <code>VectorDB</code>, <code>VectorCollection</code>, <code>AsyncVectorDB</code>, <code>AsyncVectorCollection</code> for debuggable string representations.</li>
+<li><strong>FLOAT16 quantization</strong> fully implemented in <code>serialize()</code>/<code>deserialize()</code> — was previously defined in the enum but raised <code>ValueError</code> at runtime.</li>
+<li><strong>Pagination</strong> on <code>get_documents(limit=, offset=)</code> and catalog methods (<code>find_ids_by_filter</code>, <code>find_ids_by_texts</code>) — previously returned unbounded result sets.</li>
+<li><strong>Embeddings server enhancements:</strong></li>
+<li>Graceful shutdown with SIGTERM/SIGINT draining (10s timeout)</li>
+<li>CORS middleware with configurable origins for browser-based clients</li>
+<li>Model warm-up on startup (skip with <code>--no-warmup</code>)</li>
+<li>Input validation: rejects empty strings (422) and texts exceeding 100k chars (413)</li>
+<li>Proper <code>argparse</code> CLI with <code>--host</code>, <code>--port</code>, <code>--no-warmup</code>, <code>--help</code></li>
+<li>Startup banner logging config summary (host, port, model, auth, rate limits)</li>
+<li>Nested token array normalization (<code>list[list[int]]</code> input format)</li>
+<li>Async executor offload for <code>embed_texts</code> (non-blocking event loop)</li>
+<li>OpenAPI version synced from package metadata</li>
+<li>Module <code>__init__.py</code> exports (<code>embed_texts</code>, <code>get_embedder</code>, <code>load_model</code>, <code>app</code>, <code>run_server</code>)</li>
+</ul>
+<h3 id="fixed">Fixed</h3>
+<ul>
+<li><strong><code>delete_by_ids</code> ordering</strong> — SQLite deletion now happens first (transactional, can rollback), then usearch. Previously usearch removed first, leaving orphaned catalog entries on SQLite failure.</li>
+<li><strong><code>_matches_filter</code> string semantics</strong> — now uses exact equality, consistent with SQL <code>build_filter_clause</code>. Was using substring match (<code>value in str(meta_value)</code>).</li>
+<li><strong><code>list_collections</code></strong> — scans <code>sqlite_master</code> for persisted collection tables instead of returning only session-cached names. Works across reopened databases.</li>
+<li><strong>WAL mode for encrypted databases</strong> — <code>PRAGMA journal_mode=WAL</code> and <code>PRAGMA synchronous=NORMAL</code> now set for SQLCipher connections (was only set for unencrypted).</li>
+<li><strong><code>collection()</code> cache key</strong> — includes <code>distance_strategy</code> and <code>quantization</code> in cache key (sync version). Previously cached by name only, silently ignoring differing params on cache hit.</li>
+<li><strong><code>_ensure_fts_table</code></strong> — retries up to 3 times on transient "database is locked" errors instead of permanently disabling FTS on first failure.</li>
+<li><strong>Connection health check</strong> — <code>SELECT 1</code> probe after connection creation; raises <code>RuntimeError</code> immediately on corrupt databases.</li>
+</ul>
+<h3 id="improved">Improved</h3>
+<ul>
+<li><strong>Usearch batch operations</strong> — <code>add()</code>, <code>remove()</code>, and <code>get()</code> now use batch usearch APIs instead of per-key loops. Significant speedup for large operations.</li>
+<li><strong>Filtered search iterative deepening</strong> — replaces fixed <code>k*3</code> overfetch with adaptive doubling (up to <code>k*30</code>). Highly selective filters now reliably return <code>k</code> results.</li>
+<li><strong>Memory-map heuristic</strong> — uses file size threshold (50MB) instead of inaccurate <code>file_size // 100</code> vector count estimate for mmap vs load decision.</li>
+<li><strong>Apple chip detection</strong> — uses <code>platform.processor()</code> instead of spawning a <code>sysctl</code> subprocess.</li>
+</ul>
+<h3 id="removed">Removed</h3>
+<ul>
+<li><strong>Duplicate <code>_dim</code> property</strong> — removed in favor of the public <code>dim</code> property.</li>
+</ul>
 <h3 id="breaking-changes">Breaking Changes</h3>
+<ul>
+<li>String metadata filters now use exact equality (was substring match).</li>
+<li><code>store_embeddings</code> defaults to <code>False</code> — <code>rebuild_index()</code> requires <code>store_embeddings=True</code> or re-adding documents.</li>
+</ul>
+<h2 id="240-2026-03-22"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v2.4.0">2.4.0</a> - 2026-03-22</h2>
+<h3 id="added_2">Added</h3>
+<ul>
+<li><strong>Public catalog API on VectorCollection + AsyncVectorCollection:</strong></li>
+<li><code>get_documents(filter_dict=)</code> — replaces private <code>_catalog</code> access</li>
+<li><code>get_embeddings_by_ids(ids)</code> — fetch stored embeddings</li>
+<li><code>update_metadata(updates)</code> — batch metadata merge</li>
+<li><code>count()</code>, <code>save()</code>, <code>dim</code> property — async wrappers</li>
+<li><code>add_texts(parent_ids=, threads=)</code> — full param support on async</li>
+<li><code>rebuild_index</code>, <code>get_children/parent/descendants/ancestors</code>, <code>set_parent</code> — async hierarchy API</li>
+<li><strong>Executor injection on AsyncVectorDB</strong> — accept optional <code>executor</code> keyword argument so consumers can share a single-threaded executor for ONNX/usearch thread safety; <code>close()</code> only shuts down executor when <code>_owns_executor</code> is True</li>
+<li><strong>Safety constants</strong> in <code>constants.py</code>: <code>SEARCH_COLLECTION_TIMEOUT</code>, <code>EXECUTOR_SHUTDOWN_TIMEOUT</code>, <code>MAX_HIERARCHY_DEPTH</code></li>
+</ul>
+<h3 id="fixed_1">Fixed</h3>
+<ul>
+<li><strong>VectorDB.close()</strong> now calls <code>conn.close()</code> — was leaking file descriptors when <code>save()</code> succeeded but connection was never closed</li>
+<li><strong>VectorDB.close()</strong> wraps <code>save()</code> in <code>try/finally</code> so <code>conn.close()</code> always runs even if index serialization fails</li>
+<li><strong>add_documents ID recovery</strong> uses <code>last_insert_rowid()</code> arithmetic instead of <code>ORDER BY id DESC LIMIT N</code>, which raced under concurrent inserts</li>
+<li><strong>String metadata filter</strong> uses exact equality (<code>=</code>) instead of <code>LIKE</code> substring match — <code>{"type": "doc"}</code> no longer matches <code>"markdown_doc"</code></li>
+<li><strong>update_metadata_batch</strong> wrapped in single transaction (<code>with self.conn</code>) to prevent partial commits on crash</li>
+<li><strong>rebuild_index</strong> uses <code>if x is not None</code> instead of <code>x or default</code> so passing <code>connectivity=0</code> no longer silently uses the default</li>
+<li><strong>search_collections</strong> parallel futures now have a 30s timeout — one hung collection can no longer block the entire cross-collection search</li>
+<li><strong>AsyncVectorDB.close()</strong> uses <code>shutdown(wait=False, cancel_futures=True)</code> instead of blocking <code>shutdown(wait=True)</code> which could hang forever on stuck tasks</li>
+<li><strong>Recursive CTE safety cap</strong> — <code>get_descendants</code>/<code>get_ancestors</code> apply <code>MAX_HIERARCHY_DEPTH=100</code> when <code>max_depth=None</code> to prevent infinite recursion from parent_id cycles</li>
+<li><strong>RateLimiter cleanup</strong> capped to 500 evictions per call to bound lock hold time under high bucket counts</li>
+<li><strong>HuggingFace download</strong> now uses <code>etag_timeout=30</code> with local-cache fallback on network failure</li>
+<li><strong>embed_texts</strong> rejects batches over 10,000 texts to prevent unbounded CPU time</li>
+<li><strong>retry_on_lock</strong> adds <code>total_timeout=10s</code> budget — gives up early if cumulative sleep would exceed the budget</li>
+</ul>
+<h3 id="changed_1">Changed</h3>
+<ul>
+<li><strong><code>__version__</code></strong> now read from package metadata via <code>importlib.metadata</code> (single source of truth in <code>pyproject.toml</code>)</li>
+<li><strong>Upsert in usearch_index</strong> separates conflict detection from removal for clearer flow</li>
+</ul>
+<h2 id="230-2026-03-08"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v2.3.0">2.3.0</a> - 2026-03-08</h2>
+<h3 id="breaking-changes_1">Breaking Changes</h3>
+<ul>
+<li><strong>Integration dependencies are now optional.</strong> LangChain and LlamaIndex packages are no longer installed by default. Install with <code>pip install simplevecdb[integrations]</code> to use them. Existing users upgrading from v2.2.x will see a clear ImportError with migration instructions.</li>
+</ul>
+<h3 id="added_3">Added</h3>
+<ul>
+<li><strong><code>[integrations]</code> optional extra</strong> — Install LangChain and LlamaIndex dependencies only when needed, reducing default install footprint</li>
+<li><strong>Runtime import guards</strong> in integration modules with v2.3.0 migration messaging</li>
+<li><strong>Lazy <code>__getattr__</code> loading</strong> in <code>integrations/__init__.py</code> — integration classes are only imported when accessed</li>
+<li><strong>Input validation guards</strong> on search methods:</li>
+<li><code>similarity_search</code>, <code>similarity_search_batch</code>, <code>keyword_search</code>, <code>hybrid_search</code> now reject <code>k &lt;= 0</code></li>
+<li><code>add_texts</code> validates length consistency of <code>metadatas</code>, <code>embeddings</code>, <code>ids</code>, and <code>parent_ids</code> against <code>texts</code></li>
+<li><strong>NaN/Inf validation</strong> for float values in metadata filters (<code>utils.validate_filter</code>)</li>
+<li><strong>Empty list rejection</strong> for list filter values</li>
+<li><strong>Double-close protection</strong> on <code>VectorDB</code> with <code>_closed</code> flag</li>
+<li><strong>Context manager protocol</strong> (<code>__enter__</code>/<code>__exit__</code>) on <code>VectorDB</code></li>
+<li><strong>Table name validation</strong> in <code>check_migration</code> (defense-in-depth against SQL injection)</li>
+<li><strong>Graceful per-future error handling</strong> in <code>search_collections</code></li>
+<li><strong>Adaptive batch search threshold</strong> — queries below <code>USEARCH_BATCH_THRESHOLD</code> (10) use sequential search to avoid batch overhead</li>
+</ul>
+<h3 id="changed_2">Changed</h3>
+<ul>
+<li><strong>Python dev target changed to 3.12</strong> (<code>.python-version</code>), <code>requires-python</code> remains <code>&gt;= "3.10"</code></li>
+<li><strong>Version bumped to 2.3.0</strong></li>
+<li><strong>Performance: MMR search vectorized</strong> — pre-normalize embeddings once, use <code>sel_matrix @ emb</code> matrix-vector multiply instead of Python inner loop, O(1) <code>list.pop</code> replaces O(n) <code>list.remove</code>, hoist <code>1 - lambda_mult</code> loop invariant</li>
+<li><strong>Performance: merged SQL round-trips in MMR</strong> — new <code>get_documents_and_embeddings_by_ids</code> fetches text, metadata, and embeddings in a single query (previously two separate SELECTs)</li>
+<li><strong>Performance: <code>get_parent</code> collapsed</strong> from 2 sequential SELECTs to 1 self-JOIN</li>
+<li><strong>Performance: <code>add_documents</code> ID recovery</strong> — skip redundant <code>SELECT ORDER BY DESC</code> when explicit IDs are provided; removed unnecessary <code>list(texts)</code> copy</li>
+<li><strong>Performance: FLOAT serialization</strong> — <code>np.asarray().tobytes()</code> replaces <code>struct.pack</code> with per-element Python loop (single C memcpy)</li>
+<li><strong>Performance: <code>np.array</code> → <code>np.asarray</code></strong> on every search and insert path to avoid unnecessary copies</li>
+<li><strong>Performance: SQL placeholder strings</strong> — <code>",".join(["?"] * len(ids))</code> replaces generator expression across all 9 call sites</li>
+<li><strong>Performance: batched numpy conversion</strong> in <code>add_texts</code> — single <code>np.asarray</code> call instead of per-item conversion</li>
+<li><strong>Performance: compact JSON separators</strong> in catalog serialization</li>
+<li><strong>Performance: deduplicated <code>.tolist()</code> calls</strong> in search engine</li>
+<li><strong>Performance: <code>np.unique(ravel())</code></strong> for batch key collection in <code>similarity_search_batch</code></li>
+<li><strong>Performance: usearch upsert</strong> — skip contains-check loop on empty index, cache <code>int(key)</code> once per iteration</li>
+<li><strong>Performance: cluster table DDL</strong> — <code>_cluster_table_ready</code> flag skips <code>CREATE TABLE IF NOT EXISTS</code> on repeated calls; cached <code>_cluster_table_name</code></li>
+<li><strong><code>_normalize_key</code></strong> now delegates to <code>_derive_key</code> instead of duplicating PBKDF2 logic</li>
+<li><strong>HNSW defaults</strong> in <code>usearch_index.py</code> now sourced from <code>constants.py</code> (removed local duplicates)</li>
+<li><strong>Collection name regex</strong> uses <code>constants.COLLECTION_NAME_PATTERN</code> instead of hardcoded pattern</li>
+<li><strong><code>VectorDB</code> defaults</strong> for <code>distance_strategy</code> and <code>quantization</code> sourced from <code>constants.DEFAULT_DISTANCE_STRATEGY</code> / <code>constants.DEFAULT_QUANTIZATION</code></li>
+<li><strong><code>_batched</code> utility</strong> moved from <code>core.py</code> to <code>utils.py</code> for reuse; now used in <code>catalog.py</code> batch updates</li>
+<li><strong><code>auto_tag</code></strong> uses <code>defaultdict(list)</code> instead of manual if-not-in pattern</li>
+<li><strong><code>import random</code></strong> hoisted to module level in <code>utils.py</code> (was inside retry loop)</li>
+<li><strong>Streaming placeholder bug fixed</strong> — <code>_process_streaming_batch</code> now correctly detects <code>None</code> placeholders (previously used empty list <code>[]</code>, preventing auto-embedding replacement)</li>
+<li><strong>README updated</strong> to document <code>pip install simplevecdb[integrations]</code> installation</li>
+</ul>
+<h3 id="removed_1">Removed</h3>
+<ul>
+<li>LangChain and LlamaIndex packages from core <code>[project.dependencies]</code> (moved to <code>[project.optional-dependencies] integrations</code>)</li>
+<li>Duplicated HNSW default constants from <code>usearch_index.py</code> (now single source in <code>constants.py</code>)</li>
+<li>Unused <code>struct</code> import from <code>quantization.py</code></li>
+<li>Unused <code>itertools</code> import from <code>core.py</code></li>
+</ul>
+<h2 id="221-2026-01-27"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.1">2.2.1</a> - 2026-01-27</h2>
+<h3 id="changed_3">Changed</h3>
+<ul>
+<li>Moved integration dependencies (langchain-core, langchain-openai, llama-index) from dev to main dependencies for easier installation</li>
+<li>Added bandit to dev dependencies for security linting in pre-commit</li>
+<li>Cleaned up duplicate dev dependency definitions</li>
+</ul>
+<h2 id="220-2026-01-26"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v2.2.0">2.2.0</a> - 2026-01-26</h2>
+<h3 id="added_4">Added</h3>
+<ul>
+<li>Version 2.2.0 release</li>
+</ul>
+<h2 id="210-2026-01-01"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v2.1.0">2.1.0</a> - 2026-01-01</h2>
+<h3 id="added_5">Added</h3>
+<ul>
+<li><strong>SQLCipher Encryption Support</strong> - Full at-rest encryption for sensitive data:</li>
+<li><code>VectorDB(path, encryption_key="...")</code> enables AES-256 page-level database encryption</li>
+<li>Uses SQLCipher for transparent SQLite encryption (PRAGMA key)</li>
+<li>Usearch index files encrypted with AES-256-GCM (<code>.usearch.enc</code>)</li>
+<li>Zero performance overhead during search (decrypt on load, encrypt on save only)</li>
+<li>Key derivation: PBKDF2-SHA256 with 480,000 iterations for passphrases</li>
+<li>
+<p>Install with <code>pip install simplevecdb[encryption]</code></p>
+</li>
+<li>
+<p><strong>New encryption module</strong> (<code>simplevecdb.encryption</code>):</p>
+</li>
+<li><code>create_encrypted_connection()</code> - SQLCipher connection factory</li>
+<li><code>is_database_encrypted()</code> - Check if a database file is encrypted</li>
+<li><code>encrypt_index_file()</code> / <code>decrypt_index_file()</code> - Index file encryption</li>
+<li>
+<p><code>EncryptionError</code> / <code>EncryptionUnavailableError</code> - New exception types</p>
+</li>
+<li>
+<p><strong>Streaming Insert API</strong> - Memory-efficient large-scale ingestion:</p>
+</li>
+<li><code>collection.add_texts_streaming(iterable)</code> - Process from any iterator/generator</li>
+<li>Configurable <code>batch_size</code> parameter (default: config.EMBEDDING_BATCH_SIZE)</li>
+<li>Yields <code>StreamingProgress</code> after each batch for monitoring</li>
+<li>Optional <code>on_progress</code> callback for custom logging/UI updates</li>
+<li>
+<p>New types: <code>StreamingProgress</code>, <code>ProgressCallback</code></p>
+</li>
+<li>
+<p><strong>Hierarchical Document Relationships</strong> - Parent/child document structure:</p>
+</li>
+<li><code>parent_ids</code> parameter in <code>add_texts()</code> to link documents</li>
+<li><code>get_children(doc_id)</code> - Get direct child documents</li>
+<li><code>get_parent(doc_id)</code> - Get parent document</li>
+<li><code>get_descendants(doc_id, max_depth)</code> - Recursive children traversal</li>
+<li><code>get_ancestors(doc_id, max_depth)</code> - Path to root</li>
+<li><code>set_parent(doc_id, parent_id)</code> - Update relationships</li>
+<li>Uses SQLite recursive CTE for efficient traversal</li>
+<li>Auto-migrates existing databases (adds <code>parent_id</code> column)</li>
+</ul>
+<h3 id="changed_4">Changed</h3>
+<ul>
+<li><code>check_migration()</code> now gracefully handles encrypted databases (returns <code>needs_migration=False</code>)</li>
+</ul>
+<h3 id="dependencies">Dependencies</h3>
+<ul>
+<li>New optional dependency group <code>[encryption]</code>: <code>sqlcipher3-binary&gt;=0.5.0</code>, <code>cryptography&gt;=41.0</code></li>
+</ul>
+<h2 id="200-2025-12-23"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v2.0.0">2.0.0</a> - 2025-12-23</h2>
+<h3 id="breaking-changes_2">Breaking Changes</h3>
 <ul>
 <li><strong>Backend Migration: sqlite-vec → usearch HNSW</strong></li>
 <li>Vector search now uses usearch's high-performance HNSW algorithm</li>
@@ -1050,7 +1242,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Existing sqlite-vec databases will auto-migrate on first open</li>
 <li>Migration is one-way; backup before upgrading</li>
 </ul>
-<h3 id="added_1">Added</h3>
+<h3 id="added_6">Added</h3>
 <ul>
 <li><strong><code>usearch_index.py</code></strong> - New UsearchIndex wrapper class:</li>
 <li>Thread-safe HNSW index operations (lock on writes, lock-free reads)</li>
@@ -1143,7 +1335,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Supports all quantization levels</li>
 <li>Validates 10-100x performance claims</li>
 </ul>
-<h3 id="changed_1">Changed</h3>
+<h3 id="changed_5">Changed</h3>
 <ul>
 <li><strong>Dependencies</strong>: Replaced <code>sqlite-vec&gt;=0.1.6</code> with <code>usearch&gt;=2.12</code></li>
 <li><strong>CatalogManager</strong>: Removed vec0 virtual table operations, added embedding column</li>
@@ -1158,7 +1350,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>The legacy sqlite-vec table is dropped after successful migration</li>
 </ol>
 <h2 id="130-2025-12-07"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.3.0">1.3.0</a> - 2025-12-07</h2>
-<h3 id="added_2">Added</h3>
+<h3 id="added_7">Added</h3>
 <ul>
 <li><strong>Structured Logging Module</strong> - New <code>simplevecdb.logging</code> module for production-grade observability</li>
 <li><code>get_logger(name)</code> - Get namespaced loggers under <code>simplevecdb.*</code></li>
@@ -1189,7 +1381,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><code>get_logger</code>, <code>configure_logging</code>, <code>log_operation</code></li>
 <li><code>DatabaseLockedError</code>, <code>retry_on_lock</code>, <code>validate_filter</code></li>
 </ul>
-<h3 id="changed_2">Changed</h3>
+<h3 id="changed_6">Changed</h3>
 <ul>
 <li><strong>CatalogManager</strong> internal refactoring:</li>
 <li><code>add_texts()</code> now delegates to <code>_insert_batch()</code> which has retry logic</li>
@@ -1199,7 +1391,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><strong>RateLimiter</strong> now includes TTL-based cleanup to prevent memory exhaustion on long-running servers with many unique clients (default: 1 hour TTL, 10k max buckets).</li>
 <li><strong>AsyncVectorDB.close()</strong> now guarantees database connection is closed even if executor shutdown fails.</li>
 </ul>
-<h3 id="testing_1">Testing</h3>
+<h3 id="testing">Testing</h3>
 <ul>
 <li>Added 25 new tests in <code>tests/unit/test_error_handling.py</code>:</li>
 <li>7 tests for <code>retry_on_lock</code> decorator behavior</li>
@@ -1208,7 +1400,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>8 tests for logging utilities</li>
 <li>4 integration tests for error handling in VectorDB operations</li>
 </ul>
-<h3 id="example_1">Example</h3>
+<h3 id="example">Example</h3>
 <div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">VectorDB</span><span class="p">,</span>
@@ -1233,7 +1425,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </code></pre></div>
 
 <h2 id="120-2025-11-25"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.2.0">1.2.0</a> - 2025-11-25</h2>
-<h3 id="added_3">Added</h3>
+<h3 id="added_8">Added</h3>
 <ul>
 <li><strong>Async API Support</strong> - New <code>AsyncVectorDB</code> and <code>AsyncVectorCollection</code> classes</li>
 <li>Full async/await support for all collection operations</li>
@@ -1242,11 +1434,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>All methods mirror sync API: <code>add_texts</code>, <code>similarity_search</code>, <code>keyword_search</code>, <code>hybrid_search</code>, <code>max_marginal_relevance_search</code>, <code>delete_by_ids</code>, <code>remove_texts</code></li>
 <li>Configurable thread pool size via <code>max_workers</code> parameter</li>
 </ul>
-<h3 id="changed_3">Changed</h3>
+<h3 id="changed_7">Changed</h3>
 <ul>
 <li>Added <code>pytest-asyncio</code> to dev dependencies for async test support</li>
 </ul>
-<h3 id="example_2">Example</h3>
+<h3 id="example_1">Example</h3>
 <div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">simplevecdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncVectorDB</span>
 
@@ -1261,14 +1453,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </code></pre></div>
 
 <h2 id="111-2025-11-23"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.1">1.1.1</a> - 2025-11-23</h2>
-<h3 id="changed_4">Changed</h3>
+<h3 id="changed_8">Changed</h3>
 <ul>
 <li><strong>Refactored configuration constants</strong> into dedicated <code>constants.py</code> module</li>
 <li>Extracted hardware batch size thresholds (VRAM, CPU cores, ARM variants)</li>
 <li>Extracted search defaults (k=5, rrf_k=60, fetch_k=20)</li>
 <li>Improved maintainability and centralized configuration</li>
 </ul>
-<h3 id="fixed">Fixed</h3>
+<h3 id="fixed_2">Fixed</h3>
 <ul>
 <li><strong>Updated dependencies</strong></li>
 <li>Bumped <code>sentence-transformers[onnx]</code> from 3.3.1 to 5.1.2</li>
@@ -1277,7 +1469,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="110-2025-11-23"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.1.0">1.1.0</a> - 2025-11-23</h2>
 <h3 id="architecture-refactoring">🏗️ Architecture Refactoring</h3>
 <p>Major internal restructuring for better maintainability and extensibility while preserving backward compatibility.</p>
-<h3 id="changed_5">Changed</h3>
+<h3 id="changed_9">Changed</h3>
 <ul>
 <li><strong>Refactored core.py</strong> (879→216 lines, 75% reduction)</li>
 <li>Extracted search operations to <code>engine/search.py</code> (SearchEngine)</li>
@@ -1290,7 +1482,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Updated architecture documentation in AGENTS.md and CONTRIBUTING.md</li>
 <li>Simplified CODE_OF_CONDUCT.md to be more approachable</li>
 </ul>
-<h3 id="added_4">Added</h3>
+<h3 id="added_9">Added</h3>
 <ul>
 <li><strong>Security infrastructure</strong></li>
 <li>GitHub Actions workflow for weekly security scans (Bandit, Safety, Semgrep)</li>
@@ -1302,7 +1494,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Added 11 new tests covering edge cases in search engine</li>
 <li>Maintained 97% overall coverage across refactored modules</li>
 </ul>
-<h3 id="fixed_1">Fixed</h3>
+<h3 id="fixed_3">Fixed</h3>
 <ul>
 <li>Fixed unused <code>filter_builder</code> parameter in <code>_brute_force_search</code> method</li>
 <li>Simplified brute-force filtering to use proper filter builder delegation</li>
@@ -1317,7 +1509,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="100-2025-11-23"><a href="https://github.com/coderdayton/simplevecdb/releases/tag/v1.0.0">1.0.0</a> - 2025-11-23</h2>
 <h3 id="initial-release">🎉 Initial Release</h3>
 <p>SimpleVecDB's first stable release brings production-ready local vector search to a single SQLite file.</p>
-<h3 id="added_5">Added</h3>
+<h3 id="added_10">Added</h3>
 <h4 id="core-features">Core Features</h4>
 <ul>
 <li><strong>Multi-collection catalog system</strong>: Organize documents in named collections within a single database</li>
@@ -1421,14 +1613,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </tr>
 </tbody>
 </table></div>
-<h3 id="testing_2">Testing</h3>
+<h3 id="testing_1">Testing</h3>
 <ul>
 <li>177 unit and integration tests</li>
 <li>97% code coverage</li>
 <li>Type-safe (mypy strict mode)</li>
 <li>CI/CD on Python 3.10, 3.11, 3.12, 3.13</li>
 </ul>
-<h3 id="dependencies">Dependencies</h3>
+<h3 id="dependencies_1">Dependencies</h3>
 <ul>
 <li>Core: <code>sqlite-vec&gt;=0.1.6</code>, <code>numpy&gt;=2.0</code>, <code>python-dotenv&gt;=1.2.1</code>, <code>psutil&gt;=5.9.0</code></li>
 <li>Server extras: <code>fastapi&gt;=0.115</code>, <code>uvicorn[standard]&gt;=0.30</code>, <code>sentence-transformers[onnx]==3.3.1</code></li>
@@ -1649,17 +1841,23 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
         
         
         
-        <a href="#220-2026-01-17"
+        <a href="#260-2026-05-06"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            [2.2.0] - 2026-01-17
+            [2.6.0] - 2026-05-06
         </a>
         
         
-        <a href="#added"
+        <a href="#review-pass-3-final-correctnesssecurity-pass-before-tag"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Added
+            Review pass 3 — final correctness/security pass before tag
+        </a>
+        
+        <a href="#fixed-concurrency-durability"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Fixed (concurrency &amp; durability)
         </a>
         
         <a href="#changed"
@@ -1668,22 +1866,214 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
             Changed
         </a>
         
-        <a href="#testing"
+        <a href="#added"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Testing
+            Added
         </a>
         
-        <a href="#installation"
+        <a href="#fixed-correctness-quality"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Installation
+            Fixed (correctness &amp; quality)
         </a>
         
-        <a href="#example"
+        <a href="#security"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
-            Example
+            Security
+        </a>
+        
+        <a href="#changed-tooling"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed (tooling)
+        </a>
+        
+        <a href="#security-260-final"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Security (2.6.0 final)
+        </a>
+        
+        <a href="#migration-helpers"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Migration helpers
+        </a>
+        
+        <a href="#added-hygiene-polish"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added (hygiene &amp; polish)
+        </a>
+        
+        <a href="#fixed-review-pass-2"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Fixed (review pass 2)
+        </a>
+        
+        
+
+        
+        <a href="#250-2026-04-07"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            [2.5.0] - 2026-04-07
+        </a>
+        
+        
+        <a href="#added_1"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added
+        </a>
+        
+        <a href="#fixed"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Fixed
+        </a>
+        
+        <a href="#improved"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Improved
+        </a>
+        
+        <a href="#removed"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Removed
+        </a>
+        
+        <a href="#breaking-changes"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Breaking Changes
+        </a>
+        
+        
+
+        
+        <a href="#240-2026-03-22"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            2.4.0 - 2026-03-22
+        </a>
+        
+        
+        <a href="#added_2"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added
+        </a>
+        
+        <a href="#fixed_1"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Fixed
+        </a>
+        
+        <a href="#changed_1"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed
+        </a>
+        
+        
+
+        
+        <a href="#230-2026-03-08"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            2.3.0 - 2026-03-08
+        </a>
+        
+        
+        <a href="#breaking-changes_1"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Breaking Changes
+        </a>
+        
+        <a href="#added_3"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added
+        </a>
+        
+        <a href="#changed_2"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed
+        </a>
+        
+        <a href="#removed_1"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Removed
+        </a>
+        
+        
+
+        
+        <a href="#221-2026-01-27"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            2.2.1 - 2026-01-27
+        </a>
+        
+        
+        <a href="#changed_3"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed
+        </a>
+        
+        
+
+        
+        <a href="#220-2026-01-26"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            2.2.0 - 2026-01-26
+        </a>
+        
+        
+        <a href="#added_4"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added
+        </a>
+        
+        
+
+        
+        <a href="#210-2026-01-01"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="2">
+            2.1.0 - 2026-01-01
+        </a>
+        
+        
+        <a href="#added_5"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Added
+        </a>
+        
+        <a href="#changed_4"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Changed
+        </a>
+        
+        <a href="#dependencies"
+            class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
+            data-active="false" data-depth="3">
+            Dependencies
         </a>
         
         
@@ -1692,23 +2082,23 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
         <a href="#200-2025-12-23"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="2">
-            [2.0.0] - 2025-12-23
+            2.0.0 - 2025-12-23
         </a>
         
         
-        <a href="#breaking-changes"
+        <a href="#breaking-changes_2"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Breaking Changes
         </a>
         
-        <a href="#added_1"
+        <a href="#added_6"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Added
         </a>
         
-        <a href="#changed_1"
+        <a href="#changed_5"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Changed
@@ -1730,25 +2120,25 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
         </a>
         
         
-        <a href="#added_2"
+        <a href="#added_7"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Added
         </a>
         
-        <a href="#changed_2"
+        <a href="#changed_6"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Changed
         </a>
         
-        <a href="#testing_1"
+        <a href="#testing"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Testing
         </a>
         
-        <a href="#example_1"
+        <a href="#example"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Example
@@ -1764,19 +2154,19 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
         </a>
         
         
-        <a href="#added_3"
+        <a href="#added_8"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Added
         </a>
         
-        <a href="#changed_3"
+        <a href="#changed_7"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Changed
         </a>
         
-        <a href="#example_2"
+        <a href="#example_1"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Example
@@ -1792,13 +2182,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
         </a>
         
         
-        <a href="#changed_4"
+        <a href="#changed_8"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Changed
         </a>
         
-        <a href="#fixed"
+        <a href="#fixed_2"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Fixed
@@ -1820,19 +2210,19 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
             🏗️ Architecture Refactoring
         </a>
         
-        <a href="#changed_5"
+        <a href="#changed_9"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Changed
         </a>
         
-        <a href="#added_4"
+        <a href="#added_9"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Added
         </a>
         
-        <a href="#fixed_1"
+        <a href="#fixed_3"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Fixed
@@ -1860,7 +2250,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
             🎉 Initial Release
         </a>
         
-        <a href="#added_5"
+        <a href="#added_10"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Added
@@ -1878,13 +2268,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
             Performance
         </a>
         
-        <a href="#testing_2"
+        <a href="#testing_1"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Testing
         </a>
         
-        <a href="#dependencies"
+        <a href="#dependencies_1"
             class="text-muted-foreground hover:text-foreground data-[active=true]:text-foreground text-[0.8rem] no-underline transition-colors data-[depth=3]:pl-4 data-[depth=4]:pl-6"
             data-active="false" data-depth="3">
             Dependencies

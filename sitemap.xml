@@ -2,70 +2,70 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/CHANGELOG/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/CONTRIBUTING/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/ENV_SETUP/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/benchmarks/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/examples/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/async/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/config/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/core/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/embeddings/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/encryption/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/integrations/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/types/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/engine/catalog/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/engine/quantization/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/api/engine/search/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
     <url>
          <loc>https://coderdayton.github.io/SimpleVecDB/guides/clustering/</loc>
-         <lastmod>2026-01-17</lastmod>
+         <lastmod>2026-05-06</lastmod>
     </url>
 </urlset>
