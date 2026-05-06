@@ -5,7 +5,7 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.6.0] - unreleased
+## [2.6.0] - 2026-05-06
 
 ### Fixed (concurrency & durability)
 
@@ -75,6 +75,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`pyproject.toml` gains `[project.urls]`, `classifiers`, and `keywords`** for a useful PyPI listing.
 - **`.bandit` documents the B104 skip** and warns that any future `0.0.0.0` binding requires removing the skip.
 - **Encrypted file format now carries a 3-byte header** (`'SV' + version`) so future format changes are detectable. `decrypt_file` accepts both the new v1 format and the v0 (pre-2.6.0) format, so existing encrypted indexes still load without re-encryption.
+
+### Fixed (review pass 2)
+
+- **NaN/Inf rejection no longer leaves orphan catalog rows** — `add_texts` and `_process_streaming_batch` now validate vectors *before* the SQLite insert. Previously the catalog row committed first and a non-finite vector then raised, leaving rows visible via `get_documents_by_ids` but unreachable through similarity search.
+- **`VectorCollection.__repr__` no longer issues SQL** — the previous `count()` call would raise `ProgrammingError` after `close()`, breaking debuggers and exception formatters that auto-stringify objects. The 2.6.0 fix only covered `VectorDB.__repr__`.
+- **`EMBEDDING_SERVER_MAX_REQUEST_ITEMS` validation runs at module import** — the guard was previously inside `run_server()` and was bypassed under any non-CLI ASGI deployment (gunicorn, programmatic uvicorn).
+- **LlamaIndex empty-`node_id` path is atomic** — `SimpleVecDBLlamaStore.add` now generates a UUID for nodes that arrive without a `node_id` and stamps it into metadata *before* the row insert, so the metadata commit is in the same SQLite transaction as the catalog row. Previously a separate `UPDATE` followed `add_texts`; a crash in the gap left rows un-stampable and cross-restart `delete()` silently no-op'd.
+- **Catalog read paths serialize on `self._lock`** — `get_documents_by_ids`, `get_embeddings_by_ids`, `get_documents_and_embeddings_by_ids`, `find_ids_by_texts`, `find_ids_by_filter`, `keyword_search`, `count`, `get_all_docs_with_text`, `check_legacy_sqlite_vec`, `get_legacy_vectors`, `get_children`, `get_parent`, `get_descendants`, `get_ancestors`, `load_cluster_state`, `list_cluster_states`, and `VectorDB.list_collections` now acquire the connection-level lock around `conn.execute`. `sqlite3.Connection` is not safe for concurrent statement execution from multiple threads even under WAL.
+- **`rebuild_index` is fully serialized** — the entire fetch + build + swap now runs inside `with self._lock:` so concurrent `add` / `delete` cannot mutate the catalog mid-rebuild and produce a stale snapshot.
+- **`_ensure_cluster_table` double-checked under lock** — the `_cluster_table_ready` flag is now re-checked inside the lock and set inside the `with` block. Concurrent first-callers no longer both run the DDL.
+- **`utils.file_lock` opens via `os.open(O_CREAT | O_RDWR, 0o600)`** — no truncation of stale lock files from a crashed prior run, restricted permissions on the lock sentinel.
 
 ## [2.5.0] - 2026-04-07
 
