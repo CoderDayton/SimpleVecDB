@@ -1665,14 +1665,23 @@ class VectorDB:
                 self.conn.execute(f"DROP TABLE IF EXISTS {cluster_table}")
                 self.conn.execute(f"DROP TABLE IF EXISTS {table_name}")
 
-            # Delete usearch index file (and encrypted variant if present)
+            # Delete usearch index file (and encrypted variant if present),
+            # plus any per-DB salt sidecars left behind by the encryption
+            # layer (".enc.salt").
             if self.path != ":memory:":
                 index_path = Path(self.path + f".{name}.usearch")
-                if index_path.exists():
-                    index_path.unlink()
                 encrypted_path = Path(str(index_path) + ".enc")
-                if encrypted_path.exists():
-                    encrypted_path.unlink()
+                salt_path = Path(str(encrypted_path) + ".salt")
+                for p in (index_path, encrypted_path, salt_path):
+                    try:
+                        p.unlink()
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        _logger.debug(
+                            "Could not unlink %s during delete_collection", p,
+                            exc_info=True,
+                        )
 
             # Remove from cache (match any tuple key with this name)
             keys_to_remove = [k for k in self._collections if k[0] == name]

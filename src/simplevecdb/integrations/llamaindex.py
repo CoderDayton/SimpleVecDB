@@ -50,6 +50,31 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         """Return the underlying client (our VectorDB)."""
         return self._db
 
+    def migrate_node_id_metadata(self) -> int:
+        """Backfill ``_simplevecdb_node_id`` for documents inserted before 2.6.0.
+
+        Pre-2.6.0 versions did not persist the LlamaIndex node_id into
+        document metadata, so ``delete(ref_doc_id)`` could not find the
+        right row after a process restart. This helper walks every
+        document in the underlying collection and stamps the internal DB
+        id as the node_id for any row that lacks ``_simplevecdb_node_id``
+        metadata. Idempotent — already-stamped rows are skipped.
+
+        Returns:
+            Number of documents updated.
+        """
+        docs = self._collection.get_documents()
+        updates: list[tuple[int, dict[str, Any]]] = []
+        for doc_id, _text, metadata in docs:
+            if not metadata.get("_simplevecdb_node_id"):
+                merged = dict(metadata or {})
+                merged["_simplevecdb_node_id"] = str(doc_id)
+                updates.append((int(doc_id), merged))
+                self._id_map[int(doc_id)] = str(doc_id)
+        if not updates:
+            return 0
+        return self._collection.update_metadata(updates)
+
     @property
     def store_text(self) -> bool:
         """Whether the store keeps text content."""

@@ -125,6 +125,68 @@ def _normalize_key(key: str | bytes, salt: bytes | None = None) -> bytes:
     return derived
 
 
+_SALT_SIDECAR_SUFFIX = ".salt"
+
+
+def _resolve_salt(
+    resource_path: Path,
+    *,
+    create_if_missing: bool,
+) -> bytes:
+    """Return the salt for a given encrypted resource (DB or index file).
+
+    Looks for a sibling ``<resource>.salt`` file:
+    - If it exists: read it and return (per-DB random salt).
+    - If absent and ``create_if_missing=True``: generate a random salt,
+      write it atomically with mode 0o600, and return.
+    - If absent and ``create_if_missing=False``: return the legacy fixed
+      salt so encrypted resources created before per-DB salts (i.e.,
+      pre-2.6.0) keep working unchanged.
+
+    The sidecar salt is not secret on its own — it is only the input to
+    PBKDF2 — but restricting its mode prevents accidental world-read in
+    container environments with a permissive umask.
+    """
+    salt_path = resource_path.with_name(resource_path.name + _SALT_SIDECAR_SUFFIX)
+    try:
+        if salt_path.exists():
+            data = salt_path.read_bytes()
+            if len(data) == SALT_SIZE:
+                return data
+            _logger.warning(
+                "Salt sidecar %s has unexpected size %d (expected %d); "
+                "falling back to legacy fixed salt.",
+                salt_path,
+                len(data),
+                SALT_SIZE,
+            )
+            return _NORMALIZE_KEY_SALT
+    except OSError as exc:
+        _logger.warning(
+            "Could not read salt sidecar %s: %s. Falling back to legacy salt.",
+            salt_path,
+            exc,
+        )
+        return _NORMALIZE_KEY_SALT
+
+    if not create_if_missing:
+        # Legacy resource — created before per-DB salts existed.
+        return _NORMALIZE_KEY_SALT
+
+    salt = secrets.token_bytes(SALT_SIZE)
+    try:
+        _atomic_write_bytes(salt_path, salt, mode=0o600)
+    except OSError as exc:
+        _logger.warning(
+            "Could not write salt sidecar %s (%s); using legacy fixed salt. "
+            "Per-DB salt protection is disabled until the path is writable.",
+            salt_path,
+            exc,
+        )
+        return _NORMALIZE_KEY_SALT
+    return salt
+
+
 # ============================================================================
 # SQLCipher Connection Factory
 # ============================================================================
@@ -170,6 +232,13 @@ def create_encrypted_connection(
     except ImportError:
         raise EncryptionUnavailableError()
 
+    # Resolve the per-DB salt. For a brand-new database, generate and write
+    # a random sidecar; for an existing one, prefer the sidecar but fall
+    # back to the legacy fixed salt so pre-2.6.0 databases keep opening.
+    db_path_obj = Path(path_str)
+    is_new_db = not db_path_obj.exists() or db_path_obj.stat().st_size == 0
+    salt = _resolve_salt(db_path_obj, create_if_missing=is_new_db)
+
     try:
         conn = sqlcipher.connect(  # type: ignore[attr-defined]
             path_str,
@@ -185,7 +254,7 @@ def create_encrypted_connection(
         # 32 bytes via ``_normalize_key`` and feed it as ``x'hex'`` raw-key
         # form. The hex output is restricted to ``[0-9a-f]`` so no quoting
         # or escaping is needed.
-        normalized_key = _normalize_key(key)
+        normalized_key = _normalize_key(key, salt=salt)
         conn.execute(f"PRAGMA key = \"x'{normalized_key.hex()}'\"")
 
         # Verify encryption is working by querying cipher_version
@@ -445,8 +514,13 @@ def encrypt_index_file(index_path: Path, key: str | bytes) -> None:
     if not index_path.exists():
         return
 
-    normalized_key = _normalize_key(key)
     encrypted_path = index_path.with_suffix(".usearch.enc")
+    # New encryption: generate a random salt sidecar if one doesn't already
+    # exist. Re-encryption: keep the existing sidecar so decryption keeps
+    # working; legacy files without a sidecar fall back to the fixed salt.
+    is_first_encryption = not encrypted_path.exists()
+    salt = _resolve_salt(encrypted_path, create_if_missing=is_first_encryption)
+    normalized_key = _normalize_key(key, salt=salt)
 
     # encrypt_file is atomic (tmp + fsync + os.replace + chmod 0o600), so by
     # the time it returns the encrypted blob is durably on disk. Only then is
@@ -479,7 +553,11 @@ def decrypt_index_file(encrypted_path: Path, key: str | bytes) -> Path:
     if not encrypted_path.exists():
         raise EncryptionError(f"Encrypted index not found: {encrypted_path}")
 
-    normalized_key = _normalize_key(key)
+    # Existing encrypted file: prefer the sidecar salt (if present) and
+    # fall back to the legacy fixed salt for files written before per-DB
+    # salts existed. We never *create* a sidecar during decryption.
+    salt = _resolve_salt(encrypted_path, create_if_missing=False)
+    normalized_key = _normalize_key(key, salt=salt)
 
     # Decrypt to same location without .enc suffix
     decrypted_path = encrypted_path.with_suffix("")

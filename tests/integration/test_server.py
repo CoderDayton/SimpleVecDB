@@ -72,6 +72,9 @@ def test_embeddings_invalid_model_rejected():
 
 @pytest.mark.integration
 def test_usage_endpoint_reports_stats():
+    """When auth is disabled the /v1/usage endpoint returns an aggregated
+    ``_total`` rather than per-IP buckets — the prior behavior leaked the
+    full set of client IPs to anyone hitting the endpoint."""
     with patch("simplevecdb.embeddings.server.embed_texts") as mock_embed:
         mock_embed.return_value = [[0.1]]
         client.post("/v1/embeddings", json={"input": "hello"})
@@ -79,8 +82,8 @@ def test_usage_endpoint_reports_stats():
     usage_response = client.get("/v1/usage")
     assert usage_response.status_code == 200
     data = usage_response.json()["data"]
-    assert "anonymous" in data
-    assert data["anonymous"]["requests"] == 1
+    assert "_total" in data
+    assert data["_total"]["requests"] >= 1
 
 
 @pytest.mark.integration

@@ -52,6 +52,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Ruff and mypy targets aligned with `requires-python>=3.10`** — both were `py312`, hiding 3.10/3.11 incompatibilities. Cleaned three resulting `F401` unused-import warnings (`signal` in models.py, `_batched` and `constants` re-imports).
 - **Pre-commit version-sync hook** — `__init__.py` derives `__version__` dynamically via `importlib.metadata`, so `check_version_sync.py` was failing on every commit looking for a literal `__version__ = "x.y.z"` line that does not exist. The hook now validates only `pyproject.toml`'s version field. `bump_version.py` similarly stops trying to rewrite `__init__.py` and uses an anchored regex to update only the canonical version field.
 
+### Security (2.6.0 final)
+
+- **Per-DB random PBKDF2 salt** — encrypted databases and index files now generate a random 16-byte salt at creation time, written to a `<resource>.salt` sidecar with mode `0o600`. The previous fixed `b"simplevecdb-sqlcipher-key"` salt let an attacker precompute one rainbow table that broke every simplevecdb installation with the same passphrase. Pre-2.6.0 encrypted resources keep working unchanged: when no sidecar exists, the loader falls back to the legacy fixed salt automatically.
+- **HuggingFace `repo_id` allowlist + `trust_remote_code=False`** — the embeddings server validates model names against a strict regex (`namespace/name` with `[A-Za-z0-9_.-]` only) before passing them to `snapshot_download` / `SentenceTransformer`, blocking path traversal and local-filesystem inputs. `SentenceTransformer` is constructed with `trust_remote_code=False` so a malicious model card cannot trigger arbitrary downloaded Python on load.
+- **CORS is opt-in** — the server no longer adds CORS middleware unless `EMBEDDING_SERVER_CORS_ORIGINS` is set. When the operator does set wildcard origins (`["*"]`), `allow_credentials` is forced off so the spec-violating wildcard-with-credentials combo can't be produced.
+
+### Migration helpers
+
+- **`SimpleVecDBLlamaStore.migrate_node_id_metadata()`** — backfills `_simplevecdb_node_id` for documents inserted before 2.6.0. Pre-2.6.0 versions did not persist the LlamaIndex node_id into metadata, so `delete()` could not find the right row after a process restart. Idempotent — already-stamped rows are skipped.
+
 ### Added (hygiene & polish)
 
 - **`ClusterResult` and `ClusterTagCallback` exported from `simplevecdb`** — they were return/argument types of public methods but had no public import path; users had to reach into `simplevecdb.types`.
