@@ -1,4 +1,6 @@
 # tests/integration/test_rag.py
+import os
+
 import pytest
 from unittest.mock import Mock
 
@@ -10,7 +12,7 @@ try:
 except ImportError:
     OllamaClient = Mock()  # type: ignore
 
-from simplevecdb import VectorDB
+from simplevecdb import VectorDB  # noqa: E402
 
 
 @pytest.mark.integration
@@ -43,9 +45,15 @@ def test_rag_end_to_end(populated_db: VectorDB, monkeypatch):
     )  # in real, assert based on LLM output
 
 
-# Real Ollama test (skip if not available)
+# Real Ollama test — runs only when a local Ollama server has the
+# `qwen3.5:0.8b` model pulled. Skipped in CI (no Ollama daemon, no model)
+# and skipped locally when the daemon is unreachable.
 @pytest.mark.skipif(
     not _ollama_available, reason="Ollama not installed"
+)
+@pytest.mark.skipif(
+    bool(os.environ.get("CI")),
+    reason="CI environments do not run a local Ollama server",
 )
 def test_rag_with_ollama(populated_db):
     try:
@@ -70,7 +78,8 @@ def test_rag_with_ollama(populated_db):
         contexts = populated_db.collection("default").similarity_search(query_emb, k=2)
         context = "\n".join(d.page_content for d, _ in contexts)
         response = client.generate(
-            model="llama3", prompt=f"Using context: {context}, answer: {query}"
+            model="qwen3.5:0.8b",
+            prompt=f"Using context: {context}, answer: {query}",
         )
         assert "purple" in response["response"].lower()
     except Exception as e:

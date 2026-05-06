@@ -6,11 +6,9 @@ Targets missing lines: 32, 105-112, 120-136, 150-152, 167, 185,
 
 from __future__ import annotations
 
-import json
 import sqlite3
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
-import numpy as np
 import pytest
 
 from simplevecdb.engine.catalog import CatalogManager, _validate_table_name
@@ -154,7 +152,7 @@ class TestAddDocuments:
         # Verify embeddings are None
         for doc_id in ids:
             row = catalog.conn.execute(
-                f"SELECT embedding FROM docs WHERE id = ?", (doc_id,)
+                "SELECT embedding FROM docs WHERE id = ?", (doc_id,)
             ).fetchone()
             assert row[0] is None
 

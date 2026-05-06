@@ -21,10 +21,10 @@ import pytest
 
 llama_index = pytest.importorskip("llama_index.core")
 
-from llama_index.core.schema import TextNode
-from llama_index.core.vector_stores import VectorStoreQuery
+from llama_index.core.schema import TextNode  # noqa: E402
+from llama_index.core.vector_stores import VectorStoreQuery  # noqa: E402
 
-from simplevecdb.integrations.llamaindex import SimpleVecDBLlamaStore
+from simplevecdb.integrations.llamaindex import SimpleVecDBLlamaStore  # noqa: E402
 
 
 def _make_node(node_id: str, text: str, embedding: list[float]) -> TextNode:

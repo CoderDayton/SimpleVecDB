@@ -2,9 +2,10 @@
 
 import argparse
 import signal
+from typing import Any
 
 import pytest
-from unittest.mock import patch, MagicMock, ANY, call
+from unittest.mock import patch, MagicMock, ANY
 
 from fastapi.testclient import TestClient
 
@@ -12,7 +13,6 @@ import simplevecdb
 from simplevecdb.embeddings.server import (
     app,
     _normalize_input,
-    _validate_texts,
     _build_cli_parser,
     _server_version,
     ModelRegistry,

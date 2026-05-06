@@ -9,16 +9,13 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-import fcntl
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock, PropertyMock, call
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
-import numpy as np
 
 from simplevecdb import async_retry_on_lock, file_lock, DatabaseLockedError
 from simplevecdb.engine.catalog import CatalogManager

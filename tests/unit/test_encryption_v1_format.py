@@ -26,7 +26,6 @@ pytest.importorskip("cryptography")
 from simplevecdb.encryption import (  # noqa: E402
     AES_KEY_SIZE,
     AES_NONCE_SIZE,
-    _ENC_HEADER_LEN,
     _ENC_MAGIC,
     _ENC_VERSION,
     _NORMALIZE_KEY_CACHE,

@@ -240,9 +240,12 @@ class VectorCollection:
         else:
             self._ephemeral_index_path = None
 
-        # Create usearch index
+        # Create usearch index. Exactly one of actual_index_path /
+        # self._ephemeral_index_path is non-None per the if/else above.
+        chosen_index_path = actual_index_path or self._ephemeral_index_path
+        assert chosen_index_path is not None
         self._index = UsearchIndex(
-            index_path=actual_index_path or self._ephemeral_index_path,
+            index_path=chosen_index_path,
             ndim=None,  # Will be set on first add
             distance_strategy=self.distance_strategy,
             quantization=self.quantization,
@@ -504,7 +507,9 @@ class VectorCollection:
         # Accumulate batch
         batch_texts: list[str] = []
         batch_metas: list[dict] = []
-        batch_embeds: list[Sequence[float]] = []
+        # None entries are placeholders for items that need auto-embedding;
+        # _process_streaming_batch resolves them before persistence.
+        batch_embeds: list[Sequence[float] | None] = []
         needs_embedding = False
 
         for text, metadata, embedding in items:
@@ -572,7 +577,7 @@ class VectorCollection:
         self,
         texts: list[str],
         metas: list[dict],
-        embeds: list[Sequence[float]],
+        embeds: list[Sequence[float] | None],
         needs_embedding: bool,
         threads: int,
     ) -> list[int]:
@@ -592,15 +597,29 @@ class VectorCollection:
                     "Auto-embedding failed - install with [server] extra or provide embeddings"
                 ) from e
 
+        # By this point any None placeholder has been replaced with a real
+        # embedding (either auto-generated above or supplied by the caller).
+        # Narrow the type so the asarray and add_documents calls type-check.
+        if any(e is None for e in embeds):
+            raise ValueError(
+                "Internal error: streaming batch reached persistence with "
+                "unresolved auto-embedding placeholders."
+            )
+        embeds_resolved: list[Sequence[float]] = [
+            e for e in embeds if e is not None
+        ]
+
         # Validate vectors before any persistence — see add_texts for rationale.
-        emb_np = np.asarray(embeds, dtype=np.float32)
+        emb_np = np.asarray(embeds_resolved, dtype=np.float32)
         if not np.all(np.isfinite(emb_np)):
             raise ValueError(
                 "Input vectors contain NaN or Inf; refusing to add to index"
             )
 
         # Add to catalog and index
-        doc_ids = self._catalog.add_documents(texts, metas, None, embeddings=embeds)
+        doc_ids = self._catalog.add_documents(
+            texts, metas, None, embeddings=embeds_resolved
+        )
         self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
 
         return doc_ids

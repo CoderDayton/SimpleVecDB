@@ -266,7 +266,6 @@ class TestIndexFileEdgeCases:
         """Line 396: path where removing .enc doesn't yield .usearch suffix."""
         # Create encrypted data with a different naming pattern
         original_data = b"index data here"
-        key = os.urandom(AES_KEY_SIZE)
 
         # Create plaintext, encrypt it
         plain = tmp_path / "myindex.dat"

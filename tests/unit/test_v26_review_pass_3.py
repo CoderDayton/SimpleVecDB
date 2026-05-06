@@ -19,7 +19,6 @@ import os
 from pathlib import Path
 from unittest import mock
 
-import numpy as np
 import pytest
 
 from simplevecdb import VectorDB
@@ -66,7 +65,6 @@ class TestUsearchIndexFsync:
         # in UsearchIndex.save must unlink the .tmp file before the
         # exception propagates.
         index = col._index
-        original_save = index._index.save
 
         def boom(path, *a, **kw):
             # Create a partial .tmp file on disk to simulate a torn write

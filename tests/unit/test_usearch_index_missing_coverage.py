@@ -6,10 +6,9 @@ Missing lines: 76-78, 141-145, 168, 203, 213, 235, 244-248, 328-329,
 
 import pytest
 import numpy as np
-from unittest.mock import MagicMock, patch, PropertyMock
-from pathlib import Path
+from unittest.mock import MagicMock
 
-from simplevecdb import VectorDB, DistanceStrategy, Quantization
+from simplevecdb import VectorDB, DistanceStrategy
 
 
 class TestUnpackBits:

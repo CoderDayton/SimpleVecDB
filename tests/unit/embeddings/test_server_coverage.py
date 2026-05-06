@@ -7,7 +7,7 @@ Targets missing lines: 41-45, 56-57, 70, 97, 106, 138,
 from __future__ import annotations
 
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,7 +17,6 @@ from simplevecdb.embeddings.server import (
     ModelRegistry,
     UsageMeter,
     app,
-    authenticate_request,
 )
 from simplevecdb.embeddings import server
 

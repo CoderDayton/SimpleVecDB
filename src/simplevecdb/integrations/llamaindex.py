@@ -26,7 +26,7 @@ except ImportError as exc:
 
 _logger = logging.getLogger("simplevecdb.integrations.llamaindex")
 
-from simplevecdb.core import VectorDB  # our core
+from simplevecdb.core import VectorDB  # noqa: E402  (depends on llama_index probe above)
 
 if TYPE_CHECKING:
     from simplevecdb.types import Document

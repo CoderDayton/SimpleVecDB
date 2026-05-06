@@ -360,7 +360,13 @@ def _normalize_input(raw_input: str | list[str] | list[int] | list[list[int]]) -
 
     # list[list[int]] — nested token arrays (#8)
     if isinstance(first, list):
-        return [" ".join(str(tok) for tok in sub) for sub in raw_input]
+        # mypy can't narrow raw_input to list[list[int]] from
+        # isinstance(first, list); the runtime branch above (line ~358)
+        # already eliminates list[int].
+        return [
+            " ".join(str(tok) for tok in sub)  # type: ignore[union-attr]
+            for sub in raw_input
+        ]
 
     # list[str]
     return [str(item) for item in raw_input]

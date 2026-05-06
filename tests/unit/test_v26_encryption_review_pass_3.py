@@ -26,7 +26,7 @@ import pytest
 
 cryptography = pytest.importorskip("cryptography")
 
-from simplevecdb.encryption import (
+from simplevecdb.encryption import (  # noqa: E402
     AES_KEY_SIZE,
     AES_NONCE_SIZE,
     EncryptionError,
