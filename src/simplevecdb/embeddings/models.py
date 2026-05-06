@@ -10,10 +10,13 @@ from ..config import config
 
 _logger = logging.getLogger("simplevecdb.embeddings.models")
 
-# Timeout for HuggingFace snapshot_download (seconds).
-# First-time downloads can be large; subsequent loads are local cache hits.
-_DOWNLOAD_TIMEOUT = 300  # 5 minutes
-# Maximum texts per encode call to prevent unbounded CPU time.
+# HEAD timeout for HuggingFace snapshot_download. The download itself relies
+# on huggingface_hub's internal retries; ``etag_timeout`` only bounds the
+# initial HEAD probe to detect ETag changes.
+_ETAG_TIMEOUT = 30
+# Maximum texts per encode call to prevent unbounded CPU time. Coordinated
+# with ``config.EMBEDDING_SERVER_MAX_REQUEST_ITEMS`` — a startup assertion
+# in ``server.py`` enforces the relationship.
 _MAX_ENCODE_BATCH = 10_000
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing
@@ -60,7 +63,7 @@ def load_model(repo_id: str) -> SentenceTransformerType:
             repo_id=repo_id,
             cache_dir=CACHE_DIR,
             local_files_only=False,  # auto-download first time
-            etag_timeout=30,  # HTTP HEAD timeout
+            etag_timeout=_ETAG_TIMEOUT,  # HTTP HEAD timeout
         )
     except Exception as exc:
         # Try local-only as fallback (model may already be cached)

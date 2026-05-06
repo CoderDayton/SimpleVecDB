@@ -104,7 +104,17 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
-        """Load configuration from environment variables."""
+        """Return the module-level config instance.
+
+        .. note::
+            All ``Config`` attributes are evaluated at *class-definition*
+            time when this module is first imported. Setting environment
+            variables after import and calling ``Config.from_env()`` does
+            **not** re-read them — the values you get are whatever the
+            environment looked like at first import. Use the module-level
+            ``config`` singleton; do not rely on this method to refresh
+            values on demand.
+        """
         return cls()
 
 

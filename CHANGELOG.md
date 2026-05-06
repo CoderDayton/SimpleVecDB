@@ -52,6 +52,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Ruff and mypy targets aligned with `requires-python>=3.10`** — both were `py312`, hiding 3.10/3.11 incompatibilities. Cleaned three resulting `F401` unused-import warnings (`signal` in models.py, `_batched` and `constants` re-imports).
 - **Pre-commit version-sync hook** — `__init__.py` derives `__version__` dynamically via `importlib.metadata`, so `check_version_sync.py` was failing on every commit looking for a literal `__version__ = "x.y.z"` line that does not exist. The hook now validates only `pyproject.toml`'s version field. `bump_version.py` similarly stops trying to rewrite `__init__.py` and uses an anchored regex to update only the canonical version field.
 
+### Added (hygiene & polish)
+
+- **`ClusterResult` and `ClusterTagCallback` exported from `simplevecdb`** — they were return/argument types of public methods but had no public import path; users had to reach into `simplevecdb.types`.
+- **`NullHandler` attached to the package's root logger** at import time, per the Python logging HOWTO. Idempotent — duplicate calls do not stack handlers.
+- **`SimpleVecDBLlamaStore.delete_nodes` raises `NotImplementedError`** when called with `filters`, instead of silently dropping the filter portion and pretending the deletion succeeded.
+- **Recursive CTE depth bound as a parameter** in `get_descendants` / `get_ancestors`. The previous f-string interpolation was safe due to `int()` coercion but is now one less line away from injection on a future refactor.
+- **`Config.from_env()` documented** as returning the import-time-frozen instance; setting env vars after import does not refresh.
+- **`ModelRegistry(allow_unlisted=...)` defaults to `False`** to match the secure-by-default config setting; programmatic instantiations no longer get an open registry by accident.
+- **`/v1/usage` returns aggregated totals when auth is disabled** instead of leaking the per-IP buckets to anyone who hits the endpoint.
+- **Server validates `EMBEDDING_SERVER_MAX_REQUEST_ITEMS <= _MAX_ENCODE_BATCH` at startup** so an out-of-range env var fails fast at boot rather than per request.
+- **`pyproject.toml` gains `[project.urls]`, `classifiers`, and `keywords`** for a useful PyPI listing.
+- **`.bandit` documents the B104 skip** and warns that any future `0.0.0.0` binding requires removing the skip.
+- **Encrypted file format now carries a 3-byte header** (`'SV' + version`) so future format changes are detectable. `decrypt_file` accepts both the new v1 format and the v0 (pre-2.6.0) format, so existing encrypted indexes still load without re-encryption.
+
 ## [2.5.0] - 2026-04-07
 
 ### Added

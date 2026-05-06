@@ -143,9 +143,18 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
 
         Args:
             node_ids: List of node IDs to delete.
-            filters: Metadata filters (unused).
+            filters: Metadata filters. Currently unsupported — passing a
+                non-None ``filters`` raises ``NotImplementedError`` rather
+                than silently ignoring it (which would let callers think
+                the deletion happened).
             **delete_kwargs: Unused.
         """
+        if filters is not None:
+            raise NotImplementedError(
+                "delete_nodes(filters=...) is not yet supported by simplevecdb. "
+                "Resolve the filter to node_ids first via the underlying "
+                "VectorCollection.find_ids_by_filter() or query()."
+            )
         if node_ids:
             for node_id in node_ids:
                 self.delete(node_id)

@@ -123,7 +123,10 @@ async def health_check():
 class ModelRegistry:
     """In-memory mapping of allowed embedding models."""
 
-    def __init__(self, mapping: dict[str, str], allow_unlisted: bool = True):
+    def __init__(self, mapping: dict[str, str], allow_unlisted: bool = False):
+        # Default to locked: programmatic ModelRegistry instances (e.g., in
+        # tests) get the same secure default as the configured server. Until
+        # callers explicitly opt in, unlisted models cannot be served.
         self._mapping = mapping or {"default": DEFAULT_MODEL}
         self._default_alias = "default"
         if self._default_alias not in self._mapping:
@@ -198,7 +201,21 @@ class UsageMeter:
             bucket["prompt_tokens"] += prompt_tokens
             bucket["last_request_ts"] = now
 
-    def snapshot(self, identity: str | None = None) -> dict[str, dict[str, float]]:
+    def snapshot(
+        self,
+        identity: str | None = None,
+        *,
+        aggregate: bool = False,
+    ) -> dict[str, dict[str, float]]:
+        """Return per-identity usage stats, or an aggregate total.
+
+        When ``identity`` is given, return only that bucket. Otherwise:
+        - ``aggregate=False`` (default): the full per-identity map.
+        - ``aggregate=True``: a single ``{"_total": {...}}`` bucket
+          summed across identities. The aggregate mode is what the
+          ``/v1/usage`` endpoint exposes when auth is disabled, so the
+          server doesn't leak the list of client IPs that have used it.
+        """
         with self._lock:
             if identity:
                 data = self._stats.get(
@@ -206,6 +223,15 @@ class UsageMeter:
                     {"requests": 0, "prompt_tokens": 0, "last_request_ts": 0.0},
                 )
                 return {identity: dict(data)}
+            if aggregate:
+                total = {"requests": 0.0, "prompt_tokens": 0.0, "last_request_ts": 0.0}
+                for value in self._stats.values():
+                    total["requests"] += value["requests"]
+                    total["prompt_tokens"] += value["prompt_tokens"]
+                    total["last_request_ts"] = max(
+                        total["last_request_ts"], value["last_request_ts"]
+                    )
+                return {"_total": total}
             return {key: dict(value) for key, value in self._stats.items()}
 
 
@@ -397,10 +423,16 @@ async def list_models(
 
 @app.get("/v1/usage")
 async def usage(api_identity: str = Depends(authenticate_request)) -> dict[str, Any]:
-    """Return aggregate or per-key usage statistics."""
-    # If auth is enabled, only return the caller's stats; otherwise expose all.
-    scope = api_identity if config.EMBEDDING_SERVER_API_KEYS else None
-    return {"object": "usage", "data": usage_meter.snapshot(scope)}
+    """Return aggregate or per-key usage statistics.
+
+    When auth is configured, return only the caller's bucket. When auth is
+    disabled, return a single aggregated total — the per-identity buckets
+    are keyed by client IP and exposing the full list to anyone is an
+    information leak.
+    """
+    if config.EMBEDDING_SERVER_API_KEYS:
+        return {"object": "usage", "data": usage_meter.snapshot(api_identity)}
+    return {"object": "usage", "data": usage_meter.snapshot(aggregate=True)}
 
 
 def _build_cli_parser() -> argparse.ArgumentParser:
@@ -496,6 +528,23 @@ def run_server(host: str | None = None, port: int | None = None) -> None:
             "Server is running without authentication. "
             "Set EMBEDDING_SERVER_API_KEYS for production use."
         )
+    # Coordinate the per-request item cap with the encode-call cap so the
+    # first never exceeds the second (otherwise embed_texts raises after the
+    # request has already been validated and accepted).
+    from .models import _MAX_ENCODE_BATCH
+
+    try:
+        request_cap = int(config.EMBEDDING_SERVER_MAX_REQUEST_ITEMS)
+    except (TypeError, ValueError):
+        request_cap = None
+    if request_cap is not None and request_cap > _MAX_ENCODE_BATCH:
+        raise RuntimeError(
+            f"EMBEDDING_SERVER_MAX_REQUEST_ITEMS="
+            f"{request_cap} exceeds the embed_texts cap of "
+            f"{_MAX_ENCODE_BATCH}. Lower the env var or raise "
+            "_MAX_ENCODE_BATCH in embeddings/models.py."
+        )
+
     if host == "0.0.0.0":
         _logger.warning(
             "Server binding to all interfaces (0.0.0.0). "

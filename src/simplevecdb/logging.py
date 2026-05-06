@@ -28,6 +28,15 @@ LOGGER_NAME = "simplevecdb"
 # Default format includes timestamp, level, logger name, and message
 DEFAULT_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+# Per the Python logging HOWTO, libraries should attach a NullHandler to
+# their root logger namespace at import time so callers that have not
+# configured logging do not see "No handlers could be found" warnings.
+# Adding it here is idempotent — duplicate calls do not stack handlers
+# because we check for an existing NullHandler first.
+_root_logger = logging.getLogger(LOGGER_NAME)
+if not any(isinstance(h, logging.NullHandler) for h in _root_logger.handlers):
+    _root_logger.addHandler(logging.NullHandler())
+
 
 def get_logger(name: str | None = None) -> logging.Logger:
     """

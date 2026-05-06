@@ -6,6 +6,33 @@ authors = [{ name = "Dayton Dunbar", email = "coderdayton14@gmail.com" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = [
+    "vector-database",
+    "vectordb",
+    "usearch",
+    "hnsw",
+    "sqlite",
+    "embeddings",
+    "rag",
+    "similarity-search",
+    "langchain",
+    "llamaindex",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
+]
 
 dependencies = [
     "numpy>=1.24",
@@ -17,6 +44,12 @@ dependencies = [
     "cryptography>=41.0",       # Encryption utilities
     "python-dotenv>=1.0",       # Loaded by simplevecdb.config at import time
 ]
+
+[project.urls]
+Homepage = "https://github.com/CoderDayton/simplevecdb"
+Repository = "https://github.com/CoderDayton/simplevecdb"
+Issues = "https://github.com/CoderDayton/simplevecdb/issues"
+Changelog = "https://github.com/CoderDayton/simplevecdb/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 integrations = [

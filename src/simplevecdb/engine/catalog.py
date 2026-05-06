@@ -838,9 +838,12 @@ class CatalogManager:
         """
         from .. import constants
 
-        # Apply safety cap to prevent infinite recursion from cycles
+        # Apply safety cap to prevent infinite recursion from cycles. The
+        # depth is bound as a parameter rather than f-string interpolated;
+        # int() coercion makes the previous f-string safe today, but the
+        # parameter form is one less line away from injection on a future
+        # refactor.
         effective_depth = int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
-        depth_clause = f"AND depth < {effective_depth}"
 
         sql = f"""
             WITH RECURSIVE descendants(id, text, metadata, depth) AS (
@@ -853,13 +856,13 @@ class CatalogManager:
                 SELECT t.id, t.text, t.metadata, d.depth + 1
                 FROM {self._table_name} t
                 JOIN descendants d ON t.parent_id = d.id
-                WHERE 1=1 {depth_clause}
+                WHERE depth < ?
             )
             SELECT id, text, metadata, depth FROM descendants
             ORDER BY depth, id
         """
 
-        rows = self.conn.execute(sql, (root_id,)).fetchall()
+        rows = self.conn.execute(sql, (root_id, effective_depth)).fetchall()
 
         return [
             (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows
@@ -881,9 +884,9 @@ class CatalogManager:
         """
         from .. import constants
 
-        # Apply safety cap to prevent infinite recursion from cycles
+        # Apply safety cap to prevent infinite recursion from cycles. Bind
+        # the depth as a parameter (see get_descendants for rationale).
         effective_depth = int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
-        depth_clause = f"AND depth < {effective_depth}"
 
         sql = f"""
             WITH RECURSIVE ancestors(id, text, metadata, parent_id, depth) AS (
@@ -896,13 +899,13 @@ class CatalogManager:
                 SELECT t.id, t.text, t.metadata, t.parent_id, a.depth + 1
                 FROM {self._table_name} t
                 JOIN ancestors a ON t.id = a.parent_id
-                WHERE a.parent_id IS NOT NULL {depth_clause}
+                WHERE a.parent_id IS NOT NULL AND a.depth < ?
             )
             SELECT id, text, metadata, depth FROM ancestors
             ORDER BY depth
         """
 
-        rows = self.conn.execute(sql, (doc_id,)).fetchall()
+        rows = self.conn.execute(sql, (doc_id, effective_depth)).fetchall()
 
         return [
             (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows

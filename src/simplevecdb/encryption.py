@@ -31,10 +31,6 @@ import os
 import secrets
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 _logger = logging.getLogger("simplevecdb.encryption")
 
@@ -46,6 +42,15 @@ SALT_SIZE = 16
 PBKDF2_ITERATIONS = 480000  # OWASP 2023 recommendation for SHA-256
 # Fixed salt for deterministic key normalization (SQLCipher/index compatibility)
 _NORMALIZE_KEY_SALT = b"simplevecdb-sqlcipher-key"
+
+# Encrypted file format
+#   v0 (pre-2.6.0): nonce(12) | ciphertext+tag(N+16)
+#   v1 (2.6.0+):    magic(2)='SV' | version(1)=1 | nonce(12) | ciphertext+tag
+# v1 is written by encrypt_file; decrypt_file accepts both formats so
+# existing encrypted indexes keep working.
+_ENC_MAGIC = b"SV"
+_ENC_VERSION = 1
+_ENC_HEADER_LEN = len(_ENC_MAGIC) + 1  # magic + version byte
 
 
 class EncryptionError(Exception):
@@ -321,11 +326,14 @@ def encrypt_file(
         aesgcm = AESGCM(key)
         ciphertext = aesgcm.encrypt(nonce, plaintext, associated_data=None)
 
-        # Atomically write: nonce + ciphertext to a sibling temp file, fsync,
-        # restrict permissions, then os.replace() onto the target path. A
-        # crash mid-write leaves only the temp file (which is removed on
-        # the next attempt or by hand); the target is never torn.
-        _atomic_write_bytes(output_path, nonce + ciphertext, mode=0o600)
+        # Atomically write: header + nonce + ciphertext to a sibling temp
+        # file, fsync, restrict permissions, then os.replace() onto the
+        # target path. A crash mid-write leaves only the temp file; the
+        # target is never torn.
+        header = _ENC_MAGIC + bytes([_ENC_VERSION])
+        _atomic_write_bytes(
+            output_path, header + nonce + ciphertext, mode=0o600
+        )
 
         _logger.debug(
             "Encrypted %d bytes -> %d bytes",
@@ -362,6 +370,15 @@ def decrypt_file(
     try:
         # Read encrypted data
         data = input_path.read_bytes()
+
+        # Detect format. v1 starts with magic 'SV' + version byte; anything
+        # else is treated as v0 (pre-2.6.0) for backwards compatibility.
+        if (
+            len(data) >= _ENC_HEADER_LEN
+            and data[: len(_ENC_MAGIC)] == _ENC_MAGIC
+            and data[len(_ENC_MAGIC)] == _ENC_VERSION
+        ):
+            data = data[_ENC_HEADER_LEN:]
 
         if len(data) < AES_NONCE_SIZE + AES_TAG_SIZE:
             raise EncryptionError("Encrypted file too small to be valid")
