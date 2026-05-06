@@ -374,13 +374,13 @@ def file_lock(path: Path) -> Generator[None, None, None]:
                 pass
     finally:
         # Always close the fd so we don't leak file handles when an unlock
-        # call raises. Best-effort remove the .lock sibling so they don't
-        # accumulate indefinitely in busy data directories.
+        # call raises. The lock file itself is intentionally NOT unlinked:
+        # flock/LK_LOCK are inode-bound, so removing the path while
+        # another process is still queued on flock(fd) on the old inode
+        # would let a third process create a new path → new inode →
+        # acquire a different lock concurrently. A surviving zero-byte
+        # ``.lock`` sidecar is far cheaper than a torn save.
         try:
             fd.close()
         except OSError:
-            pass
-        try:
-            lock_path.unlink()
-        except (FileNotFoundError, PermissionError, OSError):
             pass

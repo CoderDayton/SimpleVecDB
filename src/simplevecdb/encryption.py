@@ -281,12 +281,23 @@ def create_encrypted_connection(
     except ImportError:
         raise EncryptionUnavailableError()
 
-    # Resolve the per-DB salt. For a brand-new database, generate and write
-    # a random sidecar; for an existing one, prefer the sidecar but fall
-    # back to the legacy fixed salt so pre-2.6.0 databases keep opening.
+    # Decide between the new raw-key path (per-DB salt + 600k-iter PBKDF2
+    # → ``x'hex'`` PRAGMA) and the legacy passphrase path (``PRAGMA key =
+    # '<escaped passphrase>'``, SQLCipher does its own KDF internally).
+    #
+    # The presence of a per-DB ``<db>.salt`` sidecar marks a database as
+    # 2.6.0+. Any database whose file is non-empty but has no sidecar was
+    # created by pre-2.6.0 SimpleVecDB (or another tool) using SQLCipher's
+    # built-in passphrase KDF, and would be unopenable under the new
+    # raw-key path because the derived 32-byte key does not match what
+    # SQLCipher derived internally from the original passphrase.
     db_path_obj = Path(path_str)
+    salt_path = db_path_obj.with_name(db_path_obj.name + _SALT_SIDECAR_SUFFIX)
     is_new_db = not db_path_obj.exists() or db_path_obj.stat().st_size == 0
-    salt = _resolve_salt(db_path_obj, create_if_missing=is_new_db)
+    has_sidecar = (
+        salt_path.exists() and salt_path.stat().st_size == SALT_SIZE
+    )
+    use_legacy_passphrase_path = (not is_new_db) and (not has_sidecar)
 
     try:
         conn = sqlcipher.connect(  # type: ignore[attr-defined]
@@ -295,16 +306,27 @@ def create_encrypted_connection(
             timeout=timeout,
         )
 
-        # Set the encryption key using PRAGMA. PRAGMA arguments cannot be
-        # parameterized via ``?`` placeholders, so we must interpolate. To
-        # avoid ever interpolating user-supplied passphrase characters into a
-        # quoted SQL string (where escape rules are subtle and SQLCipher
-        # parsing has surprising edge cases), normalize *every* key path to
-        # 32 bytes via ``_normalize_key`` and feed it as ``x'hex'`` raw-key
-        # form. The hex output is restricted to ``[0-9a-f]`` so no quoting
-        # or escaping is needed.
-        normalized_key = _normalize_key(key, salt=salt)
-        conn.execute(f"PRAGMA key = \"x'{normalized_key.hex()}'\"")
+        if use_legacy_passphrase_path:
+            # Pre-2.6.0 database: keep using the passphrase-style PRAGMA
+            # so SQLCipher derives the same internal key it derived when
+            # the database was first created. A raw-32-byte key supplied
+            # by the caller is still routed via ``x'hex'`` since that is
+            # also what pre-2.6.0 did for that input shape.
+            if isinstance(key, bytes) and len(key) == AES_KEY_SIZE:
+                conn.execute(f"PRAGMA key = \"x'{key.hex()}'\"")
+            else:
+                key_str = key.decode("utf-8") if isinstance(key, bytes) else key
+                # Escape embedded single quotes per SQL literal rules.
+                escaped = key_str.replace("'", "''")
+                conn.execute(f"PRAGMA key = '{escaped}'")
+        else:
+            # New database (write fresh sidecar) or already-migrated 2.6+
+            # database (sidecar present). Normalize every key shape to a
+            # 32-byte derived value and feed it as ``x'hex'`` so we never
+            # interpolate raw passphrase characters into SQL.
+            salt = _resolve_salt(db_path_obj, create_if_missing=is_new_db)
+            normalized_key = _normalize_key(key, salt=salt)
+            conn.execute(f"PRAGMA key = \"x'{normalized_key.hex()}'\"")
 
         # Verify encryption is working by querying cipher_version
         try:

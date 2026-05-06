@@ -21,9 +21,11 @@ build/
 *.db
 *.sqlite
 
-# OpenCode
+# Agentic CLI tools (per-developer state)
 .opencode/
 opencode.json
+.claude/
+.codex
 
 # Project specific
 simplevecdb_plan.md

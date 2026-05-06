@@ -68,32 +68,39 @@ class TestHybridSearchDedupesByDocId:
 
 
 class TestFileLockCleanup:
-    def test_lock_file_removed_on_release(self, tmp_path: Path):
+    """The ``.lock`` sidecar is intentionally kept on disk after the
+    context exits — flock/LK_LOCK are inode-bound, and unlinking the
+    path while another process is queued on the old inode would let a
+    third process acquire a different lock concurrently. See review
+    pass 4 (codex P1)."""
+
+    def test_lock_file_persists_on_release(self, tmp_path: Path):
         target = tmp_path / "target.bin"
         lock_path = tmp_path / "target.bin.lock"
         with file_lock(target):
-            # Inside the context the .lock sibling exists.
             assert lock_path.exists()
-        # After release the .lock sibling must be cleaned up.
-        assert not lock_path.exists()
+        # After release the .lock sidecar MUST still exist so future
+        # acquisitions reuse the same inode.
+        assert lock_path.exists()
 
-    def test_lock_file_removed_after_exception(self, tmp_path: Path):
+    def test_lock_file_persists_after_exception(self, tmp_path: Path):
         target = tmp_path / "target.bin"
         lock_path = tmp_path / "target.bin.lock"
         with pytest.raises(RuntimeError, match="boom"):
             with file_lock(target):
                 raise RuntimeError("boom")
-        # Even on exception, the .lock sibling is gone.
-        assert not lock_path.exists()
+        # Exception path must still preserve the lock sidecar.
+        assert lock_path.exists()
 
-    def test_serial_acquire_release_does_not_accumulate(self, tmp_path: Path):
+    def test_serial_acquire_release_reuses_one_lock_file(self, tmp_path: Path):
         target = tmp_path / "loop.bin"
         for _ in range(5):
             with file_lock(target):
                 pass
-        # No leftover .lock files (or any other artefacts).
+        # Exactly one .lock file — repeated acquisitions reuse the same
+        # path/inode rather than each creating a fresh one.
         leftovers = list(tmp_path.glob("*.lock"))
-        assert leftovers == []
+        assert leftovers == [tmp_path / "loop.bin.lock"]
 
     def test_concurrent_acquire_serializes(self, tmp_path: Path):
         # Sanity: file_lock is mutually exclusive within the same process.
