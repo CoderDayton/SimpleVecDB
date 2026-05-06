@@ -351,14 +351,30 @@ def file_lock(path: Path) -> Generator[None, None, None]:
             import fcntl
 
             fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
-        yield
+        try:
+            yield
+        finally:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                # Even if unlock fails (rare), the close below still runs.
+                pass
     finally:
-        if sys.platform == "win32":
-            import msvcrt
-
-            msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
-        fd.close()
+        # Always close the fd so we don't leak file handles when an unlock
+        # call raises. Best-effort remove the .lock sibling so they don't
+        # accumulate indefinitely in busy data directories.
+        try:
+            fd.close()
+        except OSError:
+            pass
+        try:
+            lock_path.unlink()
+        except (FileNotFoundError, PermissionError, OSError):
+            pass

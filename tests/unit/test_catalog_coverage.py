@@ -113,30 +113,30 @@ class TestFTS:
         assert cm.fts_enabled is False
 
     def test_upsert_fts_rows_empty_ids(self, catalog):
-        """Line 167: upsert_fts_rows returns early on empty ids."""
-        catalog.upsert_fts_rows([], [])  # no error
+        """Line 167: _upsert_fts_rows returns early on empty ids."""
+        catalog._upsert_fts_rows([], [])  # no error
 
     def test_upsert_fts_rows_fts_disabled(self, conn):
-        """Line 167: upsert_fts_rows returns early when FTS disabled."""
+        """Line 167: _upsert_fts_rows returns early when FTS disabled."""
         cm = CatalogManager(conn, "docs_nofts2", "docs_nofts2_fts")
         cm.conn.execute(
             "CREATE TABLE docs_nofts2 (id INTEGER PRIMARY KEY, text TEXT, metadata TEXT, embedding BLOB, parent_id INTEGER)"
         )
         cm._fts_enabled = False
-        cm.upsert_fts_rows([1], ["text"])  # no error, early return
+        cm._upsert_fts_rows([1], ["text"])  # no error, early return
 
     def test_delete_fts_rows_empty_ids(self, catalog):
-        """Line 185: delete_fts_rows returns early on empty ids."""
-        catalog.delete_fts_rows([])  # no error
+        """Line 185: _delete_fts_rows returns early on empty ids."""
+        catalog._delete_fts_rows([])  # no error
 
     def test_delete_fts_rows_fts_disabled(self, conn):
-        """Line 185: delete_fts_rows returns early when FTS disabled."""
+        """Line 185: _delete_fts_rows returns early when FTS disabled."""
         cm = CatalogManager(conn, "docs_nofts3", "docs_nofts3_fts")
         cm.conn.execute(
             "CREATE TABLE docs_nofts3 (id INTEGER PRIMARY KEY, text TEXT, metadata TEXT, embedding BLOB, parent_id INTEGER)"
         )
         cm._fts_enabled = False
-        cm.delete_fts_rows([1, 2])  # no error, early return
+        cm._delete_fts_rows([1, 2])  # no error, early return
 
 
 class TestAddDocuments:

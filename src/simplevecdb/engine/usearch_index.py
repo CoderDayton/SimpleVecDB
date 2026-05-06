@@ -11,6 +11,7 @@ Provides a thread-safe wrapper around usearch.Index with:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -393,17 +394,55 @@ class UsearchIndex:
         return key in self._index
 
     def save(self) -> None:
-        """Save index to disk if modified."""
-        if self._index is None or not self._dirty:
-            return
+        """Save index to disk atomically if modified.
 
+        Writes to a sibling temp file, fsyncs it, then os.replace()s it onto
+        the target path. A crash mid-save leaves either the previous good
+        file or the temp file (which can be safely removed); the target
+        path is never torn.
+        """
         from ..utils import file_lock
 
         with self._write_lock:
-            # Ensure parent directory exists
+            if self._index is None or not self._dirty:
+                return
+
             self._path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
+
             with file_lock(self._path):
-                self._index.save(str(self._path))
+                try:
+                    self._index.save(str(tmp_path))
+                    # fsync the temp file so the data hits disk before the rename
+                    try:
+                        fd = os.open(str(tmp_path), os.O_RDONLY)
+                        try:
+                            os.fsync(fd)
+                        finally:
+                            os.close(fd)
+                    except OSError as exc:
+                        _logger.warning("fsync on %s failed: %s", tmp_path, exc)
+                    os.replace(str(tmp_path), str(self._path))
+                    # fsync the directory so the rename itself is durable
+                    try:
+                        dir_fd = os.open(str(self._path.parent), os.O_RDONLY)
+                        try:
+                            os.fsync(dir_fd)
+                        finally:
+                            os.close(dir_fd)
+                    except OSError as exc:
+                        _logger.debug("Directory fsync on %s skipped: %s",
+                                      self._path.parent, exc)
+                except Exception:
+                    # Clean up the temp file on failure; the original index
+                    # at self._path is untouched.
+                    try:
+                        if tmp_path.exists():
+                            tmp_path.unlink()
+                    except OSError:
+                        pass
+                    raise
+
             self._dirty = False
             _logger.debug("Saved index to %s", self._path)
 

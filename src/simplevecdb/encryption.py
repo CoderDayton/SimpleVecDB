@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import secrets
 import sqlite3
 from pathlib import Path
@@ -236,6 +237,41 @@ def is_database_encrypted(path: str | Path) -> bool:
 # ============================================================================
 
 
+def _atomic_write_bytes(target: Path, data: bytes, *, mode: int = 0o600) -> None:
+    """Write ``data`` to ``target`` atomically with restricted permissions.
+
+    Writes to a sibling ``.tmp`` file, fsyncs it, sets the file mode, then
+    ``os.replace()`` onto the target. A crash leaves at most an orphan temp
+    file; the target path is never partially written. The directory is also
+    fsynced so the rename itself is durable on POSIX.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target.with_suffix(target.suffix + ".tmp")
+    fd = os.open(
+        str(tmp_path),
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        mode,
+    )
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(str(tmp_path), mode)
+    except OSError:
+        pass
+    os.replace(str(tmp_path), str(target))
+    try:
+        dir_fd = os.open(str(target.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        pass
+
+
 def encrypt_file(
     input_path: Path,
     output_path: Path,
@@ -274,8 +310,11 @@ def encrypt_file(
         aesgcm = AESGCM(key)
         ciphertext = aesgcm.encrypt(nonce, plaintext, associated_data=None)
 
-        # Write: nonce + ciphertext (tag is appended by cryptography)
-        output_path.write_bytes(nonce + ciphertext)
+        # Atomically write: nonce + ciphertext to a sibling temp file, fsync,
+        # restrict permissions, then os.replace() onto the target path. A
+        # crash mid-write leaves only the temp file (which is removed on
+        # the next attempt or by hand); the target is never torn.
+        _atomic_write_bytes(output_path, nonce + ciphertext, mode=0o600)
 
         _logger.debug(
             "Encrypted %d bytes -> %d bytes",
@@ -324,8 +363,9 @@ def decrypt_file(
         aesgcm = AESGCM(key)
         plaintext = aesgcm.decrypt(nonce, ciphertext, associated_data=None)
 
-        # Write decrypted data
-        output_path.write_bytes(plaintext)
+        # Write decrypted data atomically. Plaintext is sensitive — restrict
+        # permissions to owner only.
+        _atomic_write_bytes(output_path, plaintext, mode=0o600)
 
         _logger.debug(
             "Decrypted %d bytes -> %d bytes",
@@ -363,10 +403,16 @@ def encrypt_index_file(index_path: Path, key: str | bytes) -> None:
     normalized_key = _normalize_key(key)
     encrypted_path = index_path.with_suffix(".usearch.enc")
 
+    # encrypt_file is atomic (tmp + fsync + os.replace + chmod 0o600), so by
+    # the time it returns the encrypted blob is durably on disk. Only then is
+    # it safe to remove the plaintext copy. A crash inside encrypt_file leaves
+    # the plaintext intact; a crash between the call and the unlink leaves
+    # both files (the encrypted side wins on next open).
     encrypt_file(index_path, encrypted_path, normalized_key)
-
-    # Remove original unencrypted file
-    index_path.unlink()
+    try:
+        index_path.unlink()
+    except FileNotFoundError:
+        pass
 
     _logger.info("Encrypted index: %s -> %s", index_path, encrypted_path)
 

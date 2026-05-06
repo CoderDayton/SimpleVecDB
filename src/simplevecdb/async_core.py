@@ -668,12 +668,20 @@ class AsyncVectorDB:
         return f"AsyncVectorDB(path={self._db.path!r})"
 
     async def close(self) -> None:
-        """Close the database connection and shutdown executor."""
+        """Close the database connection and shutdown executor.
+
+        Drains in-flight tasks (`wait=True`) before closing the SQLite
+        connection. Otherwise pool threads can still hold cursors against
+        ``self._db.conn`` when ``self._db.close()`` runs the connection's
+        close, producing use-after-close races and silent data loss.
+        Pending (not-yet-started) work is cancelled.
+        """
         try:
             if self._owns_executor:
-                # cancel_futures=True cancels pending tasks; wait=False returns
-                # immediately so we don't hang if a running task is stuck.
-                self._executor.shutdown(wait=False, cancel_futures=True)
+                # cancel_futures=True cancels work that hasn't started yet;
+                # wait=True drains anything already executing so the SQLite
+                # connection is not closed under live threads.
+                self._executor.shutdown(wait=True, cancel_futures=True)
         except Exception:
             _logger.warning("Executor shutdown failed", exc_info=True)
         finally:

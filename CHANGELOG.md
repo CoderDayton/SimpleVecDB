@@ -5,6 +5,33 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - unreleased
+
+### Fixed (concurrency & durability)
+
+- **Atomic `UsearchIndex.save`** — now writes to a sibling `.tmp`, fsyncs, then `os.replace()`s onto the live path and fsyncs the parent directory. A crash mid-save can no longer corrupt the only copy of the index. Also moved the `_dirty` short-circuit inside `_write_lock` so a concurrent `add` cannot have its dirty flag silently cleared.
+- **Atomic `rebuild_index`** — builds the new index at a sibling `.rebuild` path and atomically swaps it onto the live path; the old index remains the canonical copy until the swap succeeds.
+- **Atomic encrypted save** — `encrypt_file` / `decrypt_file` now write to a sibling `.tmp`, fsync, set mode `0o600`, then `os.replace()`. `encrypt_index_file` only unlinks the plaintext after the encrypted output is durably on disk. A torn write can no longer leave the index unrecoverable.
+- **`VectorDB`-level `RLock`** — a single re-entrant lock now serializes the `_collections` cache (no more check-then-insert TOCTOU on `collection()`) and is shared with every `CatalogManager` so all `with self.conn:` blocks across collections cannot interleave on the shared `sqlite3.Connection`. Reads remain lock-free at the SQLite level via WAL.
+- **`AsyncVectorDB.close` drains** — switched from `executor.shutdown(wait=False)` to `wait=True` so in-flight pool tasks finish their cursors before the SQLite connection is closed. Pending (not-yet-started) work is still cancelled.
+- **`set_parent` cycle check is transactional** — descendant lookup and parent UPDATE now run inside the same `with self._lock, self.conn:` block, closing a TOCTOU window where a concurrent edge could form a cycle.
+- **Cluster persistence** — `_ensure_cluster_table`, `save_cluster_state`, `delete_cluster_state` now use `with self._lock, self.conn:` instead of bare `conn.commit()`; an exception during the execute is properly rolled back.
+- **`add_documents` ID recovery is correct under upsert** — replaced the `last_insert_rowid()` arithmetic (which silently returned wrong IDs for batches mixing explicit and `None` IDs because UPSERTs do not advance the auto-increment counter) with a single `INSERT … RETURNING id` for the auto-ID rows. Explicit-ID rows still take the upsert path.
+- **`delete_collection` closes cached indexes first** — any `VectorCollection` instances cached for the deleted name have their `UsearchIndex` closed before the file is unlinked, so a stale mmap view cannot race the unlink.
+
+### Changed
+
+- **`upsert_fts_rows` / `delete_fts_rows` are now `_upsert_fts_rows` / `_delete_fts_rows`** (private). The FTS shadow table must be updated inside the same transaction as the main table or it can desync on crash; the rename signals the contract.
+- **`get_legacy_vectors`, `drop_legacy_vec_table`** now validate the supplied table name via `_validate_table_name` before interpolating into SQL.
+
+### Added
+
+- **Declared `python-dotenv` dependency** — `simplevecdb.config` already imported and called `load_dotenv` at package import; the missing dependency would `ImportError` on a clean install of the base package without optional extras.
+
+### Fixed (tooling)
+
+- **Pre-commit version-sync hook** — `__init__.py` derives `__version__` dynamically via `importlib.metadata`, so `check_version_sync.py` was failing on every commit looking for a literal `__version__ = "x.y.z"` line that does not exist. The hook now validates only `pyproject.toml`'s version field. `bump_version.py` similarly stops trying to rewrite `__init__.py` and uses an anchored regex to update only the canonical version field.
+
 ## [2.5.0] - 2026-04-07
 
 ### Added

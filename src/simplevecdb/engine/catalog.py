@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from typing import Any, TYPE_CHECKING, Callable
 from collections.abc import Iterable, Sequence
 
@@ -58,6 +59,7 @@ class CatalogManager:
         conn: sqlite3.Connection,
         table_name: str,
         fts_table_name: str,
+        lock: threading.RLock | None = None,
     ):
         # Defense-in-depth: validate table names
         _validate_table_name(table_name)
@@ -69,6 +71,12 @@ class CatalogManager:
         self._fts_enabled = False
         self._cluster_table_name = f"{table_name}_clusters"
         self._cluster_table_ready = False
+        # Serializes Python-level access to the shared sqlite3.Connection. The
+        # connection is opened with check_same_thread=False; SQLite itself is
+        # safe under WAL, but Python's `with conn:` transaction context is not
+        # — two threads entering it simultaneously interleave their writes
+        # under one implicit transaction. The lock prevents that.
+        self._lock: threading.RLock = lock if lock is not None else threading.RLock()
 
     def create_tables(self) -> None:
         """Create metadata and FTS tables if they don't exist."""
@@ -168,8 +176,12 @@ class CatalogManager:
         """Whether FTS5 is available for keyword search."""
         return self._fts_enabled
 
-    def upsert_fts_rows(self, ids: Sequence[int], texts: Sequence[str]) -> None:
+    def _upsert_fts_rows(self, ids: Sequence[int], texts: Sequence[str]) -> None:
         """Update FTS index for given document IDs.
+
+        Internal helper. Must be called inside an active transaction
+        (``with self._lock, self.conn:``) so the FTS shadow table stays in
+        sync with the main table on crash.
 
         Args:
             ids: Document IDs to update
@@ -187,8 +199,11 @@ class CatalogManager:
             f"INSERT INTO {self._fts_table_name}(rowid, text) VALUES (?, ?)", rows
         )
 
-    def delete_fts_rows(self, ids: Sequence[int]) -> None:
+    def _delete_fts_rows(self, ids: Sequence[int]) -> None:
         """Remove documents from FTS index.
+
+        Internal helper. Must be called inside an active transaction so
+        the FTS shadow table stays in sync with the main table on crash.
 
         Args:
             ids: Document IDs to remove
@@ -255,44 +270,72 @@ class CatalogManager:
         _dumps = json.dumps
         meta_strs = [_dumps(m, separators=(",", ":")) for m in metadatas]
 
-        rows = [
-            (uid, txt, meta_str, emb_blob, pid)
-            for uid, txt, meta_str, emb_blob, pid in zip(
-                ids_list, texts, meta_strs, embedding_blobs, parent_ids_list
-            )
-        ]
-
-        with self.conn:
-            self.conn.executemany(
-                f"""
-                INSERT INTO {self._table_name}(id, text, metadata, embedding, parent_id)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    text=excluded.text,
-                    metadata=excluded.metadata,
-                    embedding=excluded.embedding,
-                    parent_id=excluded.parent_id
-                """,
-                rows,
-            )
-
-            # Recover inserted IDs using last_insert_rowid() arithmetic.
-            # Within a transaction, auto-increment IDs are sequential, so
-            # last_id - N + 1 .. last_id gives the correct range. This avoids
-            # the ORDER BY id DESC race under concurrent inserts.
-            if all(uid is not None for uid in ids_list):
-                real_ids = [int(uid) for uid in ids_list]
+        # Split into auto-ID and explicit-ID groups so each can use the
+        # correct INSERT path:
+        #   - Explicit IDs: upsert (ON CONFLICT DO UPDATE) so existing rows
+        #     are updated in place. last_insert_rowid is unsafe here because
+        #     UPSERTs that hit the UPDATE branch do not advance it, breaking
+        #     the prior arithmetic.
+        #   - Auto IDs (None): plain INSERT, then RETURNING id to recover the
+        #     auto-assigned values exactly. Held under self._lock so the
+        #     RETURNING result is uncorrupted by concurrent writers.
+        explicit_rows = []
+        auto_rows = []
+        auto_positions = []
+        for idx, (uid, txt, meta_str, emb_blob, pid) in enumerate(
+            zip(ids_list, texts, meta_strs, embedding_blobs, parent_ids_list)
+        ):
+            if uid is None:
+                auto_rows.append((txt, meta_str, emb_blob, pid))
+                auto_positions.append(idx)
             else:
-                last_id = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                auto_count = sum(1 for uid in ids_list if uid is None)
-                auto_ids = iter(range(last_id - auto_count + 1, last_id + 1))
-                real_ids = [
-                    int(uid) if uid is not None else next(auto_ids)
-                    for uid in ids_list
-                ]
+                explicit_rows.append((uid, txt, meta_str, emb_blob, pid))
+
+        real_ids: list[int] = [-1] * len(ids_list)
+
+        with self._lock, self.conn:
+            if explicit_rows:
+                self.conn.executemany(
+                    f"""
+                    INSERT INTO {self._table_name}(id, text, metadata, embedding, parent_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        text=excluded.text,
+                        metadata=excluded.metadata,
+                        embedding=excluded.embedding,
+                        parent_id=excluded.parent_id
+                    """,
+                    explicit_rows,
+                )
+
+            if auto_rows:
+                # Use a single multi-VALUES INSERT ... RETURNING id so we
+                # recover the auto-assigned IDs in the exact insertion order.
+                placeholders = ",".join(["(?, ?, ?, ?)"] * len(auto_rows))
+                flat_params = [v for r in auto_rows for v in r]
+                cursor = self.conn.execute(
+                    f"INSERT INTO {self._table_name}"
+                    f"(text, metadata, embedding, parent_id) "
+                    f"VALUES {placeholders} RETURNING id",
+                    flat_params,
+                )
+                returned = cursor.fetchall()
+                if len(returned) != len(auto_rows):
+                    raise RuntimeError(
+                        f"INSERT RETURNING id returned {len(returned)} rows, "
+                        f"expected {len(auto_rows)}"
+                    )
+                for pos, row in zip(auto_positions, returned):
+                    real_ids[pos] = int(row[0])
+
+            # Fill in explicit IDs by their original position
+            explicit_iter = iter(explicit_rows)
+            for idx, uid in enumerate(ids_list):
+                if uid is not None:
+                    real_ids[idx] = int(next(explicit_iter)[0])
 
             # Update FTS index
-            self.upsert_fts_rows(real_ids, texts)
+            self._upsert_fts_rows(real_ids, texts)
 
         _logger.debug("Added %d documents, ids=%s", len(real_ids), real_ids[:5])
         return real_ids
@@ -317,7 +360,7 @@ class CatalogManager:
         placeholders = ",".join("?" for _ in ids)
         params = tuple(ids)
 
-        with self.conn:
+        with self._lock, self.conn:
             # Check which IDs actually exist
             existing = self.conn.execute(
                 f"SELECT id FROM {self._table_name} WHERE id IN ({placeholders})",
@@ -331,7 +374,7 @@ class CatalogManager:
                     f"DELETE FROM {self._table_name} WHERE id IN ({placeholders})",
                     tuple(existing_ids),
                 )
-                self.delete_fts_rows(existing_ids)
+                self._delete_fts_rows(existing_ids)
 
         _logger.debug("Deleted %d documents", len(existing_ids))
         return existing_ids
@@ -647,7 +690,7 @@ class CatalogManager:
         if not updates:
             return 0
 
-        with self.conn:
+        with self._lock, self.conn:
             updated = 0
             # Batch into chunks of 500 for performance
             for batch in _batched(updates, 500):
@@ -708,6 +751,7 @@ class CatalogManager:
         Returns:
             List of (rowid, embedding_blob) tuples
         """
+        _validate_table_name(vec_table_name)
         try:
             rows = self.conn.execute(
                 f"SELECT rowid, embedding FROM {vec_table_name}"
@@ -719,9 +763,10 @@ class CatalogManager:
 
     def drop_legacy_vec_table(self, vec_table_name: str) -> None:
         """Drop legacy sqlite-vec table after migration."""
+        _validate_table_name(vec_table_name)
         try:
-            self.conn.execute(f"DROP TABLE IF EXISTS {vec_table_name}")
-            self.conn.commit()
+            with self._lock, self.conn:
+                self.conn.execute(f"DROP TABLE IF EXISTS {vec_table_name}")
             _logger.info("Dropped legacy sqlite-vec table: %s", vec_table_name)
         except Exception as e:
             _logger.warning("Failed to drop legacy table %s: %s", vec_table_name, e)
@@ -877,18 +922,21 @@ class CatalogManager:
         Raises:
             ValueError: If setting parent would create a cycle
         """
-        # Check for cycles: parent_id cannot be doc_id or any of its descendants
-        if parent_id is not None:
-            if parent_id == doc_id:
-                raise ValueError("A document cannot be its own parent")
-            descendants = self.get_descendants(doc_id)
-            descendant_ids = {d[0] for d in descendants}
-            if parent_id in descendant_ids:
-                raise ValueError(
-                    f"Cannot set parent: document {parent_id} is a descendant of {doc_id}"
-                )
+        # Cycle check + UPDATE inside one critical section so a concurrent
+        # writer cannot create a cycle-forming edge between the check and the
+        # UPDATE. The lock serializes; `with self.conn:` wraps the UPDATE in
+        # an implicit transaction that commits on success.
+        with self._lock, self.conn:
+            if parent_id is not None:
+                if parent_id == doc_id:
+                    raise ValueError("A document cannot be its own parent")
+                descendants = self.get_descendants(doc_id)
+                descendant_ids = {d[0] for d in descendants}
+                if parent_id in descendant_ids:
+                    raise ValueError(
+                        f"Cannot set parent: document {parent_id} is a descendant of {doc_id}"
+                    )
 
-        with self.conn:
             cursor = self.conn.execute(
                 f"UPDATE {self._table_name} SET parent_id = ? WHERE id = ?",
                 (parent_id, doc_id),
@@ -904,19 +952,19 @@ class CatalogManager:
         if self._cluster_table_ready:
             return
         cluster_table = self._cluster_table_name
-        self.conn.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {cluster_table} (
-                name TEXT PRIMARY KEY,
-                algorithm TEXT NOT NULL,
-                n_clusters INTEGER NOT NULL,
-                centroids BLOB,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                metadata TEXT
+        with self._lock, self.conn:
+            self.conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {cluster_table} (
+                    name TEXT PRIMARY KEY,
+                    algorithm TEXT NOT NULL,
+                    n_clusters INTEGER NOT NULL,
+                    centroids BLOB,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    metadata TEXT
+                )
+                """
             )
-            """
-        )
-        self.conn.commit()
         self._cluster_table_ready = True
 
     def save_cluster_state(
@@ -942,15 +990,15 @@ class CatalogManager:
 
         meta_json = json.dumps(metadata) if metadata else None
 
-        self.conn.execute(
-            f"""
-            INSERT OR REPLACE INTO {cluster_table}
-            (name, algorithm, n_clusters, centroids, metadata, created_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """,
-            (name, algorithm, n_clusters, centroids, meta_json),
-        )
-        self.conn.commit()
+        with self._lock, self.conn:
+            self.conn.execute(
+                f"""
+                INSERT OR REPLACE INTO {cluster_table}
+                (name, algorithm, n_clusters, centroids, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (name, algorithm, n_clusters, centroids, meta_json),
+            )
 
     def load_cluster_state(
         self, name: str
@@ -1006,8 +1054,8 @@ class CatalogManager:
         self._ensure_cluster_table()
         cluster_table = self._cluster_table_name
 
-        cursor = self.conn.execute(
-            f"DELETE FROM {cluster_table} WHERE name = ?", (name,)
-        )
-        self.conn.commit()
+        with self._lock, self.conn:
+            cursor = self.conn.execute(
+                f"DELETE FROM {cluster_table} WHERE name = ?", (name,)
+            )
         return cursor.rowcount > 0

@@ -12,6 +12,7 @@ import os
 import re
 import sqlite3
 import tempfile
+import threading
 import numpy as np
 import uuid
 from collections import defaultdict
@@ -179,6 +180,7 @@ class VectorCollection:
         quantization: Quantization,
         encryption_key: str | bytes | None = None,
         store_embeddings: bool = False,
+        lock: threading.RLock | None = None,
     ):
         self.conn = conn
         self._db_path = db_path
@@ -188,6 +190,10 @@ class VectorCollection:
         self._quantizer = QuantizationStrategy(quantization)
         self._encryption_key = encryption_key
         self._store_embeddings = store_embeddings
+        # Connection-level lock shared with the parent VectorDB so all
+        # collections sharing the same sqlite3.Connection serialize their
+        # transactional access from Python.
+        self._lock: threading.RLock = lock if lock is not None else threading.RLock()
 
         # Sanitize name to prevent issues
         if not re.match(constants.COLLECTION_NAME_PATTERN, name):
@@ -211,23 +217,32 @@ class VectorCollection:
         else:
             self._index_path = f"{db_path}.{name}.usearch"
 
-        # Initialize components
+        # Initialize components — share the connection lock with the catalog
+        # so add_documents / delete_by_ids / etc. all serialize properly.
         self._catalog = CatalogManager(
             conn=self.conn,
             table_name=self._table_name,
             fts_table_name=self._fts_table_name,
+            lock=self._lock,
         )
         self._catalog.create_tables()
 
         # Handle encrypted index loading
         actual_index_path = self._resolve_index_path()
 
+        # In-memory databases need a temp file for the usearch index. Track
+        # it so close() can unlink it; otherwise every in-memory VectorDB
+        # leaks a file in $TMPDIR.
+        if actual_index_path is None:
+            self._ephemeral_index_path: str | None = os.path.join(
+                tempfile.gettempdir(), f"simplevecdb_{uuid.uuid4().hex}.usearch"
+            )
+        else:
+            self._ephemeral_index_path = None
+
         # Create usearch index
         self._index = UsearchIndex(
-            index_path=actual_index_path
-            or os.path.join(
-                tempfile.gettempdir(), f"simplevecdb_{uuid.uuid4().hex}.usearch"
-            ),
+            index_path=actual_index_path or self._ephemeral_index_path,
             ndim=None,  # Will be set on first add
             distance_strategy=self.distance_strategy,
             quantization=self.quantization,
@@ -875,18 +890,19 @@ class VectorCollection:
         # Determine dimension
         ndim = vectors.shape[1]
 
-        # Close old index
+        # Atomic rebuild: build the new index at a sibling path, save it
+        # durably, then os.replace() it onto the live path. The old index
+        # remains intact and recoverable until the final rename succeeds.
         old_path = self._index._path
         self._index.close()
 
-        # Delete old index file
-        if old_path.exists():
-            old_path.unlink()
-            _logger.debug("Deleted old index file: %s", old_path)
+        rebuild_path = old_path.with_suffix(old_path.suffix + ".rebuild")
+        if rebuild_path.exists():
+            # Clean up remnant from a prior failed rebuild
+            rebuild_path.unlink()
 
-        # Create new index with optional custom parameters
-        self._index = UsearchIndex(
-            index_path=str(old_path),
+        new_index = UsearchIndex(
+            index_path=str(rebuild_path),
             ndim=ndim,
             distance_strategy=self.distance_strategy,
             quantization=self.quantization,
@@ -894,10 +910,25 @@ class VectorCollection:
             expansion_add=expansion_add if expansion_add is not None else constants.USEARCH_DEFAULT_EXPANSION_ADD,
             expansion_search=expansion_search if expansion_search is not None else constants.USEARCH_DEFAULT_EXPANSION_SEARCH,
         )
+        new_index.add(keys, vectors)
+        new_index.save()
 
-        # Re-add all vectors
-        self._index.add(keys, vectors)
-        self._index.save()
+        # Atomically swap the rebuilt index into place. Until this rename,
+        # the old index file at old_path is still the canonical copy.
+        os.replace(str(rebuild_path), str(old_path))
+        try:
+            dir_fd = os.open(str(old_path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+
+        # Repoint the rebuilt index at the canonical path so future saves
+        # land at old_path rather than the now-vanished rebuild_path.
+        new_index._path = old_path
+        self._index = new_index
 
         # Update search engine reference
         self._search._index = self._index
@@ -1471,6 +1502,11 @@ class VectorDB:
         self.auto_migrate = auto_migrate
         self._encryption_key = encryption_key
         self._collections: dict[tuple, VectorCollection] = {}
+        # Single RLock serializing both the _collections cache (avoid
+        # check-then-insert TOCTOU) and the shared sqlite3.Connection's
+        # Python-level transaction context. Shared with every VectorCollection
+        # and CatalogManager constructed by this VectorDB.
+        self._lock = threading.RLock()
 
         # Create connection (encrypted or plain)
         if encryption_key is not None:
@@ -1594,25 +1630,42 @@ class VectorDB:
         fts_table = f"{table_name}_fts"
         cluster_table = f"{table_name}_clusters"
 
-        # Drop SQLite tables
-        self.conn.execute(f"DROP TABLE IF EXISTS {fts_table}")
-        self.conn.execute(f"DROP TABLE IF EXISTS {cluster_table}")
-        self.conn.execute(f"DROP TABLE IF EXISTS {table_name}")
-        self.conn.commit()
+        # Hold the lock for the full delete: drop tables, remove files, and
+        # evict cached collections atomically. Closing each cached
+        # VectorCollection's index *before* unlinking the file prevents stale
+        # mmap views from racing with the unlink.
+        with self._lock:
+            # Close any cached collection's open index before removing the file
+            for cached_key, cached_col in list(self._collections.items()):
+                if cached_key[0] == name:
+                    try:
+                        cached_col._index.close()
+                    except Exception:
+                        _logger.debug(
+                            "Failed to close index for collection %r during delete",
+                            name,
+                            exc_info=True,
+                        )
 
-        # Delete usearch index file (and encrypted variant if present)
-        if self.path != ":memory:":
-            index_path = Path(self.path + f".{name}.usearch")
-            if index_path.exists():
-                index_path.unlink()
-            encrypted_path = Path(str(index_path) + ".enc")
-            if encrypted_path.exists():
-                encrypted_path.unlink()
+            # Drop SQLite tables
+            with self.conn:
+                self.conn.execute(f"DROP TABLE IF EXISTS {fts_table}")
+                self.conn.execute(f"DROP TABLE IF EXISTS {cluster_table}")
+                self.conn.execute(f"DROP TABLE IF EXISTS {table_name}")
 
-        # Remove from cache (match any tuple key with this name)
-        keys_to_remove = [k for k in self._collections if k[0] == name]
-        for k in keys_to_remove:
-            del self._collections[k]
+            # Delete usearch index file (and encrypted variant if present)
+            if self.path != ":memory:":
+                index_path = Path(self.path + f".{name}.usearch")
+                if index_path.exists():
+                    index_path.unlink()
+                encrypted_path = Path(str(index_path) + ".enc")
+                if encrypted_path.exists():
+                    encrypted_path.unlink()
+
+            # Remove from cache (match any tuple key with this name)
+            keys_to_remove = [k for k in self._collections if k[0] == name]
+            for k in keys_to_remove:
+                del self._collections[k]
 
         _logger.info("Deleted collection: %s", name)
 
@@ -1774,17 +1827,19 @@ class VectorDB:
             ValueError: If collection name contains invalid characters.
         """
         cache_key = (name, distance_strategy, quantization, store_embeddings)
-        if cache_key not in self._collections:
-            self._collections[cache_key] = VectorCollection(
-                conn=self.conn,
-                db_path=self.path,
-                name=name,
-                distance_strategy=distance_strategy or self.distance_strategy,
-                quantization=quantization or self.quantization,
-                encryption_key=self._encryption_key,
-                store_embeddings=store_embeddings,
-            )
-        return self._collections[cache_key]
+        with self._lock:
+            if cache_key not in self._collections:
+                self._collections[cache_key] = VectorCollection(
+                    conn=self.conn,
+                    db_path=self.path,
+                    name=name,
+                    distance_strategy=distance_strategy or self.distance_strategy,
+                    quantization=quantization or self.quantization,
+                    encryption_key=self._encryption_key,
+                    store_embeddings=store_embeddings,
+                    lock=self._lock,
+                )
+            return self._collections[cache_key]
 
     # ------------------------------------------------------------------ #
     # Integrations
@@ -1985,6 +2040,18 @@ MIGRATION ROLLBACK INSTRUCTIONS:
             _logger.warning("Failed to save indexes during close", exc_info=True)
         finally:
             self.conn.close()
+            # Clean up ephemeral usearch index files created for in-memory DBs.
+            for col in self._collections.values():
+                ephemeral = getattr(col, "_ephemeral_index_path", None)
+                if ephemeral:
+                    for p in (Path(ephemeral), Path(ephemeral + ".tmp"),
+                              Path(ephemeral + ".lock")):
+                        try:
+                            p.unlink()
+                        except FileNotFoundError:
+                            pass
+                        except OSError:
+                            pass
 
     def __enter__(self) -> "VectorDB":
         return self

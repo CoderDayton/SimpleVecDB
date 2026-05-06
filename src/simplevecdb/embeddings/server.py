@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hmac
 import logging
 import signal
 import time
@@ -228,7 +229,10 @@ def authenticate_request(
     token = api_key_header or (credentials.credentials if credentials else None)
     if not token:
         raise HTTPException(status_code=401, detail="Missing API key")
-    if token not in allowed_keys:
+    # Constant-time comparison so the response time does not leak prefixes of
+    # valid API keys to an attacker probing the endpoint. ``in`` on a set
+    # short-circuits on the first differing character.
+    if not any(hmac.compare_digest(token, k) for k in allowed_keys):
         raise HTTPException(status_code=403, detail="Invalid API key")
     return token
 

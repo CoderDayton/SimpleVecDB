@@ -181,16 +181,13 @@ class TestFileLock:
             assert lock_path.exists()
 
     def test_lock_released_after_context_exit(self, tmp_path: Path):
-        """After context exit the lock file exists but is no longer locked."""
+        """After context exit the lock is released and the .lock sibling is
+        cleaned up so they don't accumulate in busy data directories."""
         target = tmp_path / "data.db"
         target.touch()
 
         with file_lock(target):
             pass  # lock held here
-
-        # Lock file should still exist on disk but not be held
-        lock_path = target.with_suffix(".db.lock")
-        assert lock_path.exists()
 
         # Verify we can immediately acquire the lock again (proves it's released)
         with file_lock(target):

@@ -30,6 +30,17 @@ class SimpleVecDBVectorStore(VectorStore):
         self._db = VectorDB(path=db_path, **kwargs)
         self._collection = self._db.collection(collection_name)
 
+    @property
+    def embeddings(self) -> Embeddings | None:
+        """LangChain ``VectorStore.embeddings`` contract.
+
+        The base class exposes the embedding model via this property and
+        framework code (``as_retriever()``, tag generation, etc.) reads it.
+        Storing the field as ``self.embedding`` (singular) without overriding
+        this property would silently return ``None`` to those callers.
+        """
+        return self.embedding
+
     @classmethod
     def from_texts(
         cls,

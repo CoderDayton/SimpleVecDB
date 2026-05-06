@@ -1,6 +1,6 @@
 [project]
 name = "simplevecdb"
-version = "2.5.0"
+version = "2.6.0"
 description = "Dead-simple local vector database powered by usearch HNSW."
 authors = [{ name = "Dayton Dunbar", email = "coderdayton14@gmail.com" }]
 license = { text = "MIT" }
@@ -15,6 +15,7 @@ dependencies = [
     "hdbscan>=0.8.33",          # Density-based clustering
     "sqlcipher3-binary>=0.5.0", # Encryption support
     "cryptography>=41.0",       # Encryption utilities
+    "python-dotenv>=1.0",       # Loaded by simplevecdb.config at import time
 ]
 
 [project.optional-dependencies]
