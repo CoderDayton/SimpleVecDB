@@ -404,10 +404,11 @@ class CatalogManager:
             return {}
 
         placeholders = ",".join(["?"] * len(ids))
-        rows = self.conn.execute(
-            f"SELECT id, text, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
-            tuple(ids),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id, text, metadata FROM {self._table_name} WHERE id IN ({placeholders})",
+                tuple(ids),
+            ).fetchall()
 
         result = {}
         for row_id, text, meta_json in rows:
@@ -431,10 +432,11 @@ class CatalogManager:
             return {}
 
         placeholders = ",".join(["?"] * len(ids))
-        rows = self.conn.execute(
-            f"SELECT id, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
-            tuple(ids),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
+                tuple(ids),
+            ).fetchall()
 
         result: dict[int, np.ndarray | None] = {}
         for row_id, emb_blob in rows:
@@ -461,10 +463,11 @@ class CatalogManager:
             return {}
 
         placeholders = ",".join(["?"] * len(ids))
-        rows = self.conn.execute(
-            f"SELECT id, text, metadata, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
-            tuple(ids),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id, text, metadata, embedding FROM {self._table_name} WHERE id IN ({placeholders})",
+                tuple(ids),
+            ).fetchall()
 
         result: dict[int, tuple[str, dict[str, Any], np.ndarray | None]] = {}
         for row_id, text, meta_json, emb_blob in rows:
@@ -502,7 +505,8 @@ class CatalogManager:
                 sql += " OFFSET ?"
                 params.append(offset)
 
-        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
         return [r[0] for r in rows]
 
     def find_ids_by_filter(
@@ -541,7 +545,8 @@ class CatalogManager:
                 sql += " OFFSET ?"
                 params.append(offset)
 
-        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
         return [r[0] for r in rows]
 
     def keyword_search(
@@ -583,7 +588,8 @@ class CatalogManager:
             LIMIT ?
         """
         params = (query,) + tuple(filter_params) + (k,)
-        rows = self.conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, params).fetchall()
         return [(int(row[0]), float(row[1])) for row in rows]
 
     def build_filter_clause(
@@ -632,7 +638,10 @@ class CatalogManager:
 
     def count(self) -> int:
         """Return total number of documents."""
-        row = self.conn.execute(f"SELECT COUNT(*) FROM {self._table_name}").fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                f"SELECT COUNT(*) FROM {self._table_name}"
+            ).fetchone()
         return row[0] if row else 0
 
     def get_all_docs_with_text(
@@ -677,7 +686,8 @@ class CatalogManager:
                 sql += " OFFSET ?"
                 params.append(offset)
 
-        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
         result = []
         for row_id, text, meta_json in rows:
             meta = json.loads(meta_json) if meta_json else {}
@@ -742,10 +752,11 @@ class CatalogManager:
             True if legacy sqlite-vec data exists
         """
         try:
-            row = self.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                (vec_table_name,),
-            ).fetchone()
+            with self._lock:
+                row = self.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (vec_table_name,),
+                ).fetchone()
             return row is not None
         except Exception:
             return False
@@ -762,9 +773,10 @@ class CatalogManager:
         """
         _validate_table_name(vec_table_name)
         try:
-            rows = self.conn.execute(
-                f"SELECT rowid, embedding FROM {vec_table_name}"
-            ).fetchall()
+            with self._lock:
+                rows = self.conn.execute(
+                    f"SELECT rowid, embedding FROM {vec_table_name}"
+                ).fetchall()
             return [(int(r[0]), r[1]) for r in rows]
         except Exception as e:
             _logger.warning("Failed to read legacy vectors: %s", e)
@@ -794,10 +806,11 @@ class CatalogManager:
         Returns:
             List of (id, text, metadata) tuples for child documents
         """
-        rows = self.conn.execute(
-            f"SELECT id, text, metadata FROM {self._table_name} WHERE parent_id = ?",
-            (parent_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id, text, metadata FROM {self._table_name} WHERE parent_id = ?",
+                (parent_id,),
+            ).fetchall()
 
         return [(int(r[0]), r[1], json.loads(r[2]) if r[2] else {}) for r in rows]
 
@@ -812,13 +825,14 @@ class CatalogManager:
             Tuple of (id, text, metadata) for parent, or None if no parent
         """
         # Single self-join instead of two sequential queries
-        row = self.conn.execute(
-            f"""SELECT p.id, p.text, p.metadata
-            FROM {self._table_name} c
-            JOIN {self._table_name} p ON p.id = c.parent_id
-            WHERE c.id = ?""",
-            (doc_id,),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                f"""SELECT p.id, p.text, p.metadata
+                FROM {self._table_name} c
+                JOIN {self._table_name} p ON p.id = c.parent_id
+                WHERE c.id = ?""",
+                (doc_id,),
+            ).fetchone()
 
         if not row:
             return None
@@ -871,7 +885,8 @@ class CatalogManager:
             ORDER BY depth, id
         """
 
-        rows = self.conn.execute(sql, (root_id, effective_depth)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, (root_id, effective_depth)).fetchall()
 
         return [
             (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows
@@ -914,7 +929,8 @@ class CatalogManager:
             ORDER BY depth
         """
 
-        rows = self.conn.execute(sql, (doc_id, effective_depth)).fetchall()
+        with self._lock:
+            rows = self.conn.execute(sql, (doc_id, effective_depth)).fetchall()
 
         return [
             (int(r[0]), r[1], json.loads(r[2]) if r[2] else {}, int(r[3])) for r in rows
@@ -965,6 +981,11 @@ class CatalogManager:
             return
         cluster_table = self._cluster_table_name
         with self._lock, self.conn:
+            # Re-check inside the lock so concurrent first-callers don't
+            # both run the DDL. The CREATE TABLE IF NOT EXISTS is itself
+            # idempotent, but doing the work twice defeats the early-exit.
+            if self._cluster_table_ready:
+                return
             self.conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {cluster_table} (
@@ -977,7 +998,7 @@ class CatalogManager:
                 )
                 """
             )
-        self._cluster_table_ready = True
+            self._cluster_table_ready = True
 
     def save_cluster_state(
         self,
@@ -1027,10 +1048,13 @@ class CatalogManager:
         self._ensure_cluster_table()
         cluster_table = self._cluster_table_name
 
-        row = self.conn.execute(
-            f"SELECT algorithm, n_clusters, centroids, metadata FROM {cluster_table} WHERE name = ?",
-            (name,),
-        ).fetchone()
+        # Serialize on the connection-level lock — sqlite3.Connection is not
+        # safe for concurrent statement execution from multiple threads.
+        with self._lock:
+            row = self.conn.execute(
+                f"SELECT algorithm, n_clusters, centroids, metadata FROM {cluster_table} WHERE name = ?",
+                (name,),
+            ).fetchone()
 
         if not row:
             return None
@@ -1044,9 +1068,10 @@ class CatalogManager:
         self._ensure_cluster_table()
         cluster_table = self._cluster_table_name
 
-        rows = self.conn.execute(
-            f"SELECT name, algorithm, n_clusters, created_at, metadata FROM {cluster_table}"
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT name, algorithm, n_clusters, created_at, metadata FROM {cluster_table}"
+            ).fetchall()
 
         result = []
         for name, algorithm, n_clusters, created_at, meta_json in rows:

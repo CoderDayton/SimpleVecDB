@@ -50,6 +50,35 @@ class TestNodeIdPersisted:
         # Original metadata is preserved alongside the new key.
         assert metadata.get("source") == "doc1"
 
+    def test_empty_node_id_gets_uuid_stamped_atomically(self, tmp_path):
+        # When LlamaIndex did not assign a node_id, the integration must
+        # generate one BEFORE the catalog insert so the metadata stamp is
+        # in the same transaction as the row. Otherwise a crash between
+        # insert and a follow-up UPDATE would leave a node that delete()
+        # cannot find post-restart.
+        store = _make_store(tmp_path, "uuid_atomic")
+        node = TextNode(text="anonymous", embedding=[0.5] * 384)
+        # Force-clear node_id to simulate the empty case (LlamaIndex
+        # normally auto-assigns a uuid in __init__, but defensive code
+        # must not rely on that).
+        node.id_ = ""
+        returned = store.add([node])
+
+        assert len(returned) == 1
+        assigned = returned[0]
+        # The returned id must match what was stamped — not str(internal_id).
+        docs = store._collection.get_documents()
+        assert len(docs) == 1
+        _doc_id, _text, metadata = docs[0]
+        assert metadata.get("_simplevecdb_node_id") == assigned
+        # Stamped value must be a uuid-shaped string, not a stringified int.
+        assert "-" in assigned and len(assigned) >= 32
+
+        # Cold-restart delete must succeed using the stamped uuid.
+        store._id_map.clear()
+        store.delete(assigned)
+        assert store._collection.get_documents() == []
+
 
 class TestDeleteFallback:
     """delete() must work even when _id_map is empty (post-restart case)."""

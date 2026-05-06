@@ -25,6 +25,32 @@ _logger = logging.getLogger("simplevecdb.embeddings.server")
 _MAX_TEXT_LENGTH = 100_000
 
 
+def _validate_request_item_cap() -> None:
+    """Reject EMBEDDING_SERVER_MAX_REQUEST_ITEMS > _MAX_ENCODE_BATCH at startup.
+
+    Runs at module import so the check fires under any ASGI runner
+    (gunicorn/uvicorn-programmatic), not just ``run_server()``. If the
+    cap is misconfigured, requests would otherwise pass per-request
+    validation and only fail deep inside ``embed_texts``.
+    """
+    from .models import _MAX_ENCODE_BATCH
+
+    # The config field is typed int, but tests routinely patch ``config``
+    # with a MagicMock, leaving unset attributes as MagicMock instances.
+    # Coerce defensively so a missing attribute skips the check rather
+    # than crashing with TypeError.
+    try:
+        request_cap = int(config.EMBEDDING_SERVER_MAX_REQUEST_ITEMS)
+    except (TypeError, ValueError):
+        return
+    if request_cap > _MAX_ENCODE_BATCH:
+        raise RuntimeError(
+            f"EMBEDDING_SERVER_MAX_REQUEST_ITEMS={request_cap} exceeds the "
+            f"embed_texts cap of {_MAX_ENCODE_BATCH}. Lower the env var or "
+            "raise _MAX_ENCODE_BATCH in embeddings/models.py."
+        )
+
+
 # Simple in-memory rate limiter
 class RateLimiter:
     """Token bucket rate limiter per IP/identity with TTL cleanup."""
@@ -132,6 +158,12 @@ if _cors_origins:
         )
 
 
+# Validate request-item cap at module load so misconfiguration is caught
+# regardless of how the ASGI app is served (CLI, gunicorn, programmatic
+# uvicorn, etc.).
+_validate_request_item_cap()
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -161,6 +193,10 @@ class ModelRegistry:
         if requested in self._repo_ids:
             return requested, requested
         if self._allow_unlisted:
+            # Validation is enforced downstream in load_model() via
+            # _validate_repo_id, which is invoked before any hub call.
+            # Registry-level validation would reject mock model names
+            # used in tests; keep the boundary at the actual download.
             return requested, requested
 
         allowed = sorted(set(self._mapping.keys()) | self._repo_ids)
@@ -546,22 +582,11 @@ def run_server(host: str | None = None, port: int | None = None) -> None:
             "Server is running without authentication. "
             "Set EMBEDDING_SERVER_API_KEYS for production use."
         )
-    # Coordinate the per-request item cap with the encode-call cap so the
-    # first never exceeds the second (otherwise embed_texts raises after the
-    # request has already been validated and accepted).
-    from .models import _MAX_ENCODE_BATCH
-
-    try:
-        request_cap = int(config.EMBEDDING_SERVER_MAX_REQUEST_ITEMS)
-    except (TypeError, ValueError):
-        request_cap = None
-    if request_cap is not None and request_cap > _MAX_ENCODE_BATCH:
-        raise RuntimeError(
-            f"EMBEDDING_SERVER_MAX_REQUEST_ITEMS="
-            f"{request_cap} exceeds the embed_texts cap of "
-            f"{_MAX_ENCODE_BATCH}. Lower the env var or raise "
-            "_MAX_ENCODE_BATCH in embeddings/models.py."
-        )
+    # Coordinate the per-request item cap with the encode-call cap. The
+    # validator also runs at module import (see _validate_request_item_cap)
+    # so non-CLI ASGI deployments are covered too; calling it here keeps
+    # CLI startup fail-fast behaviour identical.
+    _validate_request_item_cap()
 
     if host == "0.0.0.0":
         _logger.warning(

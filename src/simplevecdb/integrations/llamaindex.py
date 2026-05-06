@@ -1,4 +1,5 @@
 # src/simplevecdb/integrations/llamaindex.py
+import uuid
 from typing import Any, TYPE_CHECKING
 from collections.abc import Sequence
 
@@ -92,16 +93,17 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         texts = [node.get_content() for node in nodes]
 
         # Stamp the node_id into metadata so delete() can recover the mapping
-        # after a restart. Falls back to a stable string of the internal id
-        # only when LlamaIndex did not assign a node_id at all.
-        provisional_node_ids: list[str] = []
+        # after a restart. When LlamaIndex did not assign a node_id, generate
+        # a UUID up front so the metadata stamp is committed in the same
+        # transaction as the row insert — there is no window where the row
+        # exists without ``_simplevecdb_node_id`` in its metadata.
+        node_ids_resolved: list[str] = []
         metadatas: list[dict[str, Any]] = []
         for node in nodes:
-            node_id = node.node_id or ""
+            node_id = node.node_id or str(uuid.uuid4())
             md = dict(node.metadata or {})
-            if node_id:
-                md["_simplevecdb_node_id"] = node_id
-            provisional_node_ids.append(node_id)
+            md["_simplevecdb_node_id"] = node_id
+            node_ids_resolved.append(node_id)
             metadatas.append(md)
 
         embeddings = None
@@ -118,13 +120,10 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
 
         internal_ids = self._collection.add_texts(texts, metadatas, embeddings)
 
-        node_ids: list[str] = []
-        for i, internal_id in enumerate(internal_ids):
-            node_id = provisional_node_ids[i] or str(internal_id)
+        for internal_id, node_id in zip(internal_ids, node_ids_resolved):
             self._id_map[internal_id] = node_id
-            node_ids.append(node_id)
 
-        return node_ids
+        return node_ids_resolved
 
     def delete(self, ref_doc_id: str, **delete_kwargs: Any) -> None:
         """

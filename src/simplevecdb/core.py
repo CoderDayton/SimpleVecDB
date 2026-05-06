@@ -414,6 +414,16 @@ class VectorCollection:
             batch_ids = ids[batch_start:batch_end] if ids else None
             batch_parent_ids = parent_ids[batch_start:batch_end] if parent_ids else None
 
+            # Reject NaN/Inf before any persistence. HNSW graph construction
+            # with non-finite vectors silently produces undefined neighbours
+            # and can corrupt the graph; rejecting after the SQLite insert
+            # would leave orphan rows with no index entry.
+            emb_np = np.asarray(batch_embeds, dtype=np.float32)
+            if not np.all(np.isfinite(emb_np)):
+                raise ValueError(
+                    "Input vectors contain NaN or Inf; refusing to add to index"
+                )
+
             # Add to SQLite metadata store
             doc_ids = self._catalog.add_documents(
                 batch_texts,
@@ -422,17 +432,6 @@ class VectorCollection:
                 embeddings=batch_embeds if self._store_embeddings else None,
                 parent_ids=batch_parent_ids,
             )
-
-            # Prepare vectors (asarray avoids copy if already ndarray)
-            emb_np = np.asarray(batch_embeds, dtype=np.float32)
-
-            # Reject NaN/Inf early. HNSW graph construction with non-finite
-            # vectors silently produces undefined neighbours and can corrupt
-            # the graph; better to fail the add than to poison the index.
-            if not np.all(np.isfinite(emb_np)):
-                raise ValueError(
-                    "Input vectors contain NaN or Inf; refusing to add to index"
-                )
 
             # Add to usearch index
             self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
@@ -593,13 +592,15 @@ class VectorCollection:
                     "Auto-embedding failed - install with [server] extra or provide embeddings"
                 ) from e
 
-        # Add to catalog and index
-        doc_ids = self._catalog.add_documents(texts, metas, None, embeddings=embeds)
+        # Validate vectors before any persistence — see add_texts for rationale.
         emb_np = np.asarray(embeds, dtype=np.float32)
         if not np.all(np.isfinite(emb_np)):
             raise ValueError(
                 "Input vectors contain NaN or Inf; refusing to add to index"
             )
+
+        # Add to catalog and index
+        doc_ids = self._catalog.add_documents(texts, metas, None, embeddings=embeds)
         self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
 
         return doc_ids
@@ -865,6 +866,20 @@ class VectorCollection:
         """
         _logger.info("Rebuilding usearch index for collection '%s'...", self.name)
 
+        # Serialize the entire fetch + build + swap on the connection-level
+        # lock so concurrent add/delete operations cannot mutate the catalog
+        # mid-rebuild and produce a stale or inconsistent snapshot. The lock
+        # is reentrant; CatalogManager read methods reacquire it but that
+        # is harmless under RLock.
+        with self._lock:
+            return self._rebuild_index_locked(connectivity, expansion_add, expansion_search)
+
+    def _rebuild_index_locked(
+        self,
+        connectivity: int | None,
+        expansion_add: int | None,
+        expansion_search: int | None,
+    ) -> int:
         # Get all document IDs
         all_ids = self.conn.execute(f"SELECT id FROM {self._table_name}").fetchall()
         all_ids = [row[0] for row in all_ids]
@@ -1456,9 +1471,12 @@ class VectorCollection:
         return self._index.ndim
 
     def __repr__(self) -> str:
+        # No SQL: debuggers and exception formatters auto-stringify objects,
+        # and a repr that runs queries fails with ProgrammingError after
+        # close(). dim reads only the in-memory usearch index.
         return (
             f"VectorCollection(name={self.name!r}, dim={self.dim}, "
-            f"size={self.count()}, distance={self.distance_strategy.value})"
+            f"distance={self.distance_strategy.value})"
         )
 
 
@@ -1582,10 +1600,11 @@ class VectorDB:
             >>> db2.list_collections()
             ['users']
         """
-        rows = self.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND (name = 'tinyvec_items' OR name LIKE 'items_%')"
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND (name = 'tinyvec_items' OR name LIKE 'items_%')"
+            ).fetchall()
         # Collect all table names, then filter out FTS/cluster derivatives.
         # FTS5 creates shadow tables: items_<name>_fts, items_<name>_fts_data,
         # items_<name>_fts_idx, items_<name>_fts_content, items_<name>_fts_docsize,

@@ -59,6 +59,34 @@ class TestAddRejectsNonFiniteVectors:
         bad = [float("nan")] * 384
         with pytest.raises(ValueError, match="NaN or Inf"):
             col.add_texts(["g", "b"], embeddings=[good, bad])
+        # Multi-item batches must also leave the catalog empty — the good
+        # vector cannot be silently committed when its sibling is invalid.
+        assert col.count() == 0
+        db.close()
+
+    def test_rejection_does_not_leave_orphan_sqlite_rows(self):
+        # Regression: NaN/Inf must be rejected before the catalog INSERT
+        # commits, otherwise the SQLite row exists with no corresponding
+        # vector in the HNSW index — surfacing only via document fetches,
+        # never via search. count() must remain 0 after a rejection.
+        db = VectorDB(":memory:")
+        col = db.collection("c")
+        bad = [float("nan")] * 384
+        with pytest.raises(ValueError, match="NaN or Inf"):
+            col.add_texts(["bad"], embeddings=[bad])
+        assert col.count() == 0
+        db.close()
+
+    def test_streaming_rejection_does_not_leave_orphan_rows(self):
+        db = VectorDB(":memory:")
+        col = db.collection("c")
+        bad = [float("inf")] * 384
+        items = [("bad", None, bad)]
+        with pytest.raises(ValueError, match="NaN or Inf"):
+            gen = col.add_texts_streaming(items, batch_size=1)
+            for _ in gen:
+                pass
+        assert col.count() == 0
         db.close()
 
 
