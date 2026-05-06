@@ -1,0 +1,39 @@
+# Lefthook config — replaces .pre-commit-config.yaml.
+#
+# Split:
+#   pre-commit  → fast feedback only (version sync + ruff --fix).
+#   pre-push    → heavyweight gates (mypy, bandit, full pytest+coverage).
+#
+# Hooks within a stage run sequentially because ruff --fix can rewrite
+# files mid-run and ``stage_fixed: true`` re-stages them, so the user
+# does not have to re-add manually.
+
+pre-commit:
+  jobs:
+    - name: version-sync
+      glob:
+        - "pyproject.toml"
+        - "src/simplevecdb/__init__.py"
+      run: uv run python3 scripts/check_version_sync.py
+
+    - name: ruff
+      glob: "*.py"
+      stage_fixed: true
+      run: uv run ruff check . --fix
+
+pre-push:
+  jobs:
+    - name: version-sync
+      run: uv run python3 scripts/check_version_sync.py
+
+    - name: mypy
+      glob: "*.py"
+      run: uv run mypy .
+
+    - name: bandit
+      glob: "*.py"
+      run: uv run bandit -r src/ -ll -c .bandit
+
+    - name: pytest-cov
+      glob: "*.py"
+      run: uv run pytest tests/ -vv --cov=src/simplevecdb
