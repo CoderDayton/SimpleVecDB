@@ -1,5 +1,8 @@
 # src/simplevecdb/integrations/llamaindex.py
+import logging
+import sqlite3
 import uuid
+import warnings
 from typing import Any, TYPE_CHECKING
 from collections.abc import Sequence
 
@@ -20,6 +23,8 @@ except ImportError as exc:
         "As of v2.3.0, install the integrations extra:\n\n"
         "  pip install simplevecdb[integrations]"
     ) from exc
+
+_logger = logging.getLogger("simplevecdb.integrations.llamaindex")
 
 from simplevecdb.core import VectorDB  # our core
 
@@ -45,6 +50,39 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         self._collection = self._db.collection(collection_name)
         # Map internal DB IDs to node IDs
         self._id_map: dict[int, str] = {}
+        # Detect a v2.5 (or earlier) collection where the LlamaIndex node_id
+        # was not persisted into metadata. delete(ref_doc_id) silently fails
+        # against such rows because the metadata-fallback query finds
+        # nothing. Emit a one-shot DeprecationWarning so the operator knows
+        # to call migrate_node_id_metadata() before relying on delete().
+        try:
+            self._warn_if_legacy_collection()
+        except Exception:
+            _logger.debug(
+                "Legacy-collection probe failed", exc_info=True
+            )
+
+    def _warn_if_legacy_collection(self) -> None:
+        """Probe one row; warn if it lacks the v2.6 node_id metadata stamp."""
+        sample = self._collection.get_documents(limit=1)
+        if not sample:
+            return
+        _doc_id, _text, metadata = sample[0]
+        if "_simplevecdb_node_id" in (metadata or {}):
+            return
+        warnings.warn(
+            "SimpleVecDBLlamaStore: the underlying collection contains "
+            "documents created before v2.6.0 that do not carry a "
+            "'_simplevecdb_node_id' metadata stamp. delete(node_id) will "
+            "silently no-op against those rows until you call "
+            "store.migrate_node_id_metadata(). NOTE: legacy rows were "
+            "stamped with the integer DB row id (not the original "
+            "LlamaIndex node_id, which was never persisted), so "
+            "delete(original_node_id) cannot be recovered for them; "
+            "re-index to obtain stable node ids.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     @property
     def client(self) -> Any:
@@ -59,7 +97,26 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         right row after a process restart. This helper walks every
         document in the underlying collection and stamps the internal DB
         id as the node_id for any row that lacks ``_simplevecdb_node_id``
-        metadata. Idempotent — already-stamped rows are skipped.
+        metadata. Idempotent — already-stamped rows are skipped, so a
+        retry after a partial run converges.
+
+        Limitation
+        ----------
+        Pre-2.6.0 rows never had their original LlamaIndex node_id
+        persisted, so the backfill stamps ``str(doc_id)`` (the integer DB
+        rowid) as the node_id. After migration:
+
+        - ``delete(str(doc_id))`` works against migrated rows.
+        - ``delete(<original-llama-uuid>)`` still cannot find these rows;
+          the original ids were never written to disk and cannot be
+          recovered. Re-indexing the upstream documents is the only way
+          to restore stable node ids that match the LlamaIndex side.
+
+        Atomicity: the underlying ``update_metadata`` issues one
+        transaction per chunk of 500 rows. A process kill between chunks
+        leaves the migration half-done; calling this method again will
+        finish it (the per-row idempotency guard skips already-stamped
+        rows).
 
         Returns:
             Number of documents updated.
@@ -142,13 +199,27 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
 
         if internal_id is None:
             # Fall back to metadata lookup — mapping was not in this
-            # process's _id_map, so we have to find it on disk.
+            # process's _id_map, so we have to find it on disk. We catch
+            # only TypeError (older catalog signatures lack
+            # ``filter_dict=``) and NotImplementedError (filter mode not
+            # supported); other exceptions — including database errors,
+            # locked-DB, schema mismatches — propagate so the caller
+            # cannot mistake a real failure for a successful no-op.
             try:
                 docs = self._collection.get_documents(
                     filter_dict={"_simplevecdb_node_id": ref_doc_id}, limit=1
                 )
-            except Exception:
+            except (TypeError, NotImplementedError) as exc:
+                _logger.debug(
+                    "filter_dict-based delete fallback unavailable: %s",
+                    exc,
+                )
                 docs = []
+            except sqlite3.DatabaseError:
+                # Database-layer error: surface it instead of swallowing.
+                # A locked or corrupted DB previously turned into a
+                # silent no-op, hiding data-loss bugs.
+                raise
             if docs:
                 internal_id = int(docs[0][0])
 

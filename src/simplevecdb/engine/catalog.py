@@ -343,6 +343,17 @@ class CatalogManager:
                 if uid is not None:
                     real_ids[idx] = int(next(explicit_iter)[0])
 
+            # Defense-in-depth: any leftover -1 sentinel here means an
+            # INSERT path partially succeeded — never feed that to FTS as
+            # a rowid. This catches both retry-loop interaction with the
+            # @retry_on_lock decorator and any future code path that
+            # forgets to populate real_ids before the FTS upsert.
+            if any(rid < 0 for rid in real_ids):
+                raise RuntimeError(
+                    "Internal error: add_documents produced an unfilled "
+                    "rowid sentinel; refusing to update FTS with -1."
+                )
+
             # Update FTS index
             self._upsert_fts_rows(real_ids, texts)
 
@@ -415,6 +426,20 @@ class CatalogManager:
             meta = json.loads(meta_json) if meta_json else {}
             result[row_id] = (text, meta)
         return result
+
+    def list_all_ids(self) -> list[int]:
+        """Return every doc id in the table, serialized through ``self._lock``.
+
+        Used by the rebuild-index path so the SELECT runs under the same
+        re-entrant lock as concurrent writers, eliminating the bare
+        ``self.conn.execute(...)`` that previously relied on caller
+        discipline alone.
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id FROM {self._table_name}"
+            ).fetchall()
+        return [row[0] for row in rows]
 
     def get_embeddings_by_ids(self, ids: Sequence[int]) -> dict[int, Any]:
         """

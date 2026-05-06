@@ -3,7 +3,9 @@
 The 2.5.0 review flagged two correctness/performance issues:
 - ``QuantizationStrategy.serialize`` for INT8 silently clipped any vector
   whose components exceeded |1|, destroying magnitude information without
-  any signal to the caller. 2.6.0 raises a ValueError above 1+1e-5.
+  any signal to the caller. 2.6.0 (review pass 3) emits a one-shot
+  DeprecationWarning above 1+1e-5 and still clips, preserving backwards
+  compatibility for callers that relied on the silent-clip behavior.
 - ``normalize_l2`` returned the unchanged vector only when ``norm == 0``,
   so subnormal-scale inputs (e.g. 1e-40) divided by a tiny norm and
   exploded into Inf. 2.6.0 treats ``norm < 1e-12`` as zero.
@@ -53,17 +55,48 @@ class TestINT8RangeGuard:
         assert isinstance(out, bytes)
         assert len(out) == 4  # int8 == 1 byte each
 
-    def test_just_over_unit_rejected(self):
+    def test_just_over_unit_warns_and_clips(self):
+        # Reset the module-level latch so this test sees the warning.
+        from simplevecdb.engine import quantization as q
+        q._INT8_RANGE_WARNED = False
         strat = QuantizationStrategy(Quantization.INT8)
         v = np.array([1.5, 0.0, 0.0, 0.0], dtype=np.float32)
-        with pytest.raises(ValueError, match=r"INT8 quantization expects vectors in \[-1, 1\]"):
-            strat.serialize(v)
+        with pytest.warns(DeprecationWarning, match=r"INT8 quantization received"):
+            out = strat.serialize(v)
+        # Clipped to int8 range: 1.5 * 127 = 190.5 → clipped to 127.
+        arr = np.frombuffer(out, dtype=np.int8)
+        assert arr[0] == 127
 
-    def test_just_under_negative_unit_rejected(self):
+    def test_just_under_negative_unit_warns_and_clips(self):
+        from simplevecdb.engine import quantization as q
+        q._INT8_RANGE_WARNED = False
         strat = QuantizationStrategy(Quantization.INT8)
         v = np.array([-2.0, 0.0, 0.0, 0.0], dtype=np.float32)
-        with pytest.raises(ValueError, match=r"max\(\|x\|\)"):
+        with pytest.warns(DeprecationWarning):
+            out = strat.serialize(v)
+        arr = np.frombuffer(out, dtype=np.int8)
+        assert arr[0] == -128
+
+    def test_warning_only_emitted_once_per_process(self):
+        # Latch behavior: a second call with a still-out-of-range vector
+        # must not re-warn after the first warn has fired.
+        from simplevecdb.engine import quantization as q
+        q._INT8_RANGE_WARNED = False
+        strat = QuantizationStrategy(Quantization.INT8)
+        v = np.array([1.5, 0.0, 0.0, 0.0], dtype=np.float32)
+        with pytest.warns(DeprecationWarning):
             strat.serialize(v)
+        # Second call must not raise the warning again.
+        import warnings
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            strat.serialize(v)
+            int8_warnings = [
+                w for w in record
+                if issubclass(w.category, DeprecationWarning)
+                and "INT8 quantization" in str(w.message)
+            ]
+            assert int8_warnings == []
 
     def test_within_tolerance_band_accepted(self):
         # Slightly over 1.0 but within the 1e-5 tolerance — should pass.
@@ -78,10 +111,12 @@ class TestINT8RangeGuard:
         out = strat.serialize(v)
         assert out == b""
 
-    def test_error_message_includes_max_abs(self):
+    def test_warning_message_includes_max_abs(self):
+        from simplevecdb.engine import quantization as q
+        q._INT8_RANGE_WARNED = False
         strat = QuantizationStrategy(Quantization.INT8)
         v = np.array([3.7, -0.5, 0.2], dtype=np.float32)
-        with pytest.raises(ValueError, match=r"3\.7"):
+        with pytest.warns(DeprecationWarning, match=r"3\.7"):
             strat.serialize(v)
 
 

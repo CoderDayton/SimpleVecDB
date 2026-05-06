@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import logging
+import warnings
+
 import numpy as np
 from ..types import Quantization
+
+_logger = logging.getLogger("simplevecdb.engine.quantization")
+# Module-level latch so we warn once per process, not on every serialize call.
+_INT8_RANGE_WARNED = False
 
 
 def normalize_l2(vector: np.ndarray) -> np.ndarray:
@@ -52,15 +59,27 @@ class QuantizationStrategy:
 
         elif self.quantization == Quantization.INT8:
             # Scalar quantization assumes inputs are in roughly [-1, 1] (e.g.,
-            # L2-normalized embeddings). Out-of-range values silently clip
-            # and lose all magnitude information; reject loudly instead.
+            # L2-normalized embeddings). Out-of-range values lose magnitude
+            # information when clipped. Pre-2.6.0 silently clipped; 2.6.0
+            # initially raised, which broke callers that relied on the
+            # silent-clip behavior. Compromise: clip and emit a one-time
+            # DeprecationWarning so users have time to normalize.
             arr = np.asarray(vector)
             max_abs = float(np.abs(arr).max()) if arr.size else 0.0
             if max_abs > 1.0 + 1e-5:
-                raise ValueError(
-                    "INT8 quantization expects vectors in [-1, 1]; "
-                    f"got max(|x|)={max_abs:.4f}. Normalize first."
-                )
+                global _INT8_RANGE_WARNED
+                if not _INT8_RANGE_WARNED:
+                    _INT8_RANGE_WARNED = True
+                    warnings.warn(
+                        "INT8 quantization received a vector with "
+                        f"max(|x|)={max_abs:.4f}, outside the expected "
+                        "[-1, 1] range. The value will be clipped, which "
+                        "loses magnitude information. Call normalize_l2() "
+                        "first; future versions may raise instead of "
+                        "warning.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
             scaled = np.clip(np.round(arr * 127), -128, 127).astype(np.int8)
             return scaled.tobytes()
 

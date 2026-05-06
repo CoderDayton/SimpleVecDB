@@ -880,9 +880,13 @@ class VectorCollection:
         expansion_add: int | None,
         expansion_search: int | None,
     ) -> int:
-        # Get all document IDs
-        all_ids = self.conn.execute(f"SELECT id FROM {self._table_name}").fetchall()
-        all_ids = [row[0] for row in all_ids]
+        # Precondition: caller must already hold ``self._lock``. ``rebuild_index``
+        # is the only public entry point and acquires it before delegating; this
+        # private helper relies on RLock re-entrancy so the catalog reads below
+        # are serialized against concurrent add/delete on the shared connection.
+        # Routing the read through CatalogManager keeps the lock invariant
+        # explicit instead of bare ``self.conn.execute(...)``.
+        all_ids = self._catalog.list_all_ids()
 
         if not all_ids:
             _logger.warning("No documents found in collection")
@@ -1654,18 +1658,24 @@ class VectorDB:
             raise ValueError(
                 f"Invalid collection name '{name}'. Must be alphanumeric + underscores."
             )
-        if name not in self.list_collections():
-            raise KeyError(f"Collection '{name}' does not exist.")
 
         table_name = "tinyvec_items" if name == "default" else f"items_{name}"
         fts_table = f"{table_name}_fts"
         cluster_table = f"{table_name}_clusters"
 
         # Hold the lock for the full delete: drop tables, remove files, and
-        # evict cached collections atomically. Closing each cached
-        # VectorCollection's index *before* unlinking the file prevents stale
-        # mmap views from racing with the unlink.
+        # evict cached collections atomically. The existence check runs
+        # *inside* the lock to close the TOCTOU between checking and the
+        # actual DROP — two concurrent delete_collection calls would
+        # otherwise both pass the check and the loser would surface a
+        # SQLite error instead of the documented KeyError.
         with self._lock:
+            # Re-entrant: list_collections() also takes self._lock. The
+            # check + drop must run inside the same lock acquisition so a
+            # second concurrent delete_collection cannot pass the
+            # existence check after our DROP runs.
+            if name not in self.list_collections():
+                raise KeyError(f"Collection '{name}' does not exist.")
             # Close any cached collection's open index before removing the file
             for cached_key, cached_col in list(self._collections.items()):
                 if cached_key[0] == name:

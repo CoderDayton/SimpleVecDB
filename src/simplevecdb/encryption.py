@@ -25,12 +25,15 @@ Requirements:
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import logging
 import os
 import secrets
 import sqlite3
+from collections import OrderedDict
 from pathlib import Path
+from threading import Lock
 
 _logger = logging.getLogger("simplevecdb.encryption")
 
@@ -39,7 +42,7 @@ AES_KEY_SIZE = 32  # 256 bits
 AES_NONCE_SIZE = 12  # 96 bits for GCM
 AES_TAG_SIZE = 16  # 128 bits
 SALT_SIZE = 16
-PBKDF2_ITERATIONS = 480000  # OWASP 2023 recommendation for SHA-256
+PBKDF2_ITERATIONS = 600000  # OWASP 2024 recommendation for SHA-256
 # Fixed salt for deterministic key normalization (SQLCipher/index compatibility)
 _NORMALIZE_KEY_SALT = b"simplevecdb-sqlcipher-key"
 
@@ -92,10 +95,15 @@ def _derive_key(passphrase: str | bytes, salt: bytes) -> bytes:
     )
 
 
-# Cache normalized keys so repeated encrypt/decrypt round-trips don't pay the
-# 480k-iteration PBKDF2 cost more than once per process. Keyed by the
-# (id(key_bytes), salt_id) pair so different keys/salts get distinct entries.
-_NORMALIZE_KEY_CACHE: dict[tuple[bytes, bytes], bytes] = {}
+# Bounded LRU of derived keys, so repeated encrypt/decrypt round-trips
+# avoid the 600k-iteration PBKDF2 cost. Keyed by ``(passphrase_bytes,
+# salt_bytes)``. Long-running multi-tenant processes that open many DBs with
+# distinct passphrases must not retain key material indefinitely, hence the
+# cap. Access is serialized by ``_NORMALIZE_KEY_CACHE_LOCK`` so concurrent
+# normalization from multiple threads stays consistent.
+_NORMALIZE_KEY_CACHE_MAX = 64
+_NORMALIZE_KEY_CACHE: "OrderedDict[tuple[bytes, bytes], bytes]" = OrderedDict()
+_NORMALIZE_KEY_CACHE_LOCK = Lock()
 
 
 def _normalize_key(key: str | bytes, salt: bytes | None = None) -> bytes:
@@ -116,12 +124,20 @@ def _normalize_key(key: str | bytes, salt: bytes | None = None) -> bytes:
     # same passphrase yields different cache entries for different DBs.
     key_bytes = key.encode("utf-8") if isinstance(key, str) else bytes(key)
     cache_key = (key_bytes, salt_to_use)
-    cached = _NORMALIZE_KEY_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
+
+    with _NORMALIZE_KEY_CACHE_LOCK:
+        cached = _NORMALIZE_KEY_CACHE.get(cache_key)
+        if cached is not None:
+            _NORMALIZE_KEY_CACHE.move_to_end(cache_key)
+            return cached
 
     derived = _derive_key(key, salt_to_use)
-    _NORMALIZE_KEY_CACHE[cache_key] = derived
+
+    with _NORMALIZE_KEY_CACHE_LOCK:
+        _NORMALIZE_KEY_CACHE[cache_key] = derived
+        _NORMALIZE_KEY_CACHE.move_to_end(cache_key)
+        while len(_NORMALIZE_KEY_CACHE) > _NORMALIZE_KEY_CACHE_MAX:
+            _NORMALIZE_KEY_CACHE.popitem(last=False)
     return derived
 
 
@@ -175,8 +191,41 @@ def _resolve_salt(
 
     salt = secrets.token_bytes(SALT_SIZE)
     try:
-        _atomic_write_bytes(salt_path, salt, mode=0o600)
+        # O_EXCL guards against two concurrent openers racing to write
+        # different random salts (whichever lost would silently derive a
+        # wrong key). It also prevents clobbering a sidecar that was
+        # already created out-of-band — for an existing DB whose data
+        # file was zero-bytes for some reason, overwriting the sidecar
+        # would render the DB permanently unreadable.
+        salt_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(
+            str(salt_path),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        try:
+            os.write(fd, salt)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            dir_fd = os.open(str(salt_path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
     except OSError as exc:
+        if exc.errno == errno.EEXIST:
+            # Lost a race against another writer; read whichever salt
+            # they wrote and use that instead so both processes agree.
+            try:
+                data = salt_path.read_bytes()
+                if len(data) == SALT_SIZE:
+                    return data
+            except OSError:
+                pass
         _logger.warning(
             "Could not write salt sidecar %s (%s); using legacy fixed salt. "
             "Per-DB salt protection is disabled until the path is writable.",
@@ -408,15 +457,18 @@ def encrypt_file(
         # Generate random nonce (MUST be unique per encryption)
         nonce = secrets.token_bytes(AES_NONCE_SIZE)
 
-        # Encrypt with AES-GCM
+        # Encrypt with AES-GCM. Bind the v1 header (magic + version) into
+        # the GCM AAD so any tampering with the header bytes — including a
+        # downgrade attempt that strips the version byte — fails
+        # authentication on decrypt.
+        header = _ENC_MAGIC + bytes([_ENC_VERSION])
         aesgcm = AESGCM(key)
-        ciphertext = aesgcm.encrypt(nonce, plaintext, associated_data=None)
+        ciphertext = aesgcm.encrypt(nonce, plaintext, associated_data=header)
 
         # Atomically write: header + nonce + ciphertext to a sibling temp
         # file, fsync, restrict permissions, then os.replace() onto the
         # target path. A crash mid-write leaves only the temp file; the
         # target is never torn.
-        header = _ENC_MAGIC + bytes([_ENC_VERSION])
         _atomic_write_bytes(
             output_path, header + nonce + ciphertext, mode=0o600
         )
@@ -459,11 +511,16 @@ def decrypt_file(
 
         # Detect format. v1 starts with magic 'SV' + version byte; anything
         # else is treated as v0 (pre-2.6.0) for backwards compatibility.
+        # The v1 header is bound into the GCM AAD on encrypt, so any
+        # tampering with the magic/version bytes — including a downgrade
+        # attempt that strips them — fails authentication here.
+        associated_data: bytes | None = None
         if (
             len(data) >= _ENC_HEADER_LEN
             and data[: len(_ENC_MAGIC)] == _ENC_MAGIC
             and data[len(_ENC_MAGIC)] == _ENC_VERSION
         ):
+            associated_data = bytes(data[:_ENC_HEADER_LEN])
             data = data[_ENC_HEADER_LEN:]
 
         if len(data) < AES_NONCE_SIZE + AES_TAG_SIZE:
@@ -473,9 +530,10 @@ def decrypt_file(
         nonce = data[:AES_NONCE_SIZE]
         ciphertext = data[AES_NONCE_SIZE:]
 
-        # Decrypt with AES-GCM
+        # Decrypt with AES-GCM. associated_data is bound to the v1 header
+        # (or None for legacy v0 files where no header was present).
         aesgcm = AESGCM(key)
-        plaintext = aesgcm.decrypt(nonce, ciphertext, associated_data=None)
+        plaintext = aesgcm.decrypt(nonce, ciphertext, associated_data=associated_data)
 
         # Write decrypted data atomically. Plaintext is sensitive — restrict
         # permissions to owner only.
@@ -515,11 +573,17 @@ def encrypt_index_file(index_path: Path, key: str | bytes) -> None:
         return
 
     encrypted_path = index_path.with_suffix(".usearch.enc")
-    # New encryption: generate a random salt sidecar if one doesn't already
-    # exist. Re-encryption: keep the existing sidecar so decryption keeps
-    # working; legacy files without a sidecar fall back to the fixed salt.
-    is_first_encryption = not encrypted_path.exists()
-    salt = _resolve_salt(encrypted_path, create_if_missing=is_first_encryption)
+    # Generate a random salt sidecar if one doesn't already exist. This
+    # covers two cases:
+    #  - First-ever encryption (no .enc, no .salt) → create sidecar.
+    #  - Re-encryption of a legacy v0 blob (.enc present, no .salt) →
+    #    create sidecar so the next read uses per-DB salts. This is the
+    #    migration path from v0 to v1.
+    # If a sidecar already exists, _resolve_salt returns it unchanged
+    # (the O_EXCL guard inside also prevents accidental clobbering).
+    salt_path = encrypted_path.with_name(encrypted_path.name + _SALT_SIDECAR_SUFFIX)
+    needs_sidecar = not salt_path.exists()
+    salt = _resolve_salt(encrypted_path, create_if_missing=needs_sidecar)
     normalized_key = _normalize_key(key, salt=salt)
 
     # encrypt_file is atomic (tmp + fsync + os.replace + chmod 0o600), so by

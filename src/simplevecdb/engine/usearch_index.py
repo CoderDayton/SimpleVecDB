@@ -413,9 +413,12 @@ class UsearchIndex:
             with file_lock(self._path):
                 try:
                     self._index.save(str(tmp_path))
-                    # fsync the temp file so the data hits disk before the rename
+                    # fsync the temp file so the data hits disk before the rename.
+                    # Open with O_RDWR so fsync() is guaranteed to flush data
+                    # pages on Linux; fsync() on an O_RDONLY fd is undefined
+                    # and can return EBADF on some kernels.
                     try:
-                        fd = os.open(str(tmp_path), os.O_RDONLY)
+                        fd = os.open(str(tmp_path), os.O_RDWR)
                         try:
                             os.fsync(fd)
                         finally:
@@ -443,7 +446,12 @@ class UsearchIndex:
                         pass
                     raise
 
-            self._dirty = False
+                # Clearing _dirty must be inside file_lock and inside the
+                # try/except above so a concurrent add() that flips _dirty
+                # back to True between os.replace() and this assignment is
+                # not silently overwritten.
+                self._dirty = False
+
             _logger.debug("Saved index to %s", self._path)
 
     def close(self) -> None:

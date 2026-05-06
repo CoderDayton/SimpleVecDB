@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.6.0] - 2026-05-06
 
+### Review pass 3 — final correctness/security pass before tag
+
+#### Critical fixes
+
+- **`UsearchIndex.save` lost-update race** — the `_dirty = False` clear was outside the `file_lock` window, so a concurrent `add()` between `os.replace()` and the dirty-flag clear could be silently overwritten. Moved inside `file_lock`.
+- **`UsearchIndex.save` data fsync on `O_RDONLY` fd** — `fsync(2)` on a read-only file descriptor has implementation-defined behavior on Linux (some kernels return `EBADF`, swallowed by the warning branch). Switched to `O_RDWR` so the data fsync is guaranteed.
+- **`_rebuild_index_locked` bare `conn.execute`** — replaced the bare `self.conn.execute("SELECT id FROM ...")` with the new `CatalogManager.list_all_ids()`, which routes the read through `self._lock` instead of relying on RLock re-entrancy from a single caller.
+- **PBKDF2 iteration bump** — raised from 480 000 → 600 000 to match the OWASP 2024 minimum for PBKDF2-HMAC-SHA256.
+- **AES-GCM AAD now binds the v1 header** — `encrypt_file` / `decrypt_file` pass the magic+version bytes as `associated_data`, so any tampering with the header (including downgrade attempts) fails authentication instead of silently succeeding.
+- **Bounded normalize-key cache** — `_NORMALIZE_KEY_CACHE` is now an LRU capped at 64 entries, serialized by a `threading.Lock`. Long-running multi-tenant processes no longer leak derived key material indefinitely.
+- **LlamaIndex `delete()` no longer swallows `sqlite3.DatabaseError`** — narrowed the exception in the metadata-fallback path to `(TypeError, NotImplementedError)`. A locked DB, closed connection, or schema mismatch now propagates to the caller instead of becoming a silent no-op.
+- **Hybrid-search RRF rank symmetry** — vector candidates now use the original HNSW position as their RRF rank (via `enumerate(vector_keys_list)`), matching how keyword candidates use raw BM25 position. Previously, a metadata filter that rejected vector candidates inflated surviving vector scores relative to keyword scores, corrupting result ordering.
+- **`add_documents` FTS sentinel guard** — added a defense-in-depth check that raises `RuntimeError` if any `-1` sentinel rowid remains in `real_ids` before the FTS upsert. Prevents a hypothetical retry-loop interaction from corrupting the FTS index with rowid `-1`.
+
+#### Important fixes
+
+- **`delete_collection` TOCTOU** — moved the `list_collections()` existence check inside the `with self._lock:` block so two concurrent `delete_collection(name)` calls cannot both pass the check; the second now sees a clean `KeyError` instead of a SQLite error.
+- **Salt sidecar `O_EXCL` guard** — `_resolve_salt(create_if_missing=True)` now creates the sidecar with `O_CREAT | O_EXCL`. If two processes race, the loser reads the winner's salt; if a sidecar already exists out-of-band, it is preserved instead of being clobbered (which would have rendered an existing DB unreadable).
+- **`encrypt_index_file` v0→v1 sidecar migration** — re-encrypting a legacy v0 blob (no sidecar) now creates a fresh sidecar, completing the migration path to per-DB salts. Previously, `is_first_encryption` was keyed on `.enc` presence rather than `.salt` presence.
+- **LlamaIndex legacy-collection warning** — `SimpleVecDBLlamaStore.__init__` now emits a one-shot `DeprecationWarning` when it detects rows lacking `_simplevecdb_node_id`, telling the operator to call `migrate_node_id_metadata()` and noting the inherent limitation that pre-2.6 rows can only be stamped with `str(doc_id)` (the original LlamaIndex node ids were never persisted).
+- **INT8 quantization range break softened** — instead of raising `ValueError` on `max(|x|) > 1.0 + 1e-5`, the strategy now emits a one-shot `DeprecationWarning` and clips. Restores backwards compatibility for callers that relied on the prior silent-clip behavior.
+- **`scripts/check_version_sync.py` now validates `CHANGELOG.md`** — the hook fails if the latest CHANGELOG entry header does not match `pyproject.toml`'s version, preventing a release from shipping with a stale changelog.
+
+#### Test coverage added (review pass 3 gaps)
+
+- `tests/unit/test_v26_review_pass_3.py` — covers parent-directory fsync on save, `.tmp` cleanup on save failure, `db._lock is catalog._lock` shared-RLock identity, adversarial inputs to `_validate_table_name`, hybrid-search RRF rank symmetry under filter, and same-text-different-id deduplication.
+- `tests/unit/test_v26_encryption_review_pass_3.py` — covers nonce uniqueness across saves, wrong-key decrypt does not create the output file, AAD-bound header tampering fails authentication, salt sidecar O_EXCL preservation, and v0→v1 migration round-trip.
+- `tests/unit/integrations/test_llamaindex_review_pass_3.py` — covers the `add → query` round-trip preserving the original LlamaIndex node id, end-to-end migration-then-delete on v2.5-shaped data, the legacy-collection `DeprecationWarning` at `__init__` time, and that `sqlite3.DatabaseError` from the metadata-fallback path now propagates instead of being swallowed.
+
 ### Fixed (concurrency & durability)
 
 - **Atomic `UsearchIndex.save`** — now writes to a sibling `.tmp`, fsyncs, then `os.replace()`s onto the live path and fsyncs the parent directory. A crash mid-save can no longer corrupt the only copy of the index. Also moved the `_dirty` short-circuit inside `_write_lock` so a concurrent `add` cannot have its dirty flag silently cleared.

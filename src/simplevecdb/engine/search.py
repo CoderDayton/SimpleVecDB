@@ -323,9 +323,13 @@ class SearchEngine:
         rrf_scores: dict[int, float] = {}
         doc_lookup: dict[int, Document] = {}
 
-        # Vector ranks
-        rank = 0
-        for key in vector_keys_list:
+        # Vector ranks. The rank is the *original* HNSW position so that
+        # RRF stays symmetric with the keyword side (which uses BM25
+        # rank). Previously rank only advanced for accepted results, so
+        # any filter that rejected vector candidates inflated the scores
+        # of the surviving ones relative to keyword candidates,
+        # corrupting result ordering.
+        for rank, key in enumerate(vector_keys_list):
             if key not in docs_map:
                 continue
             text, metadata = docs_map[key]
@@ -333,7 +337,6 @@ class SearchEngine:
                 continue
             rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
             doc_lookup[key] = Document(page_content=text, metadata=metadata)
-            rank += 1
 
         # Keyword ranks (BM25 candidates respect the filter via build_filter_clause)
         for kw_rank, (cid, _) in enumerate(keyword_candidates):
