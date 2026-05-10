@@ -551,38 +551,6 @@ def test_rebuild_index_empty_collection(tmp_path):
     db.close()
 
 
-def test_check_migration_no_legacy(tmp_path):
-    """Test check_migration() on a fresh v2.0 database."""
-    db_path = str(tmp_path / "fresh.db")
-
-    # Create a new database (no legacy data)
-    db = VectorDB(db_path)
-    collection = db.collection("default")
-    collection.add_texts(["test"], embeddings=[[0.1] * 64])
-    db.close()
-
-    # Check migration status
-    info = VectorDB.check_migration(db_path)
-
-    assert info["needs_migration"] is False
-    assert info["collections"] == []
-    assert info["total_vectors"] == 0
-
-
-def test_check_migration_nonexistent():
-    """Test check_migration() on nonexistent file."""
-    info = VectorDB.check_migration("/nonexistent/path.db")
-
-    assert info["needs_migration"] is False
-    assert info["collections"] == []
-
-
-def test_check_migration_memory():
-    """Test check_migration() on :memory: database."""
-    info = VectorDB.check_migration(":memory:")
-
-    assert info["needs_migration"] is False
-
 
 def test_adaptive_search_uses_exact_for_small_collections(tmp_path):
     """Test that search uses brute-force (exact) for small collections."""

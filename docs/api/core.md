@@ -12,7 +12,6 @@ The main database class for managing vector collections.
         - search_collections
         - vacuum
         - close
-        - check_migration
 
 ## VectorCollection
 

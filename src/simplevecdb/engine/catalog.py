@@ -1868,56 +1868,6 @@ class CatalogManager:
             cur = self.conn.execute(sql, tuple(params))
         return cur.rowcount or 0
 
-    def check_legacy_sqlite_vec(self, vec_table_name: str) -> bool:
-        """
-        Check if legacy sqlite-vec tables exist (for migration).
-
-        Args:
-            vec_table_name: Expected name of the old vec0 virtual table
-
-        Returns:
-            True if legacy sqlite-vec data exists
-        """
-        try:
-            with self._lock:
-                row = self.conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                    (vec_table_name,),
-                ).fetchone()
-            return row is not None
-        except Exception:
-            return False
-
-    def get_legacy_vectors(self, vec_table_name: str) -> list[tuple[int, bytes]]:
-        """
-        Extract vectors from legacy sqlite-vec table for migration.
-
-        Args:
-            vec_table_name: Name of the old vec0 virtual table
-
-        Returns:
-            List of (rowid, embedding_blob) tuples
-        """
-        _validate_table_name(vec_table_name)
-        try:
-            with self._lock:
-                rows = self.conn.execute(
-                    f"SELECT rowid, embedding FROM {vec_table_name}"
-                ).fetchall()
-            return [(int(r[0]), r[1]) for r in rows]
-        except Exception as e:
-            _logger.warning("Failed to read legacy vectors: %s", e)
-            return []
-
-    def drop_legacy_vec_table(self, vec_table_name: str) -> None:
-        """Drop legacy sqlite-vec table after migration."""
-        _validate_table_name(vec_table_name)
-        try:
-            with self._writable():
-                self.conn.execute(f"DROP TABLE IF EXISTS {vec_table_name}")
-            _logger.info("Dropped legacy sqlite-vec table: %s", vec_table_name)
-        except Exception as e:
-            _logger.warning("Failed to drop legacy table %s: %s", vec_table_name, e)
 
     # ------------------------------------------------------------------ #
     # Hierarchical Relationships

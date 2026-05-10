@@ -6,7 +6,6 @@ from .types import (
     Document,
     DistanceStrategy,
     Quantization,
-    MigrationRequiredError,
     StreamingProgress,
     ProgressCallback,
 )
@@ -56,7 +55,6 @@ __all__ = [
     "log_operation",
     # Error handling
     "DatabaseLockedError",
-    "MigrationRequiredError",
     "EncryptionError",
     "EncryptionUnavailableError",
     "async_retry_on_lock",

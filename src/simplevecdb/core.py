@@ -28,7 +28,6 @@ from .types import (
     Quantization,
     Edge,
     Event,
-    MigrationRequiredError,
     StreamingProgress,
     ProgressCallback,
     ClusterResult,
@@ -211,10 +210,8 @@ class VectorCollection:
         # Table names
         if name == "default":
             self._table_name = "tinyvec_items"
-            self._legacy_vec_table = "vec_index"  # For migration
         else:
             self._table_name = f"items_{name}"
-            self._legacy_vec_table = f"vectors_{name}"  # For migration
 
         self._fts_table_name = f"{self._table_name}_fts"
 
@@ -268,9 +265,6 @@ class VectorCollection:
             distance_strategy=self.distance_strategy,
         )
 
-        # Check for and perform migration from sqlite-vec
-        self._migrate_from_sqlite_vec_if_needed()
-
     def _resolve_index_path(self) -> str | None:
         """
         Resolve the actual index path, handling encryption.
@@ -297,52 +291,6 @@ class VectorCollection:
             _logger.info("Decrypted index file: %s", encrypted_path)
 
         return self._index_path
-
-    def _migrate_from_sqlite_vec_if_needed(self) -> None:
-        """Auto-migrate from sqlite-vec to usearch on first connection."""
-        if not self._catalog.check_legacy_sqlite_vec(self._legacy_vec_table):
-            return
-
-        _logger.info(
-            "Detected legacy sqlite-vec data in collection '%s'. Migrating to usearch...",
-            self.name,
-        )
-
-        try:
-            # Get legacy vectors
-            legacy_data = self._catalog.get_legacy_vectors(self._legacy_vec_table)
-            if not legacy_data:
-                _logger.warning("No vectors found in legacy table")
-                self._catalog.drop_legacy_vec_table(self._legacy_vec_table)
-                return
-
-            # Deserialize and add to usearch
-            keys = []
-            vectors = []
-            for rowid, blob in legacy_data:
-                vec = np.frombuffer(blob, dtype=np.float32)
-                keys.append(rowid)
-                vectors.append(vec)
-
-            keys_arr = np.array(keys, dtype=np.uint64)
-            vectors_arr = np.array(vectors, dtype=np.float32)
-
-            self._index.add(keys_arr, vectors_arr)
-            self._index.save()
-
-            # Drop legacy table
-            self._catalog.drop_legacy_vec_table(self._legacy_vec_table)
-
-            _logger.info(
-                "Migration complete: %d vectors migrated to usearch", len(keys)
-            )
-
-        except Exception as e:
-            _logger.error("Migration failed: %s", e)
-            raise RuntimeError(
-                f"Failed to migrate from sqlite-vec: {e}. "
-                "You may need to manually migrate or restore from backup."
-            ) from e
 
     def add_texts(
         self,
@@ -2327,7 +2275,6 @@ class VectorDB:
         quantization: Quantization = Quantization(constants.DEFAULT_QUANTIZATION),
         *,
         encryption_key: str | bytes | None = None,
-        auto_migrate: bool = False,
     ):
         """Initialize the vector database.
 
@@ -2337,13 +2284,8 @@ class VectorDB:
             quantization: Default vector compression strategy.
             encryption_key: Optional passphrase or 32-byte key for at-rest encryption.
                 Encrypts both SQLite (via SQLCipher) and usearch index files (via AES-256-GCM).
-            auto_migrate: If True, automatically migrate v1.x sqlite-vec data
-                to usearch. If False (default), raise MigrationRequiredError
-                when legacy data is detected. Use check_migration() to preview.
 
         Raises:
-            MigrationRequiredError: If auto_migrate=False and legacy sqlite-vec
-                data is detected. Contains details about what needs migration.
             EncryptionUnavailableError: If encryption_key provided but encryption
                 dependencies are missing.
             EncryptionError: If encrypted database cannot be opened (wrong key).
@@ -2352,7 +2294,6 @@ class VectorDB:
         self.path = str(path)
         self.distance_strategy = distance_strategy
         self.quantization = quantization
-        self.auto_migrate = auto_migrate
         self._encryption_key = encryption_key
         self._collections: dict[tuple, VectorCollection] = {}
         # Single RLock serializing both the _collections cache (avoid
@@ -2407,17 +2348,6 @@ class VectorDB:
             self.conn.close()
             raise RuntimeError(f"Database health check failed: {e}") from e
 
-        # Check for required migration before allowing collection access
-        if not auto_migrate and self.path != ":memory:":
-            migration_info = VectorDB.check_migration(self.path)
-            if migration_info["needs_migration"]:
-                self.conn.close()
-                raise MigrationRequiredError(
-                    path=self.path,
-                    collections=migration_info["collections"],
-                    total_vectors=migration_info["total_vectors"],
-                    migration_info=migration_info,
-                )
 
     def transaction(self) -> "_DBTransaction":
         """Atomic write context spanning all collections (gap 2).
@@ -2781,151 +2711,6 @@ class VectorDB:
 
         return SimpleVecDBLlamaStore(db_path=self.path, collection_name=collection_name)
 
-    # ------------------------------------------------------------------ #
-    # Convenience
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def check_migration(path: str | Path) -> dict[str, Any]:
-        """
-        Check if a database needs migration from sqlite-vec (dry-run).
-
-        Use this before opening a v1.x database to understand what will
-        be migrated. Does not modify the database.
-
-        Args:
-            path: Path to the SQLite database file
-
-        Returns:
-            Dict with migration info:
-            - needs_migration: bool
-            - collections: list of collection names with legacy data
-            - total_vectors: estimated total vector count
-            - estimated_size_mb: approximate usearch index size
-            - rollback_notes: instructions for reverting if needed
-
-        Example:
-            >>> info = VectorDB.check_migration("mydb.db")
-            >>> if info["needs_migration"]:
-            ...     print(f"Will migrate {info['total_vectors']} vectors")
-            ...     print(info["rollback_notes"])
-        """
-        path = str(path)
-        if path == ":memory:" or not Path(path).exists():
-            return {
-                "needs_migration": False,
-                "collections": [],
-                "total_vectors": 0,
-                "estimated_size_mb": 0.0,
-                "rollback_notes": "",
-            }
-
-        try:
-            conn = sqlite3.connect(path, check_same_thread=False)
-        except sqlite3.DatabaseError:
-            # Database may be encrypted or corrupted - cannot check migration
-            return {
-                "needs_migration": False,
-                "collections": [],
-                "total_vectors": 0,
-                "estimated_size_mb": 0.0,
-                "rollback_notes": "",
-            }
-
-        try:
-            # Check for legacy sqlite-vec tables
-            tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        except sqlite3.DatabaseError:
-            # Database is encrypted or corrupted - cannot check migration
-            conn.close()
-            return {
-                "needs_migration": False,
-                "collections": [],
-                "total_vectors": 0,
-                "estimated_size_mb": 0.0,
-                "rollback_notes": "",
-            }
-
-        try:
-            table_names = {t[0] for t in tables}
-
-            legacy_collections = []
-            total_vectors = 0
-            total_bytes = 0
-
-            # Check default collection
-            if "vec_index" in table_names:
-                try:
-                    count = conn.execute("SELECT COUNT(*) FROM vec_index").fetchone()[0]
-                    if count > 0:
-                        legacy_collections.append("default")
-                        total_vectors += count
-                        # Estimate: rowid(8) + embedding blob
-                        row = conn.execute(
-                            "SELECT embedding FROM vec_index LIMIT 1"
-                        ).fetchone()
-                        if row and row[0]:
-                            dim = len(row[0]) // 4
-                            total_bytes += count * dim * 4  # float32
-                except Exception:
-                    pass
-
-            # Check named collections (vectors_{name})
-            for table in table_names:
-                if table.startswith("vectors_") and table != "vec_index":
-                    # Validate table name from sqlite_master (defense-in-depth)
-                    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", table):
-                        continue
-                    collection_name = table[8:]  # Remove "vectors_" prefix
-                    try:
-                        count = conn.execute(
-                            f"SELECT COUNT(*) FROM {table}"
-                        ).fetchone()[0]
-                        if count > 0:
-                            legacy_collections.append(collection_name)
-                            total_vectors += count
-                            row = conn.execute(
-                                f"SELECT embedding FROM {table} LIMIT 1"
-                            ).fetchone()
-                            if row and row[0]:
-                                dim = len(row[0]) // 4
-                                total_bytes += count * dim * 4
-                    except Exception:
-                        pass
-
-            estimated_mb = total_bytes / (1024 * 1024)
-
-            rollback_notes = ""
-            if legacy_collections:
-                rollback_notes = f"""
-MIGRATION ROLLBACK INSTRUCTIONS:
-================================
-1. BEFORE upgrading, backup your database:
-   cp {path} {path}.backup
-
-2. If migration fails or you need to revert:
-   - Delete the new .usearch files: {path}.*.usearch
-   - Restore from backup: cp {path}.backup {path}
-   - Downgrade to simplevecdb<2.0.0
-
-3. After successful migration, the legacy sqlite-vec tables are dropped.
-   Keep your backup until you've verified the migration worked correctly.
-
-4. New storage layout after migration:
-   - {path} (SQLite: metadata, text, FTS, embeddings)
-   - {path}.<collection>.usearch (usearch HNSW index per collection)
-"""
-
-            return {
-                "needs_migration": len(legacy_collections) > 0,
-                "collections": legacy_collections,
-                "total_vectors": total_vectors,
-                "estimated_size_mb": round(estimated_mb, 2),
-                "rollback_notes": rollback_notes.strip(),
-            }
-        finally:
-            conn.close()
 
     def vacuum(self, checkpoint_wal: bool = True) -> None:
         """
