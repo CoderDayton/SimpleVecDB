@@ -297,3 +297,229 @@ class TestMaintenance:
         assert ran is True
         # Subsequent call doesn't rebuild again until threshold re-passed.
         assert c.maintenance.rebuild_if_needed(max_pending=1) is False
+
+
+# ---------------------------- coverage gap fillers ------------------------
+
+
+class TestCountersGet:
+    def test_get_returns_stored_value(self, db_with_docs):
+        _, c, _ = db_with_docs
+        c.counters.increment(1, {"hits": 3})
+        assert c.counters.get(1, "hits") == 3
+
+    def test_get_returns_default_for_missing_key(self, db_with_docs):
+        _, c, _ = db_with_docs
+        assert c.counters.get(1, "never_set", default=42) == 42
+
+    def test_get_returns_none_for_missing_row(self, db_with_docs):
+        _, c, _ = db_with_docs
+        assert c.counters.get(99999, "hits") is None
+
+
+class TestExistsOperator:
+    def test_exists_true_matches_present_key(self, db_with_docs):
+        _, c, embs = db_with_docs
+        results = c.similarity_search(
+            embs[0], k=10, filter={"score": {"$exists": True}}
+        )
+        # Every seeded doc has a "score" metadata field.
+        assert len(results) == 5
+
+    def test_exists_false_matches_absent_key(self, db_with_docs):
+        _, c, embs = db_with_docs
+        results = c.similarity_search(
+            embs[0], k=10, filter={"missing": {"$exists": False}}
+        )
+        assert len(results) == 5
+
+
+class TestEventsObservability:
+    def test_last_seq_grows_with_appends(self, db_with_docs):
+        _, c, _ = db_with_docs
+        before = c.events.last_seq()
+        c.events.append("manual", payload={"k": 1})
+        c.events.append("manual", payload={"k": 2})
+        assert c.events.last_seq() == before + 2
+
+    def test_prune_drops_old_events(self, db_with_docs):
+        _, c, _ = db_with_docs
+        for i in range(5):
+            c.events.append("noise", payload={"i": i})
+        cutoff = c.events.last_seq()
+        c.events.append("keep", payload={"i": "kept"})
+        # prune deletes seq < before_seq, so cutoff+1 covers all noise rows.
+        removed = c.events.prune(before_seq=cutoff + 1)
+        assert removed >= 5
+        kinds = [e.kind for e in c.events.read()]
+        assert "keep" in kinds
+        assert "noise" not in kinds
+
+    def test_subscribe_yields_new_events(self, db_with_docs):
+        _, c, _ = db_with_docs
+        start = c.events.last_seq()
+        c.events.append("first", payload={"n": 1})
+        c.events.append("second", payload={"n": 2})
+
+        gen = c.events.subscribe(since=start, poll_interval=0.001, batch=10)
+        try:
+            seen = [next(gen), next(gen)]
+        finally:
+            gen.close()
+        kinds = [e.kind for e in seen]
+        assert "first" in kinds and "second" in kinds
+
+
+# ---------------------------- fortification guards ------------------------
+
+
+class TestUpdateEmbeddingFortification:
+    def test_nan_vector_rejected(self, db_with_docs):
+        _, c, _ = db_with_docs
+        bad = np.array([1.0, float("nan"), 0.0, 0.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="finite"):
+            c.update_embedding(1, bad)
+
+    def test_inf_vector_rejected(self, db_with_docs):
+        _, c, _ = db_with_docs
+        bad = np.array([float("inf"), 0.0, 0.0, 0.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="finite"):
+            c.update_embedding(1, bad)
+
+    def test_2d_vector_rejected(self, db_with_docs):
+        _, c, _ = db_with_docs
+        bad = np.zeros((1, 4), dtype=np.float32)
+        with pytest.raises(ValueError, match="1-D"):
+            c.update_embedding(1, bad)
+
+
+class TestBetweenOperator:
+    def test_between_inclusive_range_matches(self, db_with_docs):
+        _, c, embs = db_with_docs
+        results = c.similarity_search(
+            embs[0], k=10, filter={"score": {"$between": [1.0, 3.0]}}
+        )
+        scores = sorted(r[0].metadata["score"] for r in results)
+        assert scores == [1.0, 2.0, 3.0]
+
+    def test_between_tuple_shorthand(self, db_with_docs):
+        _, c, embs = db_with_docs
+        results = c.similarity_search(
+            embs[0], k=10, filter={"score": ("range", 0.0, 1.0)}
+        )
+        scores = sorted(r[0].metadata["score"] for r in results)
+        assert scores == [0.0, 1.0]
+
+    def test_between_lo_greater_than_hi_rejected(self, db_with_docs):
+        _, c, embs = db_with_docs
+        with pytest.raises(ValueError, match="lo <= hi"):
+            c.similarity_search(
+                embs[0], k=10, filter={"score": {"$between": [5.0, 1.0]}}
+            )
+
+    def test_between_non_finite_rejected(self, db_with_docs):
+        _, c, embs = db_with_docs
+        with pytest.raises(ValueError, match="finite"):
+            c.similarity_search(
+                embs[0], k=10, filter={"score": {"$between": [0.0, float("inf")]}}
+            )
+
+    def test_between_wrong_arity_rejected(self, db_with_docs):
+        _, c, embs = db_with_docs
+        with pytest.raises(ValueError):
+            c.similarity_search(embs[0], k=10, filter={"score": {"$between": [1.0]}})
+
+
+class TestEdgeFortification:
+    def test_add_edge_nan_weight_rejected(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="finite"):
+            c.edges.add_edge(1, 2, weight=float("nan"))
+
+    def test_add_edge_inf_bonus_rejected(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="finite"):
+            c.edges.add_edge(1, 2, bonus=float("inf"))
+
+    def test_upsert_edge_nan_weight_rejected(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="finite"):
+            c.edges.upsert(1, 2, weight=float("nan"))
+
+    def test_update_edge_nan_dweight_rejected(self, db_with_docs):
+        _, c, _ = db_with_docs
+        c.edges.add_edge(1, 2, weight=0.5)
+        with pytest.raises(ValueError, match="finite"):
+            c.edges.update_edge(1, 2, dweight=float("nan"))
+
+    def test_update_edge_inf_dbonus_rejected(self, db_with_docs):
+        _, c, _ = db_with_docs
+        c.edges.add_edge(1, 2, weight=0.5)
+        with pytest.raises(ValueError, match="finite"):
+            c.edges.update_edge(1, 2, dbonus=float("inf"))
+
+
+class TestTTLFortification:
+    def test_set_requires_one_of_seconds_or_expires_at(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="expires_at or seconds"):
+            c.ttl.set(1)
+
+    def test_set_rejects_both_seconds_and_expires_at(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="exactly one"):
+            c.ttl.set(1, expires_at=time.time() + 5, seconds=10)
+
+    def test_set_rejects_invalid_on_expire(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="on_expire"):
+            c.ttl.set(1, seconds=5, on_expire="bogus")
+
+    def test_set_rejects_nan_seconds(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="finite"):
+            c.ttl.set(1, seconds=float("nan"))
+
+    def test_set_rejects_inf_seconds(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="finite"):
+            c.ttl.set(1, seconds=float("inf"))
+
+    def test_set_rejects_nan_expires_at(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="finite"):
+            c.ttl.set(1, expires_at=float("nan"))
+
+    def test_clear_returns_zero_for_missing(self, db_with_docs):
+        _, c, _ = db_with_docs
+        assert c.ttl.clear(99999) == 0
+
+    def test_clear_returns_one_after_set(self, db_with_docs):
+        _, c, _ = db_with_docs
+        c.ttl.set(1, seconds=60)
+        assert c.ttl.clear(1) == 1
+
+    def test_start_background_rejects_zero_interval(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="positive finite"):
+            c.ttl.start_background(interval=0)
+
+    def test_start_background_rejects_negative_interval(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="positive finite"):
+            c.ttl.start_background(interval=-1.0)
+
+    def test_start_background_rejects_nan_interval(self, db_with_docs):
+        _, c, _ = db_with_docs
+        with pytest.raises(ValueError, match="positive finite"):
+            c.ttl.start_background(interval=float("nan"))
+
+    def test_start_background_idempotent_and_stops_cleanly(self, db_with_docs):
+        _, c, _ = db_with_docs
+        c.ttl.start_background(interval=60.0)
+        # Idempotent — second call is a no-op.
+        c.ttl.start_background(interval=60.0)
+        c.ttl.stop_background()
+        # After clean stop the next start spawns fresh.
+        c.ttl.start_background(interval=60.0)
+        c.ttl.stop_background()
