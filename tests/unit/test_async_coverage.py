@@ -76,7 +76,9 @@ async def test_async_auto_tag(sample_texts, sample_embeddings):
         await collection.add_texts(texts=texts, embeddings=emb.tolist())
 
         cluster_result = await collection.cluster(n_clusters=3, random_state=42)
-        tags = await collection.auto_tag(cluster_result, method="keywords", n_keywords=3)
+        tags = await collection.auto_tag(
+            cluster_result, method="keywords", n_keywords=3
+        )
 
         assert isinstance(tags, dict)
         assert len(tags) > 0

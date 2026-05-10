@@ -99,7 +99,9 @@ class SearchEngine:
         results: list[tuple[Document, float]] = []
 
         while len(results) < k and multiplier <= max_multiplier:
-            fetch_k = min(k * multiplier, index_size) if index_size > 0 else k * multiplier
+            fetch_k = (
+                min(k * multiplier, index_size) if index_size > 0 else k * multiplier
+            )
             keys, distances = self._index.search(
                 query_vec, fetch_k, exact=exact, threads=threads
             )
@@ -127,7 +129,9 @@ class SearchEngine:
                 if not self._matches_filter(metadata, filter):
                     continue
 
-                results.append((Document(page_content=text, metadata=metadata), float(dist)))
+                results.append(
+                    (Document(page_content=text, metadata=metadata), float(dist))
+                )
                 if len(results) >= k:
                     break
 
@@ -212,7 +216,9 @@ class SearchEngine:
                 if filter and not self._matches_filter(metadata, filter):
                     continue
 
-                results.append((Document(page_content=text, metadata=metadata), float(dist)))
+                results.append(
+                    (Document(page_content=text, metadata=metadata), float(dist))
+                )
 
                 if len(results) >= k:
                     break
@@ -398,9 +404,7 @@ class SearchEngine:
         docs_and_embs = self._catalog.get_documents_and_embeddings_by_ids(keys_list)
 
         # If catalog has no stored embeddings, retrieve from usearch index
-        has_catalog_embs = any(
-            emb is not None for _, _, emb in docs_and_embs.values()
-        )
+        has_catalog_embs = any(emb is not None for _, _, emb in docs_and_embs.values())
         index_embs: np.ndarray | None = None
         if not has_catalog_embs:
             keys_arr = np.array(keys_list, dtype=np.uint64)

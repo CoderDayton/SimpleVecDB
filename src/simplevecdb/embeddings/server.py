@@ -337,7 +337,9 @@ class EmbeddingResponse(BaseModel):
     usage: dict = Field(default_factory=lambda: {"prompt_tokens": 0, "total_tokens": 0})
 
 
-def _normalize_input(raw_input: str | list[str] | list[int] | list[list[int]]) -> list[str]:
+def _normalize_input(
+    raw_input: str | list[str] | list[int] | list[list[int]],
+) -> list[str]:
     """Convert any valid OpenAI-compatible input format to a flat list of strings.
 
     Handles:

@@ -25,6 +25,7 @@ def _validate_repo_id(repo_id: str) -> None:
             "Expected 'namespace/name' with [A-Za-z0-9_.-] characters only."
         )
 
+
 _logger = logging.getLogger("simplevecdb.embeddings.models")
 
 # HEAD timeout for HuggingFace snapshot_download. The download itself relies

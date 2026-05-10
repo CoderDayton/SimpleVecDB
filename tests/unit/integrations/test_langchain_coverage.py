@@ -64,7 +64,9 @@ def test_langchain_similarity_search_with_score_returns_scores(tmp_path):
     assert doc.page_content == "content"
     assert score == 0.25
     mock_embedding.embed_query.assert_called_once_with("query")
-    mock_col.similarity_search.assert_called_once_with(query=[0.5] * 3, k=1, filter=None)
+    mock_col.similarity_search.assert_called_once_with(
+        query=[0.5] * 3, k=1, filter=None
+    )
 
 
 def test_langchain_mmr_requires_embedding(tmp_path):

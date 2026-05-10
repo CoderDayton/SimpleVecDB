@@ -58,6 +58,7 @@ class TestINT8RangeGuard:
     def test_just_over_unit_warns_and_clips(self):
         # Reset the module-level latch so this test sees the warning.
         from simplevecdb.engine import quantization as q
+
         q._INT8_RANGE_WARNED = False
         strat = QuantizationStrategy(Quantization.INT8)
         v = np.array([1.5, 0.0, 0.0, 0.0], dtype=np.float32)
@@ -69,6 +70,7 @@ class TestINT8RangeGuard:
 
     def test_just_under_negative_unit_warns_and_clips(self):
         from simplevecdb.engine import quantization as q
+
         q._INT8_RANGE_WARNED = False
         strat = QuantizationStrategy(Quantization.INT8)
         v = np.array([-2.0, 0.0, 0.0, 0.0], dtype=np.float32)
@@ -81,6 +83,7 @@ class TestINT8RangeGuard:
         # Latch behavior: a second call with a still-out-of-range vector
         # must not re-warn after the first warn has fired.
         from simplevecdb.engine import quantization as q
+
         q._INT8_RANGE_WARNED = False
         strat = QuantizationStrategy(Quantization.INT8)
         v = np.array([1.5, 0.0, 0.0, 0.0], dtype=np.float32)
@@ -88,11 +91,13 @@ class TestINT8RangeGuard:
             strat.serialize(v)
         # Second call must not raise the warning again.
         import warnings
+
         with warnings.catch_warnings(record=True) as record:
             warnings.simplefilter("always")
             strat.serialize(v)
             int8_warnings = [
-                w for w in record
+                w
+                for w in record
                 if issubclass(w.category, DeprecationWarning)
                 and "INT8 quantization" in str(w.message)
             ]
@@ -113,6 +118,7 @@ class TestINT8RangeGuard:
 
     def test_warning_message_includes_max_abs(self):
         from simplevecdb.engine import quantization as q
+
         q._INT8_RANGE_WARNED = False
         strat = QuantizationStrategy(Quantization.INT8)
         v = np.array([3.7, -0.5, 0.2], dtype=np.float32)

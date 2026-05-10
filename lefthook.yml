@@ -1,12 +1,12 @@
 # Lefthook config — replaces .pre-commit-config.yaml.
 #
-# Split:
-#   pre-commit  → fast feedback only (version sync + ruff --fix).
-#   pre-push    → heavyweight gates (mypy, bandit, full pytest+coverage).
+# Both stages run the same gate set; pre-commit autofixes where it can
+# (ruff format / ruff check --fix re-stage via ``stage_fixed: true``)
+# while pre-push runs the same checks in non-mutating mode so a push
+# can never carry a regression that wasn't visible at commit time.
 #
-# Hooks within a stage run sequentially because ruff --fix can rewrite
-# files mid-run and ``stage_fixed: true`` re-stages them, so the user
-# does not have to re-add manually.
+# Hooks within a stage run sequentially because the autofixers can
+# rewrite files mid-run; later jobs see the post-fix tree.
 
 pre-commit:
   jobs:
@@ -16,15 +16,40 @@ pre-commit:
         - "src/simplevecdb/__init__.py"
       run: uv run python3 scripts/check_version_sync.py
 
+    - name: ruff-format
+      glob: "*.py"
+      stage_fixed: true
+      run: uv run ruff format .
+
     - name: ruff
       glob: "*.py"
       stage_fixed: true
       run: uv run ruff check . --fix
 
+    - name: mypy
+      glob: "*.py"
+      run: uv run mypy .
+
+    - name: bandit
+      glob: "*.py"
+      run: uv run bandit -r src/ -ll -c .bandit
+
+    - name: pytest
+      glob: "*.py"
+      run: uv run pytest tests/ -q
+
 pre-push:
   jobs:
     - name: version-sync
       run: uv run python3 scripts/check_version_sync.py
+
+    - name: ruff-format
+      glob: "*.py"
+      run: uv run ruff format --check .
+
+    - name: ruff
+      glob: "*.py"
+      run: uv run ruff check .
 
     - name: mypy
       glob: "*.py"

@@ -58,9 +58,7 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         try:
             self._warn_if_legacy_collection()
         except Exception:
-            _logger.debug(
-                "Legacy-collection probe failed", exc_info=True
-            )
+            _logger.debug("Legacy-collection probe failed", exc_info=True)
 
     def _warn_if_legacy_collection(self) -> None:
         """Probe one row; warn if it lacks the v2.6 node_id metadata stamp."""

@@ -233,7 +233,6 @@ class TestGetAllDocsWithFilter:
             assert meta["category"] == "a"
 
 
-
 class TestClusterStateOperations:
     """Cover line 768 (list_cluster_states)."""
 

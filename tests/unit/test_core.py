@@ -361,9 +361,7 @@ def test_normalize_l2():
     assert np.allclose(normalize_l2(zero_vec), zero_vec)
 
 
-@pytest.mark.skipif(
-    not _has_langchain, reason="langchain-core not installed"
-)
+@pytest.mark.skipif(not _has_langchain, reason="langchain-core not installed")
 def test_as_langchain(empty_db):
     """Test LangChain integration factory method."""
     lc_store = empty_db.as_langchain()
@@ -373,9 +371,7 @@ def test_as_langchain(empty_db):
     assert isinstance(lc_store, SimpleVecDBVectorStore)
 
 
-@pytest.mark.skipif(
-    not _has_llamaindex, reason="llama-index not installed"
-)
+@pytest.mark.skipif(not _has_llamaindex, reason="llama-index not installed")
 def test_as_llama_index(empty_db):
     """Test LlamaIndex integration factory method."""
     li_store = empty_db.as_llama_index()
@@ -549,7 +545,6 @@ def test_rebuild_index_empty_collection(tmp_path):
     assert count == 0
 
     db.close()
-
 
 
 def test_adaptive_search_uses_exact_for_small_collections(tmp_path):

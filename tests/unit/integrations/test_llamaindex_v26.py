@@ -166,9 +166,7 @@ class TestDeleteNodesFilters:
     def test_delete_nodes_with_filters_raises(self, tmp_path):
         store = _make_store(tmp_path, "filters")
 
-        filters = MetadataFilters(
-            filters=[ExactMatchFilter(key="source", value="x")]
-        )
+        filters = MetadataFilters(filters=[ExactMatchFilter(key="source", value="x")])
         with pytest.raises(NotImplementedError, match="filters"):
             store.delete_nodes(filters=filters)
 

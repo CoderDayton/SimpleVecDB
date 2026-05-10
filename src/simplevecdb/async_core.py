@@ -85,8 +85,12 @@ class AsyncVectorCollection:
         """
         return await self._run(
             self._collection.add_texts,
-            texts, metadatas, embeddings, ids,
-            parent_ids=parent_ids, threads=threads,
+            texts,
+            metadatas,
+            embeddings,
+            ids,
+            parent_ids=parent_ids,
+            threads=threads,
         )
 
     async def similarity_search(
@@ -105,7 +109,11 @@ class AsyncVectorCollection:
         """
         return await self._run(
             self._collection.similarity_search,
-            query, k, filter, exact=exact, threads=threads,
+            query,
+            k,
+            filter,
+            exact=exact,
+            threads=threads,
         )
 
     async def similarity_search_batch(
@@ -124,7 +132,11 @@ class AsyncVectorCollection:
         """
         return await self._run(
             self._collection.similarity_search_batch,
-            queries, k, filter, exact=exact, threads=threads,
+            queries,
+            k,
+            filter,
+            exact=exact,
+            threads=threads,
         )
 
     async def keyword_search(
@@ -139,7 +151,10 @@ class AsyncVectorCollection:
         See VectorCollection.keyword_search for full documentation.
         """
         return await self._run(
-            self._collection.keyword_search, query, k, filter,
+            self._collection.keyword_search,
+            query,
+            k,
+            filter,
         )
 
     async def hybrid_search(
@@ -160,7 +175,9 @@ class AsyncVectorCollection:
         """
         return await self._run(
             self._collection.hybrid_search,
-            query, k, filter,
+            query,
+            k,
+            filter,
             query_vector=query_vector,
             vector_k=vector_k,
             keyword_k=keyword_k,
@@ -182,7 +199,11 @@ class AsyncVectorCollection:
         """
         return await self._run(
             self._collection.max_marginal_relevance_search,
-            query, k, fetch_k, lambda_mult, filter,
+            query,
+            k,
+            fetch_k,
+            lambda_mult,
+            filter,
         )
 
     async def delete_by_ids(self, ids: Sequence[int]) -> None:
@@ -206,7 +227,9 @@ class AsyncVectorCollection:
         """
         return await self._run(
             self._collection.get_documents,
-            filter_dict=filter_dict, limit=limit, offset=offset,
+            filter_dict=filter_dict,
+            limit=limit,
+            offset=offset,
         )
 
     async def get_embeddings_by_ids(self, ids: Sequence[int]) -> dict[int, Any]:
@@ -215,12 +238,11 @@ class AsyncVectorCollection:
         See VectorCollection.get_embeddings_by_ids for full documentation.
         """
         return await self._run(
-            self._collection.get_embeddings_by_ids, list(ids),
+            self._collection.get_embeddings_by_ids,
+            list(ids),
         )
 
-    async def update_metadata(
-        self, updates: list[tuple[int, dict[str, Any]]]
-    ) -> int:
+    async def update_metadata(self, updates: list[tuple[int, dict[str, Any]]]) -> int:
         """Update metadata for multiple documents (shallow merge).
 
         See VectorCollection.update_metadata for full documentation.
@@ -265,7 +287,10 @@ class AsyncVectorCollection:
     ) -> None:
         """Buffer a vector update; promoted to HNSW on flush_pending()."""
         await self._run(
-            self._collection.update_embedding, doc_id, vector, source=source,
+            self._collection.update_embedding,
+            doc_id,
+            vector,
+            source=source,
         )
 
     async def flush_pending(self, *, max_batch: int | None = None) -> int:
@@ -293,8 +318,13 @@ class AsyncVectorCollection:
     ) -> int:
         return await self._run(
             self._collection.edges.add_edge,
-            src, dst, kind=kind, weight=weight, bonus=bonus,
-            hits=hits, metadata=metadata,
+            src,
+            dst,
+            kind=kind,
+            weight=weight,
+            bonus=bonus,
+            hits=hits,
+            metadata=metadata,
         )
 
     async def update_edge(
@@ -313,9 +343,16 @@ class AsyncVectorCollection:
     ) -> int:
         return await self._run(
             self._collection.edges.update_edge,
-            src, dst, kind=kind, weight=weight, bonus=bonus,
-            hits=hits, metadata=metadata,
-            dweight=dweight, dbonus=dbonus, dhits=dhits,
+            src,
+            dst,
+            kind=kind,
+            weight=weight,
+            bonus=bonus,
+            hits=hits,
+            metadata=metadata,
+            dweight=dweight,
+            dbonus=dbonus,
+            dhits=dhits,
         )
 
     async def delete_edge(
@@ -326,7 +363,10 @@ class AsyncVectorCollection:
         kind: str = "",
     ) -> int:
         return await self._run(
-            self._collection.edges.delete_edge, src, dst, kind=kind,
+            self._collection.edges.delete_edge,
+            src,
+            dst,
+            kind=kind,
         )
 
     async def get_edges(
@@ -340,7 +380,11 @@ class AsyncVectorCollection:
     ) -> list:
         return await self._run(
             self._collection.edges.get_edges,
-            src=src, dst=dst, kind=kind, filter=filter, limit=limit,
+            src=src,
+            dst=dst,
+            kind=kind,
+            filter=filter,
+            limit=limit,
         )
 
     async def set_ttl(
@@ -353,7 +397,9 @@ class AsyncVectorCollection:
     ) -> None:
         await self._run(
             self._collection.ttl.set,
-            doc_id, seconds=seconds, expires_at=expires_at,
+            doc_id,
+            seconds=seconds,
+            expires_at=expires_at,
             on_expire=on_expire,
         )
 
@@ -367,7 +413,9 @@ class AsyncVectorCollection:
         limit: int = 1000,
     ) -> tuple[list[int], list[int]]:
         return await self._run(
-            self._collection.ttl.sweep, now=now, limit=limit,
+            self._collection.ttl.sweep,
+            now=now,
+            limit=limit,
         )
 
     async def read_events(
@@ -379,7 +427,9 @@ class AsyncVectorCollection:
     ) -> list:
         return await self._run(
             self._collection.events.read,
-            since=since, kind=kind, limit=limit,
+            since=since,
+            kind=kind,
+            limit=limit,
         )
 
     async def last_event_seq(self) -> int:
@@ -397,7 +447,8 @@ class AsyncVectorCollection:
         if max_deleted is not None:
             kwargs["max_deleted"] = max_deleted
         return await self._run(
-            self._collection.maintenance.rebuild_if_needed, **kwargs,
+            self._collection.maintenance.rebuild_if_needed,
+            **kwargs,
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -427,26 +478,28 @@ class AsyncVectorCollection:
         """Get parent document, or None."""
         return await self._run(self._collection.get_parent, doc_id)
 
-    async def get_descendants(
-        self, doc_id: int, max_depth: int | None = None
-    ) -> list:
+    async def get_descendants(self, doc_id: int, max_depth: int | None = None) -> list:
         """Get all descendants recursively."""
         return await self._run(
-            self._collection.get_descendants, doc_id, max_depth,
+            self._collection.get_descendants,
+            doc_id,
+            max_depth,
         )
 
-    async def get_ancestors(
-        self, doc_id: int, max_depth: int | None = None
-    ) -> list:
+    async def get_ancestors(self, doc_id: int, max_depth: int | None = None) -> list:
         """Get all ancestors to root."""
         return await self._run(
-            self._collection.get_ancestors, doc_id, max_depth,
+            self._collection.get_ancestors,
+            doc_id,
+            max_depth,
         )
 
     async def set_parent(self, doc_id: int, parent_id: int | None) -> bool:
         """Set or remove parent relationship."""
         return await self._run(
-            self._collection.set_parent, doc_id, parent_id,
+            self._collection.set_parent,
+            doc_id,
+            parent_id,
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -483,7 +536,8 @@ class AsyncVectorCollection:
 
         return await self._run(
             self._collection.cluster,
-            n_clusters, narrowed,
+            n_clusters,
+            narrowed,
             filter=filter,
             sample_size=sample_size,
             min_cluster_size=min_cluster_size,
@@ -526,7 +580,8 @@ class AsyncVectorCollection:
         """
         return await self._run(
             self._collection.assign_cluster_metadata,
-            cluster_result, tags,
+            cluster_result,
+            tags,
             metadata_key=metadata_key,
             tag_key=tag_key,
         )
@@ -544,7 +599,8 @@ class AsyncVectorCollection:
         """
         return await self._run(
             self._collection.get_cluster_members,
-            cluster_id, metadata_key=metadata_key,
+            cluster_id,
+            metadata_key=metadata_key,
         )
 
     async def save_cluster(
@@ -561,7 +617,9 @@ class AsyncVectorCollection:
         """
         await self._run(
             self._collection.save_cluster,
-            name, cluster_result, metadata=metadata,
+            name,
+            cluster_result,
+            metadata=metadata,
         )
 
     async def load_cluster(
@@ -605,9 +663,10 @@ class AsyncVectorCollection:
         """
         return await self._run(
             self._collection.assign_to_cluster,
-            name, doc_ids, metadata_key=metadata_key,
+            name,
+            doc_ids,
+            metadata_key=metadata_key,
         )
-
 
 
 class AsyncVectorDB:
@@ -643,9 +702,18 @@ class AsyncVectorDB:
         executor: ThreadPoolExecutor | None = None,
         **kwargs: Any,
     ):
-        self._db = VectorDB(path=path, distance_strategy=distance_strategy, quantization=quantization, **kwargs)
+        self._db = VectorDB(
+            path=path,
+            distance_strategy=distance_strategy,
+            quantization=quantization,
+            **kwargs,
+        )
         self._owns_executor = executor is None
-        self._executor = executor if executor is not None else ThreadPoolExecutor(max_workers=max_workers)
+        self._executor = (
+            executor
+            if executor is not None
+            else ThreadPoolExecutor(max_workers=max_workers)
+        )
         self._collections: dict[tuple, AsyncVectorCollection] = {}
         self._collections_lock = Lock()  # Thread-safe collection caching
 
@@ -722,7 +790,10 @@ class AsyncVectorDB:
         """
         return await self._run(
             self._db.search_collections,
-            query, collections, k, filter,
+            query,
+            collections,
+            k,
+            filter,
             normalize_scores=normalize_scores,
             parallel=parallel,
         )

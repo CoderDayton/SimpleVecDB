@@ -71,7 +71,9 @@ class TestCreateEncryptedConnectionEdgeCases:
         mock_sqlcipher.connect.return_value = mock_conn
 
         mock_pkg = MagicMock(dbapi2=mock_sqlcipher)
-        with patch.dict("sys.modules", {"sqlcipher3": mock_pkg, "sqlcipher3.dbapi2": mock_sqlcipher}):
+        with patch.dict(
+            "sys.modules", {"sqlcipher3": mock_pkg, "sqlcipher3.dbapi2": mock_sqlcipher}
+        ):
             with pytest.raises(EncryptionError, match="not active"):
                 create_encrypted_connection(tmp_path / "test.db", "passphrase")
 
@@ -100,7 +102,9 @@ class TestCreateEncryptedConnectionEdgeCases:
         mock_sqlcipher.connect.return_value = mock_conn
 
         mock_pkg = MagicMock(dbapi2=mock_sqlcipher)
-        with patch.dict("sys.modules", {"sqlcipher3": mock_pkg, "sqlcipher3.dbapi2": mock_sqlcipher}):
+        with patch.dict(
+            "sys.modules", {"sqlcipher3": mock_pkg, "sqlcipher3.dbapi2": mock_sqlcipher}
+        ):
             with pytest.raises(EncryptionError, match="wrong key"):
                 create_encrypted_connection(tmp_path / "test.db", "passphrase")
 
@@ -127,7 +131,9 @@ class TestCreateEncryptedConnectionEdgeCases:
         mock_sqlcipher.connect.return_value = mock_conn
 
         mock_pkg = MagicMock(dbapi2=mock_sqlcipher)
-        with patch.dict("sys.modules", {"sqlcipher3": mock_pkg, "sqlcipher3.dbapi2": mock_sqlcipher}):
+        with patch.dict(
+            "sys.modules", {"sqlcipher3": mock_pkg, "sqlcipher3.dbapi2": mock_sqlcipher}
+        ):
             with pytest.raises(EncryptionError, match="Failed to verify"):
                 create_encrypted_connection(tmp_path / "test.db", "passphrase")
 
@@ -137,7 +143,9 @@ class TestCreateEncryptedConnectionEdgeCases:
         mock_sqlcipher.connect.side_effect = OSError("disk full")
 
         mock_pkg = MagicMock(dbapi2=mock_sqlcipher)
-        with patch.dict("sys.modules", {"sqlcipher3": mock_pkg, "sqlcipher3.dbapi2": mock_sqlcipher}):
+        with patch.dict(
+            "sys.modules", {"sqlcipher3": mock_pkg, "sqlcipher3.dbapi2": mock_sqlcipher}
+        ):
             with pytest.raises(EncryptionError, match="Failed to create encrypted"):
                 create_encrypted_connection(tmp_path / "test.db", "passphrase")
 
@@ -165,7 +173,10 @@ class TestEncryptFileEdgeCases:
         input_file = tmp_path / "plain.bin"
         input_file.write_bytes(b"data")
 
-        with patch.dict("sys.modules", {"cryptography": None, "cryptography.hazmat.primitives.ciphers.aead": None}):
+        with patch.dict(
+            "sys.modules",
+            {"cryptography": None, "cryptography.hazmat.primitives.ciphers.aead": None},
+        ):
             with patch(
                 "builtins.__import__",
                 side_effect=_make_import_blocker("cryptography"),
@@ -191,7 +202,10 @@ class TestDecryptFileEdgeCases:
         enc_file = tmp_path / "enc.bin"
         enc_file.write_bytes(os.urandom(100))
 
-        with patch.dict("sys.modules", {"cryptography": None, "cryptography.hazmat.primitives.ciphers.aead": None}):
+        with patch.dict(
+            "sys.modules",
+            {"cryptography": None, "cryptography.hazmat.primitives.ciphers.aead": None},
+        ):
             with patch(
                 "builtins.__import__",
                 side_effect=_make_import_blocker("cryptography"),
@@ -287,7 +301,9 @@ class TestIndexFileEdgeCases:
 
 def _make_import_blocker(blocked_module: str):
     """Create an __import__ side_effect that blocks a specific module."""
-    real_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+    real_import = (
+        __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+    )
 
     def blocker(name, *args, **kwargs):
         if name == blocked_module or name.startswith(blocked_module + "."):

@@ -136,9 +136,9 @@ class _CatalogWritable:
 
 # Edge column names that participate in column-direct filtering. Anything
 # else falls through to JSON metadata filtering.
-_EDGE_NUMERIC_COLUMNS: frozenset[str] = frozenset({
-    "weight", "bonus", "hits", "last_touch"
-})
+_EDGE_NUMERIC_COLUMNS: frozenset[str] = frozenset(
+    {"weight", "bonus", "hits", "last_touch"}
+)
 
 
 def _split_edge_filter(
@@ -162,9 +162,7 @@ def _split_edge_filter(
     return edge_part, meta_part
 
 
-def _compile_edge_column_filter(
-    edge_filter: dict[str, Any], params: list[Any]
-) -> str:
+def _compile_edge_column_filter(edge_filter: dict[str, Any], params: list[Any]) -> str:
     """Compile filters against literal edge columns (no json_extract).
 
     Mirrors the operator grammar from utils.normalize_filter / validate_filter
@@ -210,9 +208,7 @@ def _compile_edge_column_filter(
                     pieces.append(f"{col} BETWEEN ? AND ?")
                     params.extend([lo, hi])
                 elif op == "$exists":
-                    pieces.append(
-                        f"{col} IS NOT NULL" if arg else f"{col} IS NULL"
-                    )
+                    pieces.append(f"{col} IS NOT NULL" if arg else f"{col} IS NULL")
                 else:
                     raise ValueError(f"Unsupported edge operator '{op}'")
         elif isinstance(value, list):
@@ -482,6 +478,7 @@ class CatalogManager:
                 msg = str(e).lower()
                 if "database is locked" in msg and attempt < 2:
                     import time
+
                     time.sleep(0.1 * (attempt + 1))
                     continue
                 _logger.warning("FTS5 not available - keyword search disabled: %s", e)
@@ -764,9 +761,7 @@ class CatalogManager:
         discipline alone.
         """
         with self._lock:
-            rows = self.conn.execute(
-                f"SELECT id FROM {self._table_name}"
-            ).fetchall()
+            rows = self.conn.execute(f"SELECT id FROM {self._table_name}").fetchall()
         return [row[0] for row in rows]
 
     def get_embeddings_by_ids(self, ids: Sequence[int]) -> dict[int, Any]:
@@ -825,7 +820,11 @@ class CatalogManager:
         result: dict[int, tuple[str, dict[str, Any], np.ndarray | None]] = {}
         for row_id, text, meta_json, emb_blob in rows:
             meta = json.loads(meta_json) if meta_json else {}
-            emb = np.frombuffer(emb_blob, dtype=np.float32) if emb_blob is not None else None
+            emb = (
+                np.frombuffer(emb_blob, dtype=np.float32)
+                if emb_blob is not None
+                else None
+            )
             result[row_id] = (text, meta, emb)
         return result
 
@@ -1026,9 +1025,7 @@ class CatalogManager:
                 params.extend([json_path, _coerce_scalar(arg)])
             elif op == "$ne":
                 # IS NOT for null-safety + difference for present values.
-                clauses.append(
-                    f"({text_extract} IS NULL OR {text_extract} != ?)"
-                )
+                clauses.append(f"({text_extract} IS NULL OR {text_extract} != ?)")
                 params.extend([json_path, json_path, _coerce_scalar(arg)])
             elif op == "$gt":
                 clauses.append(f"{num_extract} > ?")
@@ -1155,7 +1152,9 @@ class CatalogManager:
                     ids,
                 ).fetchall()
 
-                current_meta_map = {r[0]: (json.loads(r[1]) if r[1] else {}) for r in rows}
+                current_meta_map = {
+                    r[0]: (json.loads(r[1]) if r[1] else {}) for r in rows
+                }
 
                 # Prepare updates
                 update_data = []
@@ -1174,9 +1173,7 @@ class CatalogManager:
 
             return updated
 
-    def increment_metadata(
-        self, doc_id: int, deltas: dict[str, float | int]
-    ) -> int:
+    def increment_metadata(self, doc_id: int, deltas: dict[str, float | int]) -> int:
         """Atomically increment numeric metadata counters (gap 4).
 
         Single UPDATE statement applies every delta via chained json_set,
@@ -1222,9 +1219,7 @@ class CatalogManager:
                     f"{type(doc_id).__name__}"
                 )
             if not deltas:
-                raise ValueError(
-                    "increment_metadata: deltas must be a non-empty dict"
-                )
+                raise ValueError("increment_metadata: deltas must be a non-empty dict")
             for key, val in deltas.items():
                 _validate_identifier(key, "metadata counter key")
                 if isinstance(val, bool) or not isinstance(val, (int, float)):
@@ -1232,9 +1227,9 @@ class CatalogManager:
                         f"increment_metadata: delta for '{key}' must be "
                         f"int or float, got {type(val).__name__}"
                     )
-                if isinstance(val, float) and (val != val or val in (
-                    float("inf"), float("-inf")
-                )):
+                if isinstance(val, float) and (
+                    val != val or val in (float("inf"), float("-inf"))
+                ):
                     raise ValueError(
                         f"increment_metadata: delta for '{key}' must be finite"
                     )
@@ -1336,8 +1331,7 @@ class CatalogManager:
             )
             self.append_event_in_tx(
                 "pending_enqueue",
-                payload={"count": len(rows),
-                         "ids": [int(r[0]) for r in rows[:50]]},
+                payload={"count": len(rows), "ids": [int(r[0]) for r in rows[:50]]},
             )
         return cur.rowcount or 0
 
@@ -1378,8 +1372,10 @@ class CatalogManager:
             if cur.rowcount:
                 self.append_event_in_tx(
                     "pending_flush",
-                    payload={"count": int(cur.rowcount),
-                             "ids": [int(i) for i in list(doc_ids)[:50]]},
+                    payload={
+                        "count": int(cur.rowcount),
+                        "ids": [int(i) for i in list(doc_ids)[:50]],
+                    },
                 )
         return cur.rowcount or 0
 
@@ -1428,15 +1424,23 @@ class CatalogManager:
                 VALUES (?, ?, ?, ?, ?, ?, unixepoch('subsec'), ?)
                 """,
                 (
-                    int(src_id), int(dst_id), kind, float(weight), int(hits),
+                    int(src_id),
+                    int(dst_id),
+                    kind,
+                    float(weight),
+                    int(hits),
                     float(bonus),
                     json.dumps(metadata) if metadata is not None else None,
                 ),
             )
             self.append_event_in_tx(
                 "edge_add",
-                payload={"src": int(src_id), "dst": int(dst_id), "kind": kind,
-                         "weight": float(weight)},
+                payload={
+                    "src": int(src_id),
+                    "dst": int(dst_id),
+                    "kind": kind,
+                    "weight": float(weight),
+                },
             )
         return cur.rowcount or 0
 
@@ -1478,9 +1482,17 @@ class CatalogManager:
                     last_touch = unixepoch('subsec')
                 """,
                 (
-                    int(src_id), int(dst_id), kind,
-                    weight, hits, bonus, meta_json,
-                    weight, hits, bonus, meta_json,
+                    int(src_id),
+                    int(dst_id),
+                    kind,
+                    weight,
+                    hits,
+                    bonus,
+                    meta_json,
+                    weight,
+                    hits,
+                    bonus,
+                    meta_json,
                 ),
             )
             self.append_event_in_tx(
@@ -1530,25 +1542,32 @@ class CatalogManager:
                 WHERE src_id = ? AND dst_id = ? AND kind = ?
                 """,
                 (
-                    weight, float(dweight),
-                    bonus, float(dbonus),
-                    hits, int(dhits),
+                    weight,
+                    float(dweight),
+                    bonus,
+                    float(dbonus),
+                    hits,
+                    int(dhits),
                     meta_json,
-                    int(src_id), int(dst_id), kind,
+                    int(src_id),
+                    int(dst_id),
+                    kind,
                 ),
             )
             if cur.rowcount:
                 self.append_event_in_tx(
                     "edge_update",
-                    payload={"src": int(src_id), "dst": int(dst_id),
-                             "kind": kind, "dweight": float(dweight),
-                             "dhits": int(dhits)},
+                    payload={
+                        "src": int(src_id),
+                        "dst": int(dst_id),
+                        "kind": kind,
+                        "dweight": float(dweight),
+                        "dhits": int(dhits),
+                    },
                 )
         return cur.rowcount or 0
 
-    def delete_edge(
-        self, src_id: int, dst_id: int, *, kind: str = ""
-    ) -> int:
+    def delete_edge(self, src_id: int, dst_id: int, *, kind: str = "") -> int:
         """Delete a single edge. Returns 1 if removed, else 0."""
         with self._writable():
             cur = self.conn.execute(
@@ -1561,8 +1580,7 @@ class CatalogManager:
             if cur.rowcount:
                 self.append_event_in_tx(
                     "edge_delete",
-                    payload={"src": int(src_id), "dst": int(dst_id),
-                             "kind": kind},
+                    payload={"src": int(src_id), "dst": int(dst_id), "kind": kind},
                 )
         return cur.rowcount or 0
 
@@ -1616,10 +1634,18 @@ class CatalogManager:
         result = []
         for r in rows:
             meta = json.loads(r[7]) if r[7] else None
-            result.append((
-                int(r[0]), int(r[1]), str(r[2]), float(r[3]), int(r[4]),
-                float(r[5]), float(r[6]), meta,
-            ))
+            result.append(
+                (
+                    int(r[0]),
+                    int(r[1]),
+                    str(r[2]),
+                    float(r[3]),
+                    int(r[4]),
+                    float(r[5]),
+                    float(r[6]),
+                    meta,
+                )
+            )
         return result
 
     # --- Change feed (gap 7) -----------------------------------------------
@@ -1757,8 +1783,7 @@ class CatalogManager:
             self.append_event_in_tx(
                 "ttl_set",
                 doc_id=doc_id,
-                payload={"expires_at": float(expires_at),
-                         "on_expire": on_expire},
+                payload={"expires_at": float(expires_at), "on_expire": on_expire},
             )
         return 1
 
@@ -1840,14 +1865,12 @@ class CatalogManager:
                         )
                     else:
                         self.conn.execute(
-                            f"DELETE FROM {child} WHERE doc_id IN "
-                            f"({placeholders})",
+                            f"DELETE FROM {child} WHERE doc_id IN ({placeholders})",
                             tuple(delete_ids),
                         )
                 # Main row.
                 self.conn.execute(
-                    f"DELETE FROM {self._table_name} WHERE id IN "
-                    f"({placeholders})",
+                    f"DELETE FROM {self._table_name} WHERE id IN ({placeholders})",
                     tuple(delete_ids),
                 )
                 if self._fts_enabled:
@@ -1890,14 +1913,10 @@ class CatalogManager:
             raise ValueError(
                 "prune_edges: at least one of max_weight/idle_before/kind required"
             )
-        sql = (
-            f"DELETE FROM {self._table_name}_edges WHERE "
-            + " AND ".join(clauses)
-        )
+        sql = f"DELETE FROM {self._table_name}_edges WHERE " + " AND ".join(clauses)
         with self._writable():
             cur = self.conn.execute(sql, tuple(params))
         return cur.rowcount or 0
-
 
     # ------------------------------------------------------------------ #
     # Hierarchical Relationships
@@ -1973,7 +1992,9 @@ class CatalogManager:
         # int() coercion makes the previous f-string safe today, but the
         # parameter form is one less line away from injection on a future
         # refactor.
-        effective_depth = int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
+        effective_depth = (
+            int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
+        )
 
         sql = f"""
             WITH RECURSIVE descendants(id, text, metadata, depth) AS (
@@ -2017,7 +2038,9 @@ class CatalogManager:
 
         # Apply safety cap to prevent infinite recursion from cycles. Bind
         # the depth as a parameter (see get_descendants for rationale).
-        effective_depth = int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
+        effective_depth = (
+            int(max_depth) if max_depth is not None else constants.MAX_HIERARCHY_DEPTH
+        )
 
         sql = f"""
             WITH RECURSIVE ancestors(id, text, metadata, parent_id, depth) AS (

@@ -179,6 +179,3 @@ def log_operation(
             exc_info=True,
         )
         raise
-
-
-

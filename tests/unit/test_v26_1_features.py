@@ -20,14 +20,17 @@ def db_with_docs(tmp_path):
     c.add_texts(
         ["a", "b", "c", "d", "e"],
         embeddings=embs,
-        metadatas=[{"i": i, "score": float(i), "tag": "x" if i % 2 == 0 else "y"}
-                   for i in range(5)],
+        metadatas=[
+            {"i": i, "score": float(i), "tag": "x" if i % 2 == 0 else "y"}
+            for i in range(5)
+        ],
     )
     yield db, c, embs
     db.close()
 
 
 # ---------------------------- gap 1: update_embedding ---------------------
+
 
 class TestUpdateEmbedding:
     def test_buffers_without_hnsw_change(self, db_with_docs):
@@ -62,6 +65,7 @@ class TestUpdateEmbedding:
 
 
 # ---------------------------- gap 2: transaction --------------------------
+
 
 class TestTransaction:
     def test_db_transaction_commits_on_success(self, db_with_docs):
@@ -118,6 +122,7 @@ class TestTransaction:
 
 # ---------------------------- gap 3: edges --------------------------------
 
+
 class TestEdges:
     def test_crud(self, db_with_docs):
         db, c, _ = db_with_docs
@@ -165,6 +170,7 @@ class TestEdges:
 
 # ---------------------------- gap 4: counters -----------------------------
 
+
 class TestCounters:
     def test_dict_increment(self, db_with_docs):
         db, c, _ = db_with_docs
@@ -196,18 +202,19 @@ class TestCounters:
 
 # ---------------------------- gap 5: range filters ------------------------
 
+
 class TestRangeFilters:
     def test_mongo_operator_dict(self, db_with_docs):
         db, c, embs = db_with_docs
-        r = c.similarity_search(embs[0], k=10,
-                                filter={"score": {"$gt": 1.5, "$lt": 4.0}})
+        r = c.similarity_search(
+            embs[0], k=10, filter={"score": {"$gt": 1.5, "$lt": 4.0}}
+        )
         scores = sorted(d.metadata["score"] for d, _ in r)
         assert scores == [2.0, 3.0]
 
     def test_tuple_shorthand(self, db_with_docs):
         db, c, embs = db_with_docs
-        r = c.similarity_search(embs[0], k=10,
-                                filter={"score": ("range", 1.5, 4.0)})
+        r = c.similarity_search(embs[0], k=10, filter={"score": ("range", 1.5, 4.0)})
         scores = sorted(d.metadata["score"] for d, _ in r)
         assert scores == [2.0, 3.0, 4.0]
 
@@ -225,6 +232,7 @@ class TestRangeFilters:
 
 
 # ---------------------------- gap 7: change feed --------------------------
+
 
 class TestEvents:
     def test_mutation_appends_event(self, db_with_docs):
@@ -245,6 +253,7 @@ class TestEvents:
 
 
 # ---------------------------- gap 8: TTL ----------------------------------
+
 
 class TestTTL:
     def test_sweep_deletes_expired(self, db_with_docs):
@@ -272,12 +281,12 @@ class TestTTL:
         finally:
             c.ttl.stop_background()
         # 3 should have been swept.
-        ids_left = {row[0] for row in
-                    c._catalog.get_all_docs_with_text()}
+        ids_left = {row[0] for row in c._catalog.get_all_docs_with_text()}
         assert 3 not in ids_left
 
 
 # ---------------------------- gap 9: maintenance --------------------------
+
 
 class TestMaintenance:
     def test_threshold_triggers_rebuild(self, db_with_docs):

@@ -442,6 +442,3 @@ class TestConcurrentAccess:
 
         db1.close()
         db2.close()
-
-
-

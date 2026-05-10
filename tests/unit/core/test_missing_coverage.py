@@ -127,9 +127,7 @@ class TestRebuildIndexNoEmbeddings:
         # Insert a doc but clear embeddings from catalog
         collection.add_texts(["test"], embeddings=[[0.1, 0.2]])
         # Wipe the embeddings column
-        db.conn.execute(
-            f"UPDATE {collection._table_name} SET embedding = NULL"
-        )
+        db.conn.execute(f"UPDATE {collection._table_name} SET embedding = NULL")
         db.conn.commit()
         with pytest.raises(RuntimeError, match="No embeddings found"):
             collection.rebuild_index()
@@ -163,8 +161,6 @@ class TestVectorDBContextManager:
         assert db._closed is True
 
 
-
-
 # ------------------------------------------------------------------ #
 # Cross-collection search: parallel failure handling (lines 1552-1553)
 # ------------------------------------------------------------------ #
@@ -182,6 +178,7 @@ class TestCrossCollectionSearchFailure:
         # Make c2's search raise
         def failing_search(*args, **kwargs):
             raise RuntimeError("Simulated failure")
+
         c2.similarity_search = failing_search
 
         results = db.search_collections([0.1, 0.2], k=5, parallel=True)
@@ -207,8 +204,7 @@ class TestStreamingOnProgress:
             progress_reports.append(progress)
 
         items = [
-            (f"doc{i}", {"i": i}, [float(i) * 0.1, float(i) * 0.2])
-            for i in range(5)
+            (f"doc{i}", {"i": i}, [float(i) * 0.1, float(i) * 0.2]) for i in range(5)
         ]
 
         # Consume the generator
@@ -252,7 +248,6 @@ class TestStreamingAutoEmbedding:
         assert len(ids) == 2
         assert collection.count() == 3
         db.close()
-
 
 
 # ------------------------------------------------------------------ #

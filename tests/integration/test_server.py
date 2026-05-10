@@ -93,7 +93,9 @@ def test_run_server():
 
     mock_server = MagicMock()
     with patch("simplevecdb.embeddings.server.uvicorn.Config") as mock_cfg:
-        with patch("simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server):
+        with patch(
+            "simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server
+        ):
             run_server(host="1.2.3.4", port=9999)
             call_kwargs = mock_cfg.call_args[1]
             assert call_kwargs["host"] == "1.2.3.4"

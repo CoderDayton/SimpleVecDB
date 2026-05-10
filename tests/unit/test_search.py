@@ -34,12 +34,12 @@ def test_similarity_search_basic(db):
     # Query vector must match the dimension of stored vectors (3D).
     query = [0.95, 0.95, 0.95]
     results = db.collection("default").similarity_search(query, k=2)
-    
+
     assert len(results) == 2
     # "grape" ([0.85, 0.85, 0.85]) and "orange" ([0.9, 0.9, 0.9]) are closest to [0.95, 0.95, 0.95]
     # Note: The order depends on exact distance calculations.
     # Both are very close to the query direction (1,1,1).
-    
+
     # Verify that results are returned with scores.
     assert 0 <= results[0][1] < 0.1
     assert results[0][1] <= results[1][1]
@@ -48,8 +48,10 @@ def test_similarity_search_basic(db):
 def test_similarity_search_filter(db):
     """Test similarity search with metadata filtering."""
     # Query with 3D vector matching the database dimension.
-    results = db.collection("default").similarity_search([0.95] * 3, k=4, filter={"likes": [10, 15]})
-    
+    results = db.collection("default").similarity_search(
+        [0.95] * 3, k=4, filter={"likes": [10, 15]}
+    )
+
     assert len(results) == 2  # Should match "apple" (10) and "orange" (15)
     found_texts = {r[0].page_content for r in results}
     assert found_texts == {"apple", "orange"}
@@ -61,7 +63,7 @@ def test_recall_gold_standard(populated_db):
     Uses 'populated_db' fixture from conftest.py which has 4D vectors.
     """
     query = np.array([0.95, 0.95, 0.95, 0.95])
-    
+
     # Reconstruct embeddings from the fixture logic for ground truth calculation
     all_embs = np.array(
         [
@@ -71,23 +73,28 @@ def test_recall_gold_standard(populated_db):
             [0.85, 0.85, 0.85, 0.85],
         ]
     )
-    
+
     # Normalize for cosine similarity comparison
     all_embs = all_embs / np.linalg.norm(all_embs, axis=1, keepdims=True)
     query_norm = query / np.linalg.norm(query)
-    
+
     # Compute ground truth similarities
     sims = np.dot(all_embs, query_norm)
-    
+
     # Dynamically determine expected top-k based on numpy calculation
     # This integrates 'sims' to ensure the test validates against the actual math
     top_k_indices = np.argsort(-sims)[:2]
-    all_texts = ["apple is red", "banana is yellow", "orange is orange", "grape is purple"]
+    all_texts = [
+        "apple is red",
+        "banana is yellow",
+        "orange is orange",
+        "grape is purple",
+    ]
     expected = [all_texts[i] for i in top_k_indices]
-    
+
     results = populated_db.collection("default").similarity_search(query, k=2)
     result_texts = [r[0].page_content for r in results]
-    
+
     # Calculate recall
     intersection = set(result_texts) & set(expected)
     recall = len(intersection) / 2
@@ -99,13 +106,13 @@ def test_quantization_search(quant_db):
     # Generate random 128D vectors
     embs = np.random.randn(10, 128).astype(np.float32)
     embs /= np.linalg.norm(embs, axis=1, keepdims=True)
-    
+
     collection = quant_db.collection("default")
     collection.add_texts(["t"] * 10, embeddings=embs.tolist())
-    
+
     # Search with one of the inserted vectors
     results = collection.similarity_search(embs[0], k=1)
-    
+
     # Expect the vector to find itself with very low distance
     assert results[0][1] < 0.05
 
@@ -116,12 +123,12 @@ def test_mmr_diversity():
     collection = db.collection("default")
     # A and B are very similar. C is orthogonal.
     # Query is close to A and B.
-    
+
     texts = ["A", "B", "C"]
     embeddings = [
-        [1.0, 0.0, 0.0],    # A
+        [1.0, 0.0, 0.0],  # A
         [0.99, 0.01, 0.0],  # B (very close to A)
-        [0.0, 1.0, 0.0],    # C (orthogonal)
+        [0.0, 1.0, 0.0],  # C (orthogonal)
     ]
     collection.add_texts(texts, embeddings=embeddings)
 
@@ -143,7 +150,9 @@ def test_delete_by_ids():
     """Test that deleting items removes them from search results."""
     db = VectorDB(":memory:")
     collection = db.collection("default")
-    ids = collection.add_texts(["a", "b"], embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    ids = collection.add_texts(
+        ["a", "b"], embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+    )
     assert len(ids) == 2
 
     # Delete the first item

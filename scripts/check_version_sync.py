@@ -16,12 +16,8 @@ import sys
 from pathlib import Path
 
 
-_PYPROJECT_VERSION_RE = re.compile(
-    r'^version\s*=\s*["\']([^"\']+)["\']', re.MULTILINE
-)
-_CHANGELOG_HEADING_RE = re.compile(
-    r"^##\s+\[(?P<version>[^\]]+)\]", re.MULTILINE
-)
+_PYPROJECT_VERSION_RE = re.compile(r'^version\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
+_CHANGELOG_HEADING_RE = re.compile(r"^##\s+\[(?P<version>[^\]]+)\]", re.MULTILINE)
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([.-][a-zA-Z0-9]+)*$")
 
 

@@ -8,6 +8,7 @@ from unittest.mock import Mock
 _ollama_available = False
 try:
     from ollama import Client as OllamaClient
+
     _ollama_available = True
 except ImportError:
     OllamaClient = Mock()  # type: ignore
@@ -19,9 +20,10 @@ from simplevecdb import VectorDB  # noqa: E402
 def test_rag_end_to_end(populated_db: VectorDB, monkeypatch):
     # Mock embed_texts to return a 4D vector matching populated_db
     mock_embed = Mock(return_value=[[0.1, 0.1, 0.1, 0.1]])
-    
+
     # We need to mock the module import
     import sys
+
     mock_module = Mock()
     mock_module.embed_texts = mock_embed
     monkeypatch.setitem(sys.modules, "simplevecdb.embeddings.models", mock_module)
@@ -35,7 +37,9 @@ def test_rag_end_to_end(populated_db: VectorDB, monkeypatch):
 
     # Simple RAG chain (real code would use langchain/llama_index)
     query = "What color is grape?"
-    contexts = populated_db.collection("default").similarity_search(query, k=2)  # embed query in real
+    contexts = populated_db.collection("default").similarity_search(
+        query, k=2
+    )  # embed query in real
     context_str = "\n".join(doc.page_content for doc, _ in contexts)
     prompt = f"Context: {context_str}\nQuestion: {query}"
 
@@ -48,9 +52,7 @@ def test_rag_end_to_end(populated_db: VectorDB, monkeypatch):
 # Real Ollama test — runs only when a local Ollama server has the
 # `qwen3.5:0.8b` model pulled. Skipped in CI (no Ollama daemon, no model)
 # and skipped locally when the daemon is unreachable.
-@pytest.mark.skipif(
-    not _ollama_available, reason="Ollama not installed"
-)
+@pytest.mark.skipif(not _ollama_available, reason="Ollama not installed")
 @pytest.mark.skipif(
     bool(os.environ.get("CI")),
     reason="CI environments do not run a local Ollama server",
@@ -70,11 +72,11 @@ def test_rag_with_ollama(populated_db):
         # But populated_db fixture has 4D vectors, which won't match real embeddings.
         # So this test is conceptually flawed unless we use a real DB.
         # We'll just fix the syntax error for now.
-        
-        # Mocking embedding for the sake of the test structure, 
+
+        # Mocking embedding for the sake of the test structure,
         # assuming we had a real embedding function available.
-        query_emb = [0.1, 0.1, 0.1, 0.1] 
-        
+        query_emb = [0.1, 0.1, 0.1, 0.1]
+
         contexts = populated_db.collection("default").similarity_search(query_emb, k=2)
         context = "\n".join(d.page_content for d, _ in contexts)
         response = client.generate(

@@ -60,8 +60,8 @@ class TestNonceUniqueness:
 
         # Skip the 3-byte v1 header; nonce follows immediately.
         header_len = len(_ENC_MAGIC) + 1
-        nonce_a = out_a.read_bytes()[header_len:header_len + AES_NONCE_SIZE]
-        nonce_b = out_b.read_bytes()[header_len:header_len + AES_NONCE_SIZE]
+        nonce_a = out_a.read_bytes()[header_len : header_len + AES_NONCE_SIZE]
+        nonce_b = out_b.read_bytes()[header_len : header_len + AES_NONCE_SIZE]
 
         assert len(nonce_a) == AES_NONCE_SIZE
         assert len(nonce_b) == AES_NONCE_SIZE
@@ -69,9 +69,7 @@ class TestNonceUniqueness:
 
 
 class TestWrongKeyDoesNotCreateOutput:
-    def test_decrypt_with_wrong_key_never_writes_output(
-        self, tmp_path, random_key
-    ):
+    def test_decrypt_with_wrong_key_never_writes_output(self, tmp_path, random_key):
         plaintext = b"sensitive contents"
         src = tmp_path / "p.bin"
         src.write_bytes(plaintext)
@@ -85,15 +83,11 @@ class TestWrongKeyDoesNotCreateOutput:
             decrypt_file(encrypted, output, wrong_key)
 
         # Authentication failure must short-circuit before any write.
-        assert not output.exists(), (
-            "Output file must not exist after wrong-key decrypt"
-        )
+        assert not output.exists(), "Output file must not exist after wrong-key decrypt"
 
 
 class TestHeaderAADBinding:
-    def test_tampering_with_magic_byte_fails_authentication(
-        self, tmp_path, random_key
-    ):
+    def test_tampering_with_magic_byte_fails_authentication(self, tmp_path, random_key):
         plaintext = b"tamper test"
         src = tmp_path / "p.bin"
         src.write_bytes(plaintext)
@@ -141,9 +135,7 @@ class TestSaltSidecarO_EXCL:
 
         result = _resolve_salt(resource, create_if_missing=True)
 
-        assert result == existing, (
-            "Existing sidecar must be preserved, not overwritten"
-        )
+        assert result == existing, "Existing sidecar must be preserved, not overwritten"
         assert salt_path.read_bytes() == existing
 
     def test_concurrent_creators_converge_on_one_salt(self, tmp_path):

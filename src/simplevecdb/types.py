@@ -53,7 +53,6 @@ class Quantization(StrEnum):
     BIT = "bit"
 
 
-
 @dataclasses.dataclass
 class ClusterResult:
     """Result of a clustering operation."""

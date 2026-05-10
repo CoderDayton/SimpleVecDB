@@ -80,10 +80,12 @@ class TestLoadModelEnforcesTrustRemoteCodeFalse:
     """``load_model`` must always pass trust_remote_code=False."""
 
     def test_trust_remote_code_forced_off(self):
-        with patch("simplevecdb.embeddings.models._load_snapshot_download") as snap, \
-             patch(
-                 "simplevecdb.embeddings.models._load_sentence_transformer_cls"
-             ) as st_cls:
+        with (
+            patch("simplevecdb.embeddings.models._load_snapshot_download") as snap,
+            patch(
+                "simplevecdb.embeddings.models._load_sentence_transformer_cls"
+            ) as st_cls,
+        ):
             snap.return_value = lambda **kw: "/tmp/fake-model-path"  # noqa: ARG005
             st_cls.return_value = lambda *args, **kwargs: kwargs
 

@@ -275,20 +275,39 @@ def async_retry_on_lock(
 # Plus tuple shorthand normalized to the same operator dicts:
 #   {"score": (">", 0.5)}                         -> {"$gt": 0.5}
 #   {"score": ("range", 0.5, 0.9)}                -> {"$between": [0.5, 0.9]}
-_FILTER_OPERATORS: frozenset[str] = frozenset({
-    "$eq", "$ne", "$gt", "$gte", "$lt", "$lte",
-    "$in", "$nin", "$exists", "$between",
-})
+_FILTER_OPERATORS: frozenset[str] = frozenset(
+    {
+        "$eq",
+        "$ne",
+        "$gt",
+        "$gte",
+        "$lt",
+        "$lte",
+        "$in",
+        "$nin",
+        "$exists",
+        "$between",
+    }
+)
 
 _TUPLE_OP_MAP: dict[str, str] = {
-    "==": "$eq", "eq": "$eq",
-    "!=": "$ne", "ne": "$ne",
-    ">":  "$gt", "gt": "$gt",
-    ">=": "$gte", "gte": "$gte",
-    "<":  "$lt", "lt": "$lt",
-    "<=": "$lte", "lte": "$lte",
-    "in": "$in", "nin": "$nin",
-    "exists": "$exists", "range": "$between", "between": "$between",
+    "==": "$eq",
+    "eq": "$eq",
+    "!=": "$ne",
+    "ne": "$ne",
+    ">": "$gt",
+    "gt": "$gt",
+    ">=": "$gte",
+    "gte": "$gte",
+    "<": "$lt",
+    "lt": "$lt",
+    "<=": "$lte",
+    "lte": "$lte",
+    "in": "$in",
+    "nin": "$nin",
+    "exists": "$exists",
+    "range": "$between",
+    "between": "$between",
 }
 
 
@@ -398,9 +417,7 @@ def validate_filter(filter_dict: dict[str, Any] | None) -> None:
                 f"or operator dict, got {type(value).__name__}: {value!r}"
             )
         if isinstance(value, float) and not _is_finite_number(value):
-            raise ValueError(
-                f"Filter value for '{key}' must be finite, got {value!r}"
-            )
+            raise ValueError(f"Filter value for '{key}' must be finite, got {value!r}")
         if isinstance(value, list):
             _validate_filter_list(key, value)
 
@@ -446,9 +463,7 @@ def _validate_operator_dict(key: str, op_dict: dict[str, Any]) -> None:
             )
         if op in ("$gt", "$gte", "$lt", "$lte"):
             if not _is_finite_number(arg):
-                raise ValueError(
-                    f"'{key}' {op} expects a finite number, got {arg!r}"
-                )
+                raise ValueError(f"'{key}' {op} expects a finite number, got {arg!r}")
         elif op in ("$eq", "$ne"):
             if isinstance(arg, bool):
                 continue
@@ -473,9 +488,7 @@ def _validate_operator_dict(key: str, op_dict: dict[str, Any]) -> None:
                 )
         elif op == "$between":
             if not isinstance(arg, (list, tuple)) or len(arg) != 2:
-                raise ValueError(
-                    f"'{key}' $between expects [lo, hi], got {arg!r}"
-                )
+                raise ValueError(f"'{key}' $between expects [lo, hi], got {arg!r}")
             lo, hi = arg
             if not (_is_finite_number(lo) and _is_finite_number(hi)):
                 raise ValueError(
@@ -487,7 +500,6 @@ def _validate_operator_dict(key: str, op_dict: dict[str, Any]) -> None:
                 raise ValueError(
                     f"'{key}' $between requires lo <= hi, got [{lo}, {hi}]"
                 )
-
 
 
 @contextmanager
