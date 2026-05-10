@@ -376,9 +376,7 @@ class UsearchIndex:
 
         with self._write_lock:
             # Filter to only keys that exist in the index
-            existing_mask = np.array(
-                [int(k) in self._index for k in keys], dtype=bool
-            )
+            existing_mask = np.array([int(k) in self._index for k in keys], dtype=bool)
             existing_keys = keys[existing_mask]
             if len(existing_keys) > 0:
                 self._index.remove(existing_keys)
@@ -434,8 +432,9 @@ class UsearchIndex:
                         finally:
                             os.close(dir_fd)
                     except OSError as exc:
-                        _logger.debug("Directory fsync on %s skipped: %s",
-                                      self._path.parent, exc)
+                        _logger.debug(
+                            "Directory fsync on %s skipped: %s", self._path.parent, exc
+                        )
                 except Exception:
                     # Clean up the temp file on failure; the original index
                     # at self._path is untouched.
@@ -488,9 +487,7 @@ class UsearchIndex:
         ndim = self._ndim or 1
 
         # Filter to existing keys for batch retrieval
-        existing_mask = np.array(
-            [int(k) in self._index for k in keys], dtype=bool
-        )
+        existing_mask = np.array([int(k) in self._index for k in keys], dtype=bool)
 
         if not existing_mask.any():
             _logger.warning(
@@ -510,9 +507,7 @@ class UsearchIndex:
         )
         result = np.zeros((len(keys), ndim), dtype=np.float32)
         existing_keys = keys[existing_mask]
-        result[existing_mask] = np.asarray(
-            self._index[existing_keys], dtype=np.float32
-        )
+        result[existing_mask] = np.asarray(self._index[existing_keys], dtype=np.float32)
         return result
 
     def __del__(self) -> None:

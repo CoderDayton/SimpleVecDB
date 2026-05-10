@@ -6,13 +6,13 @@ from .types import (
     Document,
     DistanceStrategy,
     Quantization,
-    MigrationRequiredError,
     StreamingProgress,
     ProgressCallback,
 )
 from .core import VectorDB, VectorCollection, get_optimal_batch_size
 from .async_core import AsyncVectorDB, AsyncVectorCollection
 from .config import config
+
 try:
     from .integrations import SimpleVecDBVectorStore, SimpleVecDBLlamaStore
 except ImportError:
@@ -56,7 +56,6 @@ __all__ = [
     "log_operation",
     # Error handling
     "DatabaseLockedError",
-    "MigrationRequiredError",
     "EncryptionError",
     "EncryptionUnavailableError",
     "async_retry_on_lock",

@@ -204,8 +204,8 @@ class TestBuildFilterClause:
         assert params == []
 
     def test_unsupported_filter_type_raises(self, catalog):
-        """Line 525: unsupported value type raises ValueError."""
-        with pytest.raises(ValueError, match="must be int, float, str, or list"):
+        """Unsupported scalar types still raise ValueError (gap 5 grammar)."""
+        with pytest.raises(ValueError, match="must be int, float, str"):
             catalog.build_filter_clause({"key": object()})
 
 
@@ -231,66 +231,6 @@ class TestGetAllDocsWithFilter:
         assert len(result) == 2
         for _, text, meta in result:
             assert meta["category"] == "a"
-
-
-class TestLegacyVec:
-    """Cover lines 630-631, 643-650, 654-659."""
-
-    def test_check_legacy_returns_false_on_exception(self, catalog):
-        """Lines 630-631: exception during check -> False."""
-        # Replace conn with a mock that raises on execute
-        mock_conn = MagicMock()
-        mock_conn.execute.side_effect = sqlite3.OperationalError("boom")
-        catalog.conn = mock_conn
-        result = catalog.check_legacy_sqlite_vec("old_vec_table")
-        assert result is False
-
-    def test_check_legacy_returns_false_no_table(self, catalog):
-        """Line 629: table doesn't exist -> False."""
-        result = catalog.check_legacy_sqlite_vec("nonexistent_vec")
-        assert result is False
-
-    def test_get_legacy_vectors_failure(self, catalog):
-        """Lines 648-650: get_legacy_vectors returns empty on error."""
-        result = catalog.get_legacy_vectors("nonexistent_table")
-        assert result == []
-
-    def test_get_legacy_vectors_success(self, catalog):
-        """Lines 643-647: get_legacy_vectors reads from table."""
-        catalog.conn.execute(
-            "CREATE TABLE old_vec (embedding BLOB)"
-        )
-        catalog.conn.execute(
-            "INSERT INTO old_vec (rowid, embedding) VALUES (1, ?)",
-            (b"\x00\x01\x02\x03",),
-        )
-        catalog.conn.commit()
-
-        result = catalog.get_legacy_vectors("old_vec")
-        assert len(result) == 1
-        assert result[0][0] == 1
-        assert result[0][1] == b"\x00\x01\x02\x03"
-
-    def test_drop_legacy_vec_table(self, catalog):
-        """Lines 654-659: drop legacy table."""
-        catalog.conn.execute("CREATE TABLE old_vec2 (embedding BLOB)")
-        catalog.conn.commit()
-
-        catalog.drop_legacy_vec_table("old_vec2")
-
-        # Table should be gone
-        row = catalog.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='old_vec2'"
-        ).fetchone()
-        assert row is None
-
-    def test_drop_legacy_vec_table_failure_logged(self, catalog):
-        """Line 659: failure during drop is logged, not raised."""
-        # Replace conn with a mock that raises on execute
-        mock_conn = MagicMock()
-        mock_conn.execute.side_effect = sqlite3.OperationalError("locked")
-        catalog.conn = mock_conn
-        catalog.drop_legacy_vec_table("some_table")  # should not raise
 
 
 class TestClusterStateOperations:

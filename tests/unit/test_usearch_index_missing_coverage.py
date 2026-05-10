@@ -17,7 +17,9 @@ class TestUnpackBits:
     def test_unpack_bits_roundtrip(self):
         from simplevecdb.engine.usearch_index import _pack_bits, _unpack_bits
 
-        vectors = np.array([[1.0, -0.5, 0.3, -0.8, 0.0, 0.1, -0.2, 0.9]], dtype=np.float32)
+        vectors = np.array(
+            [[1.0, -0.5, 0.3, -0.8, 0.0, 0.1, -0.2, 0.9]], dtype=np.float32
+        )
         packed = _pack_bits(vectors)
         unpacked = _unpack_bits(packed, ndim=8)
         # Positive -> 1 -> +1, negative/zero -> 0 -> -1
@@ -27,10 +29,13 @@ class TestUnpackBits:
     def test_unpack_bits_multi_row(self):
         from simplevecdb.engine.usearch_index import _pack_bits, _unpack_bits
 
-        vectors = np.array([
-            [1.0, -1.0, 1.0, -1.0],
-            [-1.0, 1.0, -1.0, 1.0],
-        ], dtype=np.float32)
+        vectors = np.array(
+            [
+                [1.0, -1.0, 1.0, -1.0],
+                [-1.0, 1.0, -1.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
         packed = _pack_bits(vectors)
         unpacked = _unpack_bits(packed, ndim=4)
         assert unpacked.shape == (2, 4)
@@ -58,6 +63,7 @@ class TestMemoryMappedView:
 
         # Patch the constants module that _load_or_create imports
         import simplevecdb.constants as real_constants
+
         original_threshold = real_constants.USEARCH_MMAP_THRESHOLD
         try:
             real_constants.USEARCH_MMAP_THRESHOLD = 0  # Everything is "large"

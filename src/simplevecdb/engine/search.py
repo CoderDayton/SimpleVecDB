@@ -12,7 +12,7 @@ from typing import Any, TYPE_CHECKING
 from collections.abc import Sequence
 
 from ..types import Document, DistanceStrategy
-from ..utils import validate_filter
+from ..utils import validate_filter, normalize_filter
 from .. import constants
 
 if TYPE_CHECKING:
@@ -99,7 +99,9 @@ class SearchEngine:
         results: list[tuple[Document, float]] = []
 
         while len(results) < k and multiplier <= max_multiplier:
-            fetch_k = min(k * multiplier, index_size) if index_size > 0 else k * multiplier
+            fetch_k = (
+                min(k * multiplier, index_size) if index_size > 0 else k * multiplier
+            )
             keys, distances = self._index.search(
                 query_vec, fetch_k, exact=exact, threads=threads
             )
@@ -127,7 +129,9 @@ class SearchEngine:
                 if not self._matches_filter(metadata, filter):
                     continue
 
-                results.append((Document(page_content=text, metadata=metadata), float(dist)))
+                results.append(
+                    (Document(page_content=text, metadata=metadata), float(dist))
+                )
                 if len(results) >= k:
                     break
 
@@ -212,7 +216,9 @@ class SearchEngine:
                 if filter and not self._matches_filter(metadata, filter):
                     continue
 
-                results.append((Document(page_content=text, metadata=metadata), float(dist)))
+                results.append(
+                    (Document(page_content=text, metadata=metadata), float(dist))
+                )
 
                 if len(results) >= k:
                     break
@@ -398,9 +404,7 @@ class SearchEngine:
         docs_and_embs = self._catalog.get_documents_and_embeddings_by_ids(keys_list)
 
         # If catalog has no stored embeddings, retrieve from usearch index
-        has_catalog_embs = any(
-            emb is not None for _, _, emb in docs_and_embs.values()
-        )
+        has_catalog_embs = any(emb is not None for _, _, emb in docs_and_embs.values())
         index_embs: np.ndarray | None = None
         if not has_catalog_embs:
             keys_arr = np.array(keys_list, dtype=np.uint64)
@@ -501,21 +505,78 @@ class SearchEngine:
             return np.asarray(query, dtype=np.float32)
 
     def _matches_filter(self, metadata: dict[str, Any], filter: dict[str, Any]) -> bool:
-        """Check if metadata matches all filter criteria."""
-        for key, value in filter.items():
+        """Check if metadata matches all filter criteria.
+
+        Mirrors catalog.build_filter_clause grammar so post-filter Python
+        evaluation produces the same results as a SQL pre-filter would.
+        """
+        normalized = normalize_filter(filter) or {}
+        for key, value in normalized.items():
             meta_value = metadata.get(key)
 
+            if isinstance(value, dict):
+                if not _eval_operator_dict(meta_value, value, key in metadata):
+                    return False
+                continue
+
             if isinstance(value, list):
-                # List filter: meta_value must be in the list
                 if meta_value not in value:
                     return False
-            elif isinstance(value, str):
-                # String filter: exact match (consistent with SQL build_filter_clause)
+            elif isinstance(value, bool):
+                # Direct comparison; metadata stores Python bools.
+                if meta_value != value:
+                    return False
+            elif isinstance(value, (int, float, str)):
                 if meta_value != value:
                     return False
             else:
-                # Exact match for int/float
                 if meta_value != value:
                     return False
 
         return True
+
+
+def _eval_operator_dict(
+    meta_value: Any, op_dict: dict[str, Any], key_present: bool
+) -> bool:
+    """Evaluate an operator dict against a single metadata value.
+
+    Matches catalog.build_filter_clause semantics:
+    - $ne / $nin treat missing keys as not-equal (i.e. they pass).
+    - numeric operators on missing/non-numeric values fail.
+    - $exists checks dict membership, not value truthiness.
+    """
+    for op, arg in op_dict.items():
+        if op == "$exists":
+            if bool(arg) != key_present:
+                return False
+            continue
+
+        if op == "$eq":
+            if meta_value != arg:
+                return False
+        elif op == "$ne":
+            if key_present and meta_value == arg:
+                return False
+        elif op == "$in":
+            if meta_value not in arg:
+                return False
+        elif op == "$nin":
+            if key_present and meta_value in arg:
+                return False
+        elif op in ("$gt", "$gte", "$lt", "$lte", "$between"):
+            if not isinstance(meta_value, (int, float)) or isinstance(meta_value, bool):
+                return False
+            if op == "$gt" and not (meta_value > arg):
+                return False
+            if op == "$gte" and not (meta_value >= arg):
+                return False
+            if op == "$lt" and not (meta_value < arg):
+                return False
+            if op == "$lte" and not (meta_value <= arg):
+                return False
+            if op == "$between":
+                lo, hi = arg
+                if not (lo <= meta_value <= hi):
+                    return False
+    return True

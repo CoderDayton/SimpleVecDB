@@ -59,7 +59,8 @@ class TestHybridSearchDedupesByDocId:
         # results — pre-2.6.0 they collapsed into one, with whichever
         # metadata happened to come last winning.
         sources = sorted(
-            r[0].metadata.get("source") for r in results
+            r[0].metadata.get("source")
+            for r in results
             if r[0].page_content.startswith("the quick brown fox")
         )
         assert sources == ["A", "B"], (
@@ -157,9 +158,7 @@ class TestLoggingNullHandler:
         importlib.reload(svc_logging)
 
         root = logging.getLogger("simplevecdb")
-        null_handlers = [
-            h for h in root.handlers if isinstance(h, logging.NullHandler)
-        ]
+        null_handlers = [h for h in root.handlers if isinstance(h, logging.NullHandler)]
         assert len(null_handlers) == 1, (
             "simplevecdb root logger must have exactly one NullHandler "
             "after the logging module is imported"

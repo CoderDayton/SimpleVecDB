@@ -34,6 +34,7 @@ plugins:
 
 nav:
   - Home: index.md
+  - Features: Features.md
   - Examples: examples.md
   - Benchmarks: benchmarks.md
   - Changelog: CHANGELOG.md

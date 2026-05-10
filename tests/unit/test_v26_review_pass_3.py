@@ -171,12 +171,8 @@ class TestHybridSearchRRFSymmetry:
         try:
             # 10 documents; only the last carries category=keep.
             texts = [f"doc number {i}" for i in range(10)]
-            metas = [{"category": "drop"} for _ in range(9)] + [
-                {"category": "keep"}
-            ]
-            embs = [
-                [float(i), float(10 - i), 0.0, 0.0] for i in range(10)
-            ]
+            metas = [{"category": "drop"} for _ in range(9)] + [{"category": "keep"}]
+            embs = [[float(i), float(10 - i), 0.0, 0.0] for i in range(10)]
             col.add_texts(texts, metadatas=metas, embeddings=embs)
 
             # Hybrid search with a filter that drops the top 9 vector hits.
@@ -218,9 +214,7 @@ class TestHybridSearchRRFSymmetry:
                 query_vector=[0.5, 0.5, 0.0, 0.0],
                 k=5,
             )
-            variants = {
-                doc.metadata.get("variant") for doc, _ in results
-            }
+            variants = {doc.metadata.get("variant") for doc, _ in results}
             assert variants == {"a", "b"}, (
                 f"Both documents should surface; got variants={variants}"
             )

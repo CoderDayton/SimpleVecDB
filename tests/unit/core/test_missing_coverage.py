@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -12,7 +11,7 @@ import pytest
 
 from simplevecdb import VectorDB
 from simplevecdb.core import get_optimal_batch_size
-from simplevecdb.types import ClusterResult, MigrationRequiredError
+from simplevecdb.types import ClusterResult
 
 
 # ------------------------------------------------------------------ #
@@ -128,9 +127,7 @@ class TestRebuildIndexNoEmbeddings:
         # Insert a doc but clear embeddings from catalog
         collection.add_texts(["test"], embeddings=[[0.1, 0.2]])
         # Wipe the embeddings column
-        db.conn.execute(
-            f"UPDATE {collection._table_name} SET embedding = NULL"
-        )
+        db.conn.execute(f"UPDATE {collection._table_name} SET embedding = NULL")
         db.conn.commit()
         with pytest.raises(RuntimeError, match="No embeddings found"):
             collection.rebuild_index()
@@ -165,110 +162,6 @@ class TestVectorDBContextManager:
 
 
 # ------------------------------------------------------------------ #
-# MigrationRequiredError in VectorDB init (lines 1439-1440)
-# ------------------------------------------------------------------ #
-
-
-class TestMigrationRequired:
-    def test_migration_required_error_raised(self, tmp_path):
-        """When legacy data exists and auto_migrate=False, raise MigrationRequiredError."""
-        db_path = tmp_path / "legacy.db"
-        # Create a database with a legacy vec_index table
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE vec_index (rowid INTEGER PRIMARY KEY, embedding BLOB)"
-        )
-        # Insert a fake vector
-        fake_vec = np.array([0.1, 0.2, 0.3], dtype=np.float32).tobytes()
-        conn.execute("INSERT INTO vec_index VALUES (1, ?)", (fake_vec,))
-        conn.commit()
-        conn.close()
-
-        with pytest.raises(MigrationRequiredError):
-            VectorDB(str(db_path), auto_migrate=False)
-
-
-# ------------------------------------------------------------------ #
-# check_migration edge cases (lines 1668-1670, 1703-1716, 1722-1739, 1745)
-# ------------------------------------------------------------------ #
-
-
-class TestCheckMigration:
-    def test_nonexistent_path(self):
-        result = VectorDB.check_migration("/nonexistent/path/db.sqlite")
-        assert result["needs_migration"] is False
-        assert result["collections"] == []
-        assert result["total_vectors"] == 0
-
-    def test_corrupted_database(self, tmp_path):
-        """DatabaseError should return no-migration-needed result."""
-        db_path = tmp_path / "corrupt.db"
-        db_path.write_bytes(b"not a sqlite database at all")
-        result = VectorDB.check_migration(str(db_path))
-        assert result["needs_migration"] is False
-
-    def test_no_legacy_tables(self, tmp_path):
-        db_path = tmp_path / "clean.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("CREATE TABLE unrelated (id INTEGER)")
-        conn.commit()
-        conn.close()
-        result = VectorDB.check_migration(str(db_path))
-        assert result["needs_migration"] is False
-        assert result["collections"] == []
-
-    def test_legacy_default_collection(self, tmp_path):
-        """Detect legacy vec_index table with data."""
-        db_path = tmp_path / "legacy_default.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE vec_index (rowid INTEGER PRIMARY KEY, embedding BLOB)"
-        )
-        fake_vec = np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32).tobytes()
-        conn.execute("INSERT INTO vec_index VALUES (1, ?)", (fake_vec,))
-        conn.execute("INSERT INTO vec_index VALUES (2, ?)", (fake_vec,))
-        conn.commit()
-        conn.close()
-
-        result = VectorDB.check_migration(str(db_path))
-        assert result["needs_migration"] is True
-        assert "default" in result["collections"]
-        assert result["total_vectors"] == 2
-        assert result["estimated_size_mb"] >= 0
-        assert "ROLLBACK" in result["rollback_notes"]
-
-    def test_legacy_named_collections(self, tmp_path):
-        """Detect legacy vectors_{name} tables."""
-        db_path = tmp_path / "legacy_named.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE vectors_products (rowid INTEGER PRIMARY KEY, embedding BLOB)"
-        )
-        fake_vec = np.array([0.5, 0.6], dtype=np.float32).tobytes()
-        conn.execute("INSERT INTO vectors_products VALUES (1, ?)", (fake_vec,))
-        conn.commit()
-        conn.close()
-
-        result = VectorDB.check_migration(str(db_path))
-        assert result["needs_migration"] is True
-        assert "products" in result["collections"]
-        assert result["total_vectors"] == 1
-
-    def test_empty_legacy_table_ignored(self, tmp_path):
-        """Legacy tables with 0 rows are not flagged."""
-        db_path = tmp_path / "empty_legacy.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE vec_index (rowid INTEGER PRIMARY KEY, embedding BLOB)"
-        )
-        conn.commit()
-        conn.close()
-
-        result = VectorDB.check_migration(str(db_path))
-        assert result["needs_migration"] is False
-
-
-# ------------------------------------------------------------------ #
 # Cross-collection search: parallel failure handling (lines 1552-1553)
 # ------------------------------------------------------------------ #
 
@@ -285,6 +178,7 @@ class TestCrossCollectionSearchFailure:
         # Make c2's search raise
         def failing_search(*args, **kwargs):
             raise RuntimeError("Simulated failure")
+
         c2.similarity_search = failing_search
 
         results = db.search_collections([0.1, 0.2], k=5, parallel=True)
@@ -310,8 +204,7 @@ class TestStreamingOnProgress:
             progress_reports.append(progress)
 
         items = [
-            (f"doc{i}", {"i": i}, [float(i) * 0.1, float(i) * 0.2])
-            for i in range(5)
+            (f"doc{i}", {"i": i}, [float(i) * 0.1, float(i) * 0.2]) for i in range(5)
         ]
 
         # Consume the generator
@@ -355,79 +248,6 @@ class TestStreamingAutoEmbedding:
         assert len(ids) == 2
         assert collection.count() == 3
         db.close()
-
-
-# ------------------------------------------------------------------ #
-# _migrate_from_sqlite_vec_if_needed (lines 276-312)
-# ------------------------------------------------------------------ #
-
-
-class TestMigrateFromSqliteVec:
-    def test_migration_skipped_when_no_legacy_table(self):
-        """Migration is a no-op when no legacy table exists."""
-        db = VectorDB(":memory:")
-        collection = db.collection("default")
-        # No crash, no error - migration silently skips
-        assert collection.count() == 0
-
-    def test_migration_with_empty_legacy_data(self, tmp_path):
-        """Migration handles empty legacy table gracefully."""
-        db_path = tmp_path / "empty_legacy.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE vec_index (rowid INTEGER PRIMARY KEY, embedding BLOB)"
-        )
-        conn.commit()
-        conn.close()
-
-        db = VectorDB(str(db_path), auto_migrate=True)
-        collection = db.collection("default")
-        # Should handle empty table without error
-        assert collection.count() == 0
-        db.close()
-
-    def test_migration_with_legacy_data(self, tmp_path):
-        """Migration transfers vectors from legacy table to usearch."""
-        db_path = tmp_path / "migrate.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE vec_index (rowid INTEGER PRIMARY KEY, embedding BLOB)"
-        )
-        vec1 = np.array([0.1, 0.2, 0.3], dtype=np.float32).tobytes()
-        vec2 = np.array([0.4, 0.5, 0.6], dtype=np.float32).tobytes()
-        conn.execute("INSERT INTO vec_index VALUES (1, ?)", (vec1,))
-        conn.execute("INSERT INTO vec_index VALUES (2, ?)", (vec2,))
-        conn.commit()
-        conn.close()
-
-        db = VectorDB(str(db_path), auto_migrate=True)
-        collection = db.collection("default")
-        # Vectors should be migrated to usearch index
-        assert collection._index.size == 2
-        db.close()
-
-    def test_migration_failure_raises_runtime_error(self, tmp_path):
-        """Migration failure raises RuntimeError with context."""
-        db_path = tmp_path / "fail_migrate.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute(
-            "CREATE TABLE vec_index (rowid INTEGER PRIMARY KEY, embedding BLOB)"
-        )
-        # Insert invalid blob data
-        conn.execute("INSERT INTO vec_index VALUES (1, ?)", (b"invalid",))
-        conn.commit()
-        conn.close()
-
-        db = VectorDB(str(db_path), auto_migrate=True)
-        # Migration may fail when trying to deserialize invalid blob
-        # The exact error depends on numpy's frombuffer behavior
-        try:
-            db.collection("default")
-            # If it doesn't raise, the data was somehow processable
-        except RuntimeError as e:
-            assert "Failed to migrate" in str(e)
-        finally:
-            db.close()
 
 
 # ------------------------------------------------------------------ #

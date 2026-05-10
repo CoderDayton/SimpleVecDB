@@ -122,7 +122,9 @@ def test_server_run_with_args():
 
     mock_server = MagicMock()
     with patch("simplevecdb.embeddings.server.uvicorn.Config") as mock_cfg:
-        with patch("simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server):
+        with patch(
+            "simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server
+        ):
             run_server(host="127.0.0.1", port=9000)
             call_kwargs = mock_cfg.call_args[1]
             assert call_kwargs["host"] == "127.0.0.1"
@@ -136,7 +138,9 @@ def test_server_run_default_config():
 
     mock_server = MagicMock()
     with patch("simplevecdb.embeddings.server.uvicorn.Config") as mock_cfg:
-        with patch("simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server):
+        with patch(
+            "simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server
+        ):
             with patch("simplevecdb.embeddings.server.config") as mock_config:
                 mock_config.SERVER_HOST = "0.0.0.0"
                 mock_config.SERVER_PORT = 8080
@@ -157,7 +161,9 @@ def test_server_run_cli_args():
 
     mock_server = MagicMock()
     with patch("simplevecdb.embeddings.server.uvicorn.Config") as mock_cfg:
-        with patch("simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server):
+        with patch(
+            "simplevecdb.embeddings.server.uvicorn.Server", return_value=mock_server
+        ):
             with patch.object(
                 sys, "argv", ["script", "--host", "192.168.1.1", "--port", "7000"]
             ):

@@ -26,12 +26,13 @@ def test_build_filter_clause_in_list():
 
 
 def test_build_filter_clause_unsupported_type():
-    """Test build_filter_clause with unsupported value type."""
+    """Operator dicts require $-prefixed operators (gap 5)."""
     db = VectorDB(":memory:")
     collection = db.collection("default")
-    filter_dict = {"key": {"nested": "dict"}}  # Dict is not supported
-    with pytest.raises(ValueError, match="must be int, float, str, or list"):
-        collection._catalog.build_filter_clause(filter_dict)
+    with pytest.raises(ValueError, match="Unknown operator"):
+        collection._catalog.build_filter_clause({"key": {"nested": "dict"}})
+    with pytest.raises(ValueError, match="must be int, float, str"):
+        collection._catalog.build_filter_clause({"key": b"bytes"})
 
 
 def test_filter_advanced():

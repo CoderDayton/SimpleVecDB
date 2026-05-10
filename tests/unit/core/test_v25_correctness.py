@@ -64,7 +64,9 @@ class TestListCollectionsPersistence:
 
         names = db.list_collections()
         fts_leaked = [n for n in names if "fts" in n]
-        assert fts_leaked == [], f"FTS tables leaked into list_collections: {fts_leaked}"
+        assert fts_leaked == [], (
+            f"FTS tables leaked into list_collections: {fts_leaked}"
+        )
 
     def test_sorted_output(self):
         db = VectorDB(":memory:")

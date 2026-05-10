@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/github/license/coderdayton/simplevecdb)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/coderdayton/simplevecdb?style=social)](https://github.com/coderdayton/simplevecdb)
 
+<a href='https://ko-fi.com/U7U01WTJF9' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+
 **The dead-simple, local-first vector database.**
 
 SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built on `usearch` HNSW indexing, it offers high-performance vector search, quantization, and zero infrastructure headaches. Perfect for local RAG, offline agents, and indie hackers who need production-grade vector search without the operational overhead.
@@ -70,48 +72,52 @@ python -c "from simplevecdb import VectorDB; print('SimpleVecDB installed succes
 
 ## Quickstart
 
-SimpleVecDB is **just a vector storage layer**—it doesn't include an LLM or generate embeddings. This design keeps it lightweight and flexible. Choose your integration path:
+SimpleVecDB is just a storage and search layer — it doesn't ship an LLM
+and won't generate embeddings for you. Bring whichever embedding source
+you already use; three common ones below.
 
-### Option 1: With OpenAI (Simplest)
-
-Best for: Quick prototypes, production apps with OpenAI subscriptions.
+### Option 1: OpenAI embeddings
 
 ```python
 from simplevecdb import VectorDB
 from openai import OpenAI
 
-db = VectorDB("knowledge.db")
-collection = db.collection("docs")
 client = OpenAI()
+db = VectorDB("notes.db")
+notes = db.collection("personal")
 
-texts = ["Paris is the capital of France.", "Mitochondria powers cells."]
-embeddings = [
-    client.embeddings.create(model="text-embedding-3-small", input=t).data[0].embedding
-    for t in texts
+def embed(text: str) -> list[float]:
+    return (
+        client.embeddings
+        .create(model="text-embedding-3-small", input=text)
+        .data[0].embedding
+    )
+
+entries = [
+    ("Cherry MX silent reds bottom out around 45g — quieter than browns", "keyboards"),
+    ("Sourdough hydration sweet spot is ~75% with this flour",            "baking"),
+    ("EXPLAIN ANALYZE showed seq scan; ANALYZE on the table fixed it",    "work"),
+    ("Passport renewal took 3 weeks, not the advertised 6–8",             "admin"),
 ]
 
-collection.add_texts(
-    texts=texts,
-    embeddings=embeddings,
-    metadatas=[{"category": "geography"}, {"category": "biology"}]
+notes.add_texts(
+    texts=[t for t, _ in entries],
+    embeddings=[embed(t) for t, _ in entries],
+    metadatas=[{"tag": tag} for _, tag in entries],
 )
 
-# Search
-query_emb = client.embeddings.create(
-    model="text-embedding-3-small",
-    input="capital of France"
-).data[0].embedding
+hits = notes.similarity_search(embed("how loud are silent reds"), k=2)
+for doc, score in hits:
+    print(f"{score:.3f}  {doc.page_content}")
 
-results = collection.similarity_search(query_emb, k=1)
-print(results[0][0].page_content)  # "Paris is the capital of France."
-
-# Filter by metadata
-filtered = collection.similarity_search(query_emb, k=10, filter={"category": "geography"})
+work = notes.similarity_search(
+    embed("query plan slow"),
+    k=5,
+    filter={"tag": "work"},
+)
 ```
 
-### Option 2: Fully Local (Privacy-First)
-
-Best for: Offline apps, sensitive data, zero API costs.
+### Option 2: Fully local (no network, no API key)
 
 ```bash
 pip install "simplevecdb[server]"
@@ -121,36 +127,38 @@ pip install "simplevecdb[server]"
 from simplevecdb import VectorDB
 from simplevecdb.embeddings.models import embed_texts
 
-db = VectorDB("local.db")
-collection = db.collection("docs")
+db = VectorDB("notes.db")
+notes = db.collection("personal")
 
-texts = ["Paris is the capital of France.", "Mitochondria powers cells."]
-embeddings = embed_texts(texts)  # Local HuggingFace models
+texts = [
+    "Cherry MX silent reds bottom out around 45g",
+    "Sourdough hydration sweet spot is ~75% with this flour",
+    "EXPLAIN ANALYZE showed seq scan; ANALYZE on the table fixed it",
+]
+notes.add_texts(texts=texts, embeddings=embed_texts(texts))
 
-collection.add_texts(texts=texts, embeddings=embeddings)
-
-# Search
-query_emb = embed_texts(["capital of France"])[0]
-results = collection.similarity_search(query_emb, k=1)
-
-# Hybrid search (BM25 + vector)
-hybrid = collection.hybrid_search("powerhouse cell", k=2)
+vec = notes.similarity_search(embed_texts(["quieter switches"])[0], k=2)
+mixed = notes.hybrid_search("postgres slow query", k=3)
 ```
 
-**Optional: Run embeddings server (OpenAI-compatible)**
+If you'd rather hit an HTTP endpoint than import the embedding models
+directly, the bundled server speaks the same shape as OpenAI's
+embeddings API:
 
 ```bash
-simplevecdb-server --port 8000                # Default model, auto warm-up
-simplevecdb-server --host 0.0.0.0 --port 9000 # Bind to all interfaces
-simplevecdb-server --no-warmup                # Skip model preload on startup
-simplevecdb-server --help                     # Show all options
+simplevecdb-server --port 8000                # default model, auto warm-up
+simplevecdb-server --host 0.0.0.0 --port 9000
+simplevecdb-server --no-warmup                # skip the model preload
+simplevecdb-server --help
 ```
 
-See [Setup Guide](ENV_SETUP.md) for configuration: model registry, rate limits, API keys, CORS, CUDA optimization.
+Server tuning (model registry, rate limits, API keys, CORS, CUDA) lives
+in the [Setup Guide](ENV_SETUP.md).
 
-### Option 3: With LangChain or LlamaIndex
+### Option 3: LangChain or LlamaIndex
 
-Best for: Existing RAG pipelines, framework-based workflows.
+Already wired into one of the big RAG frameworks? Drop SimpleVecDB in
+as the vector store:
 
 ```bash
 pip install "simplevecdb[integrations]"
@@ -161,214 +169,64 @@ from simplevecdb.integrations.langchain import SimpleVecDBVectorStore
 from langchain_openai import OpenAIEmbeddings
 
 store = SimpleVecDBVectorStore(
-    db_path="langchain.db",
-    embedding=OpenAIEmbeddings(model="text-embedding-3-small")
+    db_path="notes.db",
+    embedding=OpenAIEmbeddings(model="text-embedding-3-small"),
 )
 
-store.add_texts(["Paris is the capital of France."])
-results = store.similarity_search("capital of France", k=1)
-hybrid = store.hybrid_search("France capital", k=3)  # BM25 + vector
+store.add_texts([
+    "Cherry MX silent reds bottom out around 45g",
+    "EXPLAIN ANALYZE showed seq scan; ANALYZE on the table fixed it",
+])
+store.similarity_search("quieter switches", k=1)
+store.hybrid_search("postgres performance", k=3)
 ```
 
-**LlamaIndex:**
+LlamaIndex is the same shape:
 
 ```python
 from simplevecdb.integrations.llamaindex import SimpleVecDBLlamaStore
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 store = SimpleVecDBLlamaStore(
-    db_path="llama.db",
-    embedding=OpenAIEmbedding(model="text-embedding-3-small")
+    db_path="notes.db",
+    embedding=OpenAIEmbedding(model="text-embedding-3-small"),
 )
 ```
 
-See **[Examples](https://coderdayton.github.io/SimpleVecDB/examples/)** for complete RAG workflows with Ollama.
+End-to-end notebooks (including a fully local Ollama RAG) live in the
+[examples gallery](https://coderdayton.github.io/SimpleVecDB/examples/).
 
-## Core Features
+## Feature Highlights
 
-### Multi-Collection Support
+A few of the things SimpleVecDB does well — see
+[`docs/Features.md`](docs/Features.md) for the comprehensive list.
 
-Organize vectors by domain within a single database file:
+- **Vector + keyword + hybrid search** — cosine / L2 similarity, BM25
+  via SQLite FTS5, and Reciprocal Rank Fusion in one collection.
+- **Adaptive HNSW** — brute-force for <10k vectors (perfect recall),
+  `usearch` HNSW above that. Override per query with `exact=True/False`.
+- **Quantization** — `FLOAT32`, `FLOAT16`, `INT8`, `BIT` for 1×–32×
+  compression.
+- **Multi-collection + cross-collection search** — isolated namespaces in
+  one `.db` file, with merged ranked search across them.
+- **Mongo-style filters** — `$eq $ne $gt $gte $lt $lte $in $nin $exists
+  $between` on metadata, edges, and events.
+- **Memory primitives (v2.6.1)** — pending-vector buffer with atomic
+  flush, weighted directed edges, append-only event feed, TTL with
+  delete/callback sweep, and a threshold-driven rebuild scheduler.
+- **Atomic counters & transactions (v2.6.1)** — `increment_metadata` for
+  JSON deltas in one statement; SAVEPOINT-backed `db.transaction()` /
+  `collection.tx()` rolling all catalog writes back on error.
+- **Async, encryption, clustering, hierarchies** — full async surface
+  (with executor injection), SQLCipher AES-256, K-means / MiniBatch
+  K-means / HDBSCAN, parent/child relationships.
+- **Framework integrations** — drop-in `LangChain` and `LlamaIndex`
+  adapters via the `[integrations]` extra; optional FastAPI embeddings
+  server via `[server]`.
 
-```python
-from simplevecdb import VectorDB, Quantization
+For full method-level coverage, see [the Features doc](docs/Features.md)
+or the [API reference](https://coderdayton.github.io/SimpleVecDB/api/core).
 
-db = VectorDB("app.db")
-users = db.collection("users", quantization=Quantization.FLOAT16)  # 2x memory savings
-products = db.collection("products", quantization=Quantization.BIT)  # 32x compression
-
-# Isolated namespaces
-users.add_texts(["Alice likes hiking"], embeddings=[[0.1]*384])
-products.add_texts(["Hiking boots"], embeddings=[[0.9]*384])
-```
-
-### Search Capabilities
-
-```python
-# Vector similarity (cosine/L2) - adaptive search by default
-results = collection.similarity_search(query_vector, k=10)
-
-# Force exact search for perfect recall (brute-force)
-results = collection.similarity_search(query_vector, k=10, exact=True)
-
-# Force HNSW approximate search (faster, may miss some results)
-results = collection.similarity_search(query_vector, k=10, exact=False)
-
-# Parallel search with explicit thread count
-results = collection.similarity_search(query_vector, k=10, threads=8)
-
-# Batch search - 10x throughput for multiple queries
-queries = [query1, query2, query3]  # List of embedding vectors
-batch_results = collection.similarity_search_batch(queries, k=10)
-
-# Keyword search (BM25)
-results = collection.keyword_search("exact phrase", k=10)
-
-# Hybrid (BM25 + vector fusion)
-results = collection.hybrid_search("machine learning", k=10)
-results = collection.hybrid_search("ML concepts", query_vector=my_vector, k=10)
-
-# Metadata filtering
-results = collection.similarity_search(
-    query_vector,
-    k=10,
-    filter={"category": "technical", "verified": True}
-)
-```
-
-> **Tip:** LangChain and LlamaIndex integrations support all search methods.
-
-### Encryption (v2.1+)
-
-Protect sensitive data with AES-256 at-rest encryption:
-
-```bash
-pip install "simplevecdb[encryption]"
-```
-
-```python
-from simplevecdb import VectorDB
-
-# Create encrypted database
-db = VectorDB("secure.db", encryption_key="your-secret-key")
-collection = db.collection("confidential")
-
-collection.add_texts(["sensitive data"], embeddings=[[0.1]*384])
-db.close()
-
-# Reopen requires same key
-db = VectorDB("secure.db", encryption_key="your-secret-key")
-```
-
-### Streaming Insert (v2.1+)
-
-Memory-efficient ingestion for large datasets:
-
-```python
-def load_documents():
-    for line in open("large_file.jsonl"):
-        doc = json.loads(line)
-        yield (doc["text"], doc.get("metadata"), doc.get("embedding"))
-
-for progress in collection.add_texts_streaming(load_documents(), batch_size=1000):
-    print(f"Processed {progress['docs_processed']} documents")
-```
-
-### Document Hierarchies (v2.1+)
-
-Organize documents in parent-child relationships:
-
-```python
-# Add parent document
-parent_ids = collection.add_texts(["Main document"], embeddings=[[0.1]*384])
-
-# Add children
-child_ids = collection.add_texts(
-    ["Chunk 1", "Chunk 2"],
-    embeddings=[[0.11]*384, [0.12]*384],
-    parent_ids=[parent_ids[0], parent_ids[0]]
-)
-
-# Navigate hierarchy
-children = collection.get_children(parent_ids[0])
-parent = collection.get_parent(child_ids[0])
-descendants = collection.get_descendants(parent_ids[0])
-```
-
-### Document Management (v2.4+)
-
-Query and update documents without touching private internals:
-
-```python
-# Get all documents (with optional metadata filter)
-docs = collection.get_documents(filter_dict={"category": "tech"})
-for doc_id, text, metadata in docs:
-    print(f"[{doc_id}] {text[:50]}...")
-
-# Paginated access (v2.5+)
-page1 = collection.get_documents(limit=100)
-page2 = collection.get_documents(limit=100, offset=100)
-
-# Fetch stored embeddings
-embeddings = collection.get_embeddings_by_ids([1, 2, 3])
-
-# Batch update metadata (shallow merge)
-collection.update_metadata([
-    (1, {"reviewed": True}),
-    (2, {"reviewed": True, "score": 0.95}),
-])
-
-# Quick stats
-print(f"Collection has {collection.count()} documents, dim={collection.dim}")
-
-# Delete an entire collection (v2.5+)
-db.delete_collection("old_data")
-```
-
-### Vector Clustering (v2.2+)
-
-Discover natural groupings in your embeddings:
-
-```python
-# Cluster documents and auto-generate tags
-result = collection.cluster(n_clusters=5)
-tags = collection.auto_tag(result, method="tfidf")
-collection.assign_cluster_metadata(result, tags)
-
-# Save for fast assignment of new documents
-collection.save_cluster("categories", result)
-collection.assign_to_cluster("categories", new_doc_ids)
-```
-
-Supports K-means, MiniBatch K-means, and HDBSCAN. See [Clustering Guide](https://coderdayton.github.io/SimpleVecDB/guides/clustering) for details.
-
-## Feature Matrix
-
-| Feature                   | Status | Description                                                  |
-| :------------------------ | :----- | :----------------------------------------------------------- |
-| **Single-File Storage**   | ✅     | SQLite `.db` file or in-memory mode                          |
-| **Multi-Collection**      | ✅     | Isolated namespaces per database                             |
-| **HNSW Indexing**         | ✅     | usearch HNSW for 10-100x faster search                       |
-| **Adaptive Search**       | ✅     | Auto brute-force for <10k vectors, HNSW for larger           |
-| **Vector Search**         | ✅     | Cosine, Euclidean metrics (L1 removed in v2.0)               |
-| **Hybrid Search**         | ✅     | BM25 + vector fusion (Reciprocal Rank Fusion)                |
-| **Quantization**          | ✅     | FLOAT32, FLOAT16, INT8, BIT for 2-32x compression            |
-| **Parallel Operations**   | ✅     | `threads` parameter for add/search                           |
-| **Metadata Filtering**    | ✅     | SQL `WHERE` clause support                                   |
-| **Framework Integration** | ✅     | LangChain \& LlamaIndex adapters via `[integrations]` extra  |
-| **Hardware Acceleration** | ✅     | Auto-detects CUDA/MPS/CPU + SIMD via usearch                 |
-| **Local Embeddings**      | ✅     | HuggingFace models via `[server]` extras                     |
-| **Built-in Encryption**   | ✅     | SQLCipher AES-256 at-rest encryption via `[encryption]` extras |
-| **Streaming Insert**      | ✅     | Memory-efficient large-scale ingestion with progress callbacks |
-| **Document Hierarchies**  | ✅     | Parent/child relationships for chunked docs                  |
-| **Vector Clustering**     | ✅     | K-means, MiniBatch K-means, HDBSCAN with auto-tagging (v2.2+) |
-| **Cluster Persistence**   | ✅     | Save/load cluster centroids for fast assignment (v2.2+)      |
-| **Public Catalog API**    | ✅     | `get_documents`, `get_embeddings_by_ids`, `update_metadata` (v2.4+) |
-| **Executor Injection**    | ✅     | Share thread pool across async instances for ONNX safety (v2.4+) |
-| **Collection Management** | ✅     | `delete_collection()`, paginated `get_documents(limit=, offset=)` (v2.5+) |
-| **Cross-Process Safety**  | ✅     | Advisory file locking on usearch index files (v2.5+) |
-| **FLOAT16 Quantization**  | ✅     | Half-precision storage with 2x compression (v2.5+) |
-| **Embeddings Server**     | ✅     | CORS, graceful shutdown, input validation, model warm-up (v2.5+) |
 
 ## Performance Benchmarks
 
@@ -388,6 +246,7 @@ Supports K-means, MiniBatch K-means, and HDBSCAN. See [Clustering Guide](https:/
 
 ## Documentation
 
+- **[Features](docs/Features.md)** — Comprehensive list of every capability, grouped by area
 - **[Setup Guide](https://coderdayton.github.io/SimpleVecDB/ENV_SETUP)** — Environment variables, server configuration, authentication
 - **[API Reference](https://coderdayton.github.io/SimpleVecDB/api/core)** — Complete class/method documentation with type signatures
 - **[Benchmarks](https://coderdayton.github.io/SimpleVecDB/benchmarks)** — Quantization strategies, batch sizes, hardware optimization
@@ -430,24 +289,14 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 
 ## Roadmap
 
-- [x] Hybrid Search (BM25 + Vector)
-- [x] Multi-collection support
-- [x] HNSW indexing (usearch backend)
-- [x] Adaptive search (brute-force/HNSW)
-- [x] SQLCipher encryption (at-rest data protection)
-- [x] Streaming insert API for large-scale ingestion
-- [x] Hierarchical document relationships (parent/child)
-- [x] Cross-collection search
-- [x] Vector clustering and auto-tagging (v2.2)
-- [x] Public catalog API for document management (v2.4)
-- [x] Async executor injection for thread-safe sharing (v2.4)
-- [x] Collection management: `delete_collection()`, pagination (v2.5)
-- [x] Cross-process file locking and connection health checks (v2.5)
-- [x] Embeddings server hardening: CORS, graceful shutdown, input validation (v2.5)
+What's on the near-term radar:
+
 - [ ] Incremental clustering (online learning)
 - [ ] Cluster visualization exports
 
-Vote on features or propose new ones in [GitHub Discussions](https://github.com/coderdayton/simplevecdb/discussions).
+For shipped capabilities, see [`docs/Features.md`](docs/Features.md) and the
+release-by-release [Changelog](CHANGELOG.md). Vote on these or propose new
+ideas in [GitHub Discussions](https://github.com/coderdayton/simplevecdb/discussions).
 
 ## Contributing
 
@@ -469,29 +318,12 @@ Contributions are welcome! Whether you're fixing bugs, improving documentation, 
 - [GitHub Releases](https://github.com/coderdayton/simplevecdb/releases) — Changelog and updates
 - [Examples Gallery](https://coderdayton.github.io/SimpleVecDB/examples/) — Community-contributed notebooks
 
-## Sponsors
+## Other Ways to Support
 
-SimpleVecDB is independently developed and maintained. If you or your company use it in production, please consider sponsoring to ensure its continued development and support.
-
-**Company Sponsors**
-
-_Become the first company sponsor!_ [Support on GitHub →](https://github.com/sponsors/coderdayton)
-
-**Individual Supporters**
-
-_Join the list of supporters!_ [Support on GitHub →](https://github.com/sponsors/coderdayton)
-
-<!-- sponsors --><!-- sponsors -->
-
-### Other Ways to Support
-
-- 🍵 **[Buy me a coffee](https://www.buymeacoffee.com/coderdayton)** - One-time donation
-- 💎 **[Get the Pro Pack](https://simplevecdb.lemonsqueezy.com/)** - Production deployment templates & recipes
+- ☕ **[Buy me a coffee](https://ko-fi.com/xbbvii)** - One-time donation
 - ⭐ **Star the repo** - Helps with visibility
 - 🐛 **Report bugs** - Improve the project for everyone
 - 📝 **Contribute** - See [CONTRIBUTING.md](CONTRIBUTING.md)
-
-**Why sponsor?** Your support ensures SimpleVecDB stays maintained, secure, and compatible with the latest Python/SQLite versions.
 
 ## License
 

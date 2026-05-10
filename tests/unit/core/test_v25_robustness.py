@@ -35,7 +35,9 @@ class TestAsyncRetryOnLock:
         """Decorator retries on 'database is locked' and returns the result."""
         attempt_count = 0
 
-        @async_retry_on_lock(max_retries=5, base_delay=0.01, jitter=False, total_timeout=10.0)
+        @async_retry_on_lock(
+            max_retries=5, base_delay=0.01, jitter=False, total_timeout=10.0
+        )
         async def flaky():
             nonlocal attempt_count
             attempt_count += 1
@@ -52,7 +54,9 @@ class TestAsyncRetryOnLock:
         """Decorator awaits asyncio.sleep, never calls time.sleep."""
         call_count = 0
 
-        @async_retry_on_lock(max_retries=3, base_delay=0.01, jitter=False, total_timeout=10.0)
+        @async_retry_on_lock(
+            max_retries=3, base_delay=0.01, jitter=False, total_timeout=10.0
+        )
         async def flaky():
             nonlocal call_count
             call_count += 1
@@ -60,8 +64,10 @@ class TestAsyncRetryOnLock:
                 raise sqlite3.OperationalError("database is locked")
             return "done"
 
-        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_asleep, \
-             patch("time.sleep") as mock_tsleep:
+        with (
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_asleep,
+            patch("time.sleep") as mock_tsleep,
+        ):
             result = await flaky()
 
         assert result == "done"
@@ -73,7 +79,9 @@ class TestAsyncRetryOnLock:
         """Non-lock OperationalErrors propagate without retry."""
         attempt_count = 0
 
-        @async_retry_on_lock(max_retries=5, base_delay=0.01, jitter=False, total_timeout=10.0)
+        @async_retry_on_lock(
+            max_retries=5, base_delay=0.01, jitter=False, total_timeout=10.0
+        )
         async def bad():
             nonlocal attempt_count
             attempt_count += 1
@@ -87,7 +95,9 @@ class TestAsyncRetryOnLock:
     async def test_raises_database_locked_error_after_max_retries(self):
         """DatabaseLockedError is raised once retries are exhausted."""
 
-        @async_retry_on_lock(max_retries=2, base_delay=0.001, jitter=False, total_timeout=60.0)
+        @async_retry_on_lock(
+            max_retries=2, base_delay=0.001, jitter=False, total_timeout=60.0
+        )
         async def always_locked():
             raise sqlite3.OperationalError("database is locked")
 
@@ -283,10 +293,12 @@ class TestMmapThreshold:
         mock_index_cls = MagicMock()
         mock_index_cls.restore.return_value = mock_index
 
-        with patch.object(Path, "exists", return_value=True), \
-             patch.object(Path, "stat", return_value=large_stat), \
-             patch("simplevecdb.utils.file_lock"), \
-             patch("usearch.index.Index", mock_index_cls):
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch.object(Path, "stat", return_value=large_stat),
+            patch("simplevecdb.utils.file_lock"),
+            patch("usearch.index.Index", mock_index_cls),
+        ):
             idx._load_or_create()
 
         assert idx._is_view is True
@@ -296,10 +308,12 @@ class TestMmapThreshold:
         mock_index_cls.reset_mock()
         idx._is_view = False
 
-        with patch.object(Path, "exists", return_value=True), \
-             patch.object(Path, "stat", return_value=small_stat), \
-             patch("simplevecdb.utils.file_lock"), \
-             patch("usearch.index.Index", mock_index_cls):
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch.object(Path, "stat", return_value=small_stat),
+            patch("simplevecdb.utils.file_lock"),
+            patch("usearch.index.Index", mock_index_cls),
+        ):
             idx._load_or_create()
 
         assert idx._is_view is False

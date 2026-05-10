@@ -69,11 +69,15 @@ class TestIterativeDeepeningFilteredSearch:
         col = db.collection("sparse")
 
         texts = [f"doc_{i}" for i in range(20)]
-        metadatas = [{"color": "red"} if i < 3 else {"color": "blue"} for i in range(20)]
+        metadatas = [
+            {"color": "red"} if i < 3 else {"color": "blue"} for i in range(20)
+        ]
         embeddings = [_rand_embedding(i) for i in range(20)]
         col.add_texts(texts, metadatas=metadatas, embeddings=embeddings)
 
-        results = col.similarity_search(_rand_embedding(42), k=10, filter={"color": "red"})
+        results = col.similarity_search(
+            _rand_embedding(42), k=10, filter={"color": "red"}
+        )
         assert len(results) == 3
 
     def test_no_filter_match_returns_empty(self):
@@ -161,7 +165,9 @@ class TestFloat16Quantization:
     def test_serialize_deserialize_roundtrip(self):
         """FLOAT16 serialize -> deserialize preserves values within half-precision tolerance."""
         qs = QuantizationStrategy(Quantization.FLOAT16)
-        original = np.array([0.1, -0.25, 0.5, 1.0, -1.0, 0.0, 0.333, -0.777], dtype=np.float32)
+        original = np.array(
+            [0.1, -0.25, 0.5, 1.0, -1.0, 0.0, 0.333, -0.777], dtype=np.float32
+        )
 
         blob = qs.serialize(original)
         recovered = qs.deserialize(blob, dim=len(original))

@@ -194,12 +194,20 @@ class TestValidateFilter:
             validate_filter({None: "value"})  # type: ignore
 
     def test_invalid_value_type(self):
-        """Unsupported value types raise ValueError."""
-        with pytest.raises(ValueError, match="must be int, float, str, or list"):
+        """Unsupported value types raise ValueError.
+
+        Operator dicts now accept $-prefixed operators (gap 5); plain
+        nested dicts are rejected as unknown operators. Tuple shorthand
+        is accepted but the first element must be a recognized op string.
+        """
+        with pytest.raises(ValueError, match="Unknown operator"):
             validate_filter({"key": {"nested": "dict"}})
 
-        with pytest.raises(ValueError, match="must be int, float, str, or list"):
-            validate_filter({"key": (1, 2, 3)})  # tuple not allowed
+        with pytest.raises(ValueError, match="operator.*must be a string"):
+            validate_filter({"key": (1, 2, 3)})  # numeric op invalid
+
+        with pytest.raises(ValueError, match="must be int, float, str"):
+            validate_filter({"key": b"bytes"})
 
     def test_invalid_list_item_type(self):
         """List items must be int, float, or str."""
@@ -208,6 +216,15 @@ class TestValidateFilter:
 
         with pytest.raises(ValueError, match="list items.*must be int, float, or str"):
             validate_filter({"tags": [[1, 2, 3]]})  # nested list
+
+    def test_filter_list_length_capped(self):
+        """Lists exceeding the SQLite parameter limit raise."""
+        # Just under the cap is fine; just over raises.
+        validate_filter({"ids": list(range(999))})
+        with pytest.raises(ValueError, match="SQLite parameter limit"):
+            validate_filter({"ids": list(range(1000))})
+        with pytest.raises(ValueError, match="SQLite parameter limit"):
+            validate_filter({"ids": {"$in": list(range(1000))}})
 
 
 # ============================================================================
@@ -327,8 +344,8 @@ class TestErrorHandlingIntegration:
             embeddings=[[0.1, 0.2, 0.3]],
         )
 
-        # Search with invalid filter
-        with pytest.raises(ValueError, match="must be int, float, str, or list"):
+        # Search with invalid filter (unknown operator name).
+        with pytest.raises(ValueError, match="Unknown operator"):
             collection.keyword_search(
                 query="hello",
                 k=5,
@@ -425,55 +442,3 @@ class TestConcurrentAccess:
 
         db1.close()
         db2.close()
-
-
-# ============================================================================
-# Migration error tests
-# ============================================================================
-
-
-class TestMigrationRequiredError:
-    """Tests for MigrationRequiredError blocking behavior."""
-
-    def test_migration_error_attributes(self):
-        """MigrationRequiredError has correct attributes."""
-        from simplevecdb import MigrationRequiredError
-
-        error = MigrationRequiredError(
-            path="/path/to/db.db",
-            collections=["default", "docs"],
-            total_vectors=1000,
-            migration_info={"needs_migration": True},
-        )
-
-        assert error.path == "/path/to/db.db"
-        assert error.collections == ["default", "docs"]
-        assert error.total_vectors == 1000
-        assert error.migration_info["needs_migration"] is True
-        assert "1000 vectors" in str(error)
-        assert "auto_migrate=True" in str(error)
-
-    def test_new_db_no_migration_error(self):
-        """New databases don't raise MigrationRequiredError."""
-        # auto_migrate=False should be fine for new databases
-        db = VectorDB(":memory:")  # Default is auto_migrate=False
-        collection = db.collection("test")
-        collection.add_texts(["hello"], embeddings=[[0.1, 0.2, 0.3]])
-        assert collection.count() == 1
-        db.close()
-
-    def test_check_migration_new_db(self, tmp_path):
-        """check_migration returns no migration for new databases."""
-        db_path = str(tmp_path / "new.db")
-
-        # Create a new v2.0 database
-        db = VectorDB(db_path, auto_migrate=True)
-        collection = db.collection("test")
-        collection.add_texts(["hello"], embeddings=[[0.1, 0.2, 0.3]])
-        db.close()
-
-        # Check migration - should be empty
-        info = VectorDB.check_migration(db_path)
-        assert info["needs_migration"] is False
-        assert info["collections"] == []
-        assert info["total_vectors"] == 0

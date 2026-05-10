@@ -294,9 +294,7 @@ def create_encrypted_connection(
     db_path_obj = Path(path_str)
     salt_path = db_path_obj.with_name(db_path_obj.name + _SALT_SIDECAR_SUFFIX)
     is_new_db = not db_path_obj.exists() or db_path_obj.stat().st_size == 0
-    has_sidecar = (
-        salt_path.exists() and salt_path.stat().st_size == SALT_SIZE
-    )
+    has_sidecar = salt_path.exists() and salt_path.stat().st_size == SALT_SIZE
     use_legacy_passphrase_path = (not is_new_db) and (not has_sidecar)
 
     try:
@@ -353,6 +351,13 @@ def create_encrypted_connection(
         # Set performance optimizations (same as non-encrypted)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        # Native lock-wait window (gap 10): SQLite blocks the caller in
+        # C for up to busy_timeout ms before surfacing "database is
+        # locked", trimming retry pressure under multi-writer load.
+        from . import constants as _c
+
+        conn.execute(f"PRAGMA busy_timeout={_c.SQLITE_BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA foreign_keys=ON")
 
         return conn  # type: ignore[return-value]
 
@@ -491,9 +496,7 @@ def encrypt_file(
         # file, fsync, restrict permissions, then os.replace() onto the
         # target path. A crash mid-write leaves only the temp file; the
         # target is never torn.
-        _atomic_write_bytes(
-            output_path, header + nonce + ciphertext, mode=0o600
-        )
+        _atomic_write_bytes(output_path, header + nonce + ciphertext, mode=0o600)
 
         _logger.debug(
             "Encrypted %d bytes -> %d bytes",

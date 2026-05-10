@@ -104,3 +104,31 @@ MAX_HIERARCHY_DEPTH = 100
 # Maximum sample size for sklearn.metrics.silhouette_score. The metric is
 # O(n²) in time and memory, so we sample on large datasets.
 SILHOUETTE_MAX_SAMPLE = 10_000
+
+# ============================================================================
+# 2.6.1 catalog extensions
+# ============================================================================
+
+# Default flush batch when promoting pending vectors to the HNSW index.
+PENDING_FLUSH_DEFAULT_BATCH = 1000
+
+# Polling interval used by collection.events.subscribe() when no new
+# events are available. WAL mode means cross-process commits show up
+# on the next iteration.
+EVENTS_POLL_INTERVAL_S = 0.1
+
+# Soft cap on stored events. Set to None to disable startup pruning.
+EVENTS_RETENTION_LIMIT = 100_000
+
+# Default cadence for opt-in TTL background sweeper threads.
+TTL_SWEEP_DEFAULT_INTERVAL_S = 60.0
+
+# Heuristic thresholds that trigger maintenance.rebuild_if_needed.
+REBUILD_PENDING_THRESHOLD = 5_000
+REBUILD_TOMBSTONE_THRESHOLD = 5_000
+REBUILD_MIN_INTERVAL_S = 3600.0
+
+# SQLite native lock-wait window (ms). Lower retry pressure on multi-writer
+# workloads — busy_timeout means SQLite blocks the caller in C rather
+# than surfacing "database is locked" to Python.
+SQLITE_BUSY_TIMEOUT_MS = 5000

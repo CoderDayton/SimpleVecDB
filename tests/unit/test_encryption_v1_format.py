@@ -132,9 +132,7 @@ class TestV0BackwardsCompatibility:
         decrypt_file(enc, out, TEST_KEY)
         assert out.read_bytes() == original
 
-    def test_decrypt_v0_blob_starting_with_sv_bytes_still_works(
-        self, tmp_path: Path
-    ):
+    def test_decrypt_v0_blob_starting_with_sv_bytes_still_works(self, tmp_path: Path):
         # A v0 nonce that *happens* to start with 'SV' but whose 3rd byte is
         # not the version sentinel must still decrypt as v0. Decrypt logic
         # only strips the header when *both* the magic bytes AND the version

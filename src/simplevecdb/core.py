@@ -8,15 +8,17 @@ using usearch HNSW index with SQLite metadata storage.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import sqlite3
 import tempfile
 import threading
+import time
 import numpy as np
 import uuid
 from collections import defaultdict
-from collections.abc import Generator, Iterable, Sequence
+from collections.abc import Generator, Iterable, Iterator, Sequence
 from typing import Any, TYPE_CHECKING
 from pathlib import Path
 import platform
@@ -25,7 +27,8 @@ from .types import (
     Document,
     DistanceStrategy,
     Quantization,
-    MigrationRequiredError,
+    Edge,
+    Event,
     StreamingProgress,
     ProgressCallback,
     ClusterResult,
@@ -34,7 +37,7 @@ from .types import (
 from .utils import _import_optional
 from .engine.quantization import QuantizationStrategy
 from .engine.search import SearchEngine
-from .engine.catalog import CatalogManager
+from .engine.catalog import CatalogManager, _TxState
 from .engine.usearch_index import UsearchIndex
 from .engine.clustering import ClusterEngine, ClusterAlgorithm
 from . import constants
@@ -181,6 +184,7 @@ class VectorCollection:
         encryption_key: str | bytes | None = None,
         store_embeddings: bool = False,
         lock: threading.RLock | None = None,
+        tx_state: _TxState | None = None,
     ):
         self.conn = conn
         self._db_path = db_path
@@ -194,6 +198,9 @@ class VectorCollection:
         # collections sharing the same sqlite3.Connection serialize their
         # transactional access from Python.
         self._lock: threading.RLock = lock if lock is not None else threading.RLock()
+        # Shared transaction depth; defaults to a per-collection state when
+        # the parent VectorDB didn't pass one (e.g. legacy direct ctor use).
+        self._tx_state: _TxState = tx_state if tx_state is not None else _TxState()
 
         # Sanitize name to prevent issues
         if not re.match(constants.COLLECTION_NAME_PATTERN, name):
@@ -204,10 +211,8 @@ class VectorCollection:
         # Table names
         if name == "default":
             self._table_name = "tinyvec_items"
-            self._legacy_vec_table = "vec_index"  # For migration
         else:
             self._table_name = f"items_{name}"
-            self._legacy_vec_table = f"vectors_{name}"  # For migration
 
         self._fts_table_name = f"{self._table_name}_fts"
 
@@ -219,11 +224,14 @@ class VectorCollection:
 
         # Initialize components — share the connection lock with the catalog
         # so add_documents / delete_by_ids / etc. all serialize properly.
+        # The optional _tx_state is also shared with the parent VectorDB
+        # so db.transaction() can suspend per-call commits everywhere.
         self._catalog = CatalogManager(
             conn=self.conn,
             table_name=self._table_name,
             fts_table_name=self._fts_table_name,
             lock=self._lock,
+            tx_state=getattr(self, "_tx_state", None),
         )
         self._catalog.create_tables()
 
@@ -258,9 +266,6 @@ class VectorCollection:
             distance_strategy=self.distance_strategy,
         )
 
-        # Check for and perform migration from sqlite-vec
-        self._migrate_from_sqlite_vec_if_needed()
-
     def _resolve_index_path(self) -> str | None:
         """
         Resolve the actual index path, handling encryption.
@@ -287,52 +292,6 @@ class VectorCollection:
             _logger.info("Decrypted index file: %s", encrypted_path)
 
         return self._index_path
-
-    def _migrate_from_sqlite_vec_if_needed(self) -> None:
-        """Auto-migrate from sqlite-vec to usearch on first connection."""
-        if not self._catalog.check_legacy_sqlite_vec(self._legacy_vec_table):
-            return
-
-        _logger.info(
-            "Detected legacy sqlite-vec data in collection '%s'. Migrating to usearch...",
-            self.name,
-        )
-
-        try:
-            # Get legacy vectors
-            legacy_data = self._catalog.get_legacy_vectors(self._legacy_vec_table)
-            if not legacy_data:
-                _logger.warning("No vectors found in legacy table")
-                self._catalog.drop_legacy_vec_table(self._legacy_vec_table)
-                return
-
-            # Deserialize and add to usearch
-            keys = []
-            vectors = []
-            for rowid, blob in legacy_data:
-                vec = np.frombuffer(blob, dtype=np.float32)
-                keys.append(rowid)
-                vectors.append(vec)
-
-            keys_arr = np.array(keys, dtype=np.uint64)
-            vectors_arr = np.array(vectors, dtype=np.float32)
-
-            self._index.add(keys_arr, vectors_arr)
-            self._index.save()
-
-            # Drop legacy table
-            self._catalog.drop_legacy_vec_table(self._legacy_vec_table)
-
-            _logger.info(
-                "Migration complete: %d vectors migrated to usearch", len(keys)
-            )
-
-        except Exception as e:
-            _logger.error("Migration failed: %s", e)
-            raise RuntimeError(
-                f"Failed to migrate from sqlite-vec: {e}. "
-                "You may need to manually migrate or restore from backup."
-            ) from e
 
     def add_texts(
         self,
@@ -437,7 +396,9 @@ class VectorCollection:
             )
 
             # Add to usearch index
-            self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
+            self._index.add(
+                np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads
+            )
 
             all_ids.extend(doc_ids)
 
@@ -605,9 +566,7 @@ class VectorCollection:
                 "Internal error: streaming batch reached persistence with "
                 "unresolved auto-embedding placeholders."
             )
-        embeds_resolved: list[Sequence[float]] = [
-            e for e in embeds if e is not None
-        ]
+        embeds_resolved: list[Sequence[float]] = [e for e in embeds if e is not None]
 
         # Validate vectors before any persistence — see add_texts for rationale.
         emb_np = np.asarray(embeds_resolved, dtype=np.float32)
@@ -891,7 +850,9 @@ class VectorCollection:
         # is reentrant; CatalogManager read methods reacquire it but that
         # is harmless under RLock.
         with self._lock:
-            return self._rebuild_index_locked(connectivity, expansion_add, expansion_search)
+            return self._rebuild_index_locked(
+                connectivity, expansion_add, expansion_search
+            )
 
     def _rebuild_index_locked(
         self,
@@ -956,9 +917,15 @@ class VectorCollection:
             ndim=ndim,
             distance_strategy=self.distance_strategy,
             quantization=self.quantization,
-            connectivity=connectivity if connectivity is not None else constants.USEARCH_DEFAULT_CONNECTIVITY,
-            expansion_add=expansion_add if expansion_add is not None else constants.USEARCH_DEFAULT_EXPANSION_ADD,
-            expansion_search=expansion_search if expansion_search is not None else constants.USEARCH_DEFAULT_EXPANSION_SEARCH,
+            connectivity=connectivity
+            if connectivity is not None
+            else constants.USEARCH_DEFAULT_CONNECTIVITY,
+            expansion_add=expansion_add
+            if expansion_add is not None
+            else constants.USEARCH_DEFAULT_EXPANSION_ADD,
+            expansion_search=expansion_search
+            if expansion_search is not None
+            else constants.USEARCH_DEFAULT_EXPANSION_SEARCH,
         )
         new_index.add(keys, vectors)
         new_index.save()
@@ -1488,6 +1455,135 @@ class VectorCollection:
         """
         return self._catalog.update_metadata_batch(updates)
 
+    def update_embedding(
+        self,
+        doc_id: int,
+        vector: Sequence[float] | "np.ndarray",
+        *,
+        source: str | None = None,
+    ) -> None:
+        """Buffer a native vector update without HNSW remove+re-add (gap 1).
+
+        Writes the new vector to the per-collection pending buffer in a
+        single SQL transaction. The HNSW index is **not** modified until
+        `pending.flush()` runs (manually or via threshold-driven flush
+        during normal writes), so this method is cheap regardless of how
+        many edits a single doc receives between flushes.
+
+        Until flush, similarity searches still rank the doc using its
+        previous vector — by design. Use `pending.flush()` to promote
+        buffered vectors when their effect on retrieval matters.
+
+        Args:
+            doc_id: Existing document id.
+            vector: Float vector with the same dim as the index.
+            source: Optional free-form tag stored alongside the buffered
+                vector (useful for tracing which subsystem queued it).
+
+        Raises:
+            ValueError: If vector dimension differs from the index dim.
+        """
+        arr = np.asarray(vector, dtype=np.float32)
+        if arr.ndim != 1:
+            raise ValueError(
+                f"update_embedding expects a 1-D vector, got shape {arr.shape}"
+            )
+        if self._index.ndim is not None and arr.shape[0] != self._index.ndim:
+            raise ValueError(
+                f"Vector dim {arr.shape[0]} != index dim {self._index.ndim}"
+            )
+        # NaN/inf would survive the buffer and corrupt distance math on flush.
+        if not np.all(np.isfinite(arr)):
+            raise ValueError("update_embedding vector must be finite (no NaN/inf)")
+        self._catalog.upsert_pending_vector(doc_id, arr.tobytes(), source)
+
+    @property
+    def pending(self) -> "_PendingNamespace":
+        """Sub-namespace for buffered vector updates (gaps 1 & 6)."""
+        ns = self.__dict__.get("_pending_ns")
+        if ns is None:
+            ns = _PendingNamespace(self)
+            self.__dict__["_pending_ns"] = ns
+        return ns
+
+    def increment_metadata(self, doc_id: int, deltas: dict[str, float | int]) -> int:
+        """Atomically add numeric deltas to metadata counters (gap 4).
+
+        One UPDATE statement applies all deltas via chained json_set, so
+        concurrent writers cannot lose increments — every call is a
+        SQLite-atomic read-modify-write. Missing keys are treated as 0.
+
+        Example:
+            >>> collection.increment_metadata(
+            ...     doc_id, {"retrieval_count": 1, "drift_total": 0.02}
+            ... )
+            1
+
+        Args:
+            doc_id: Target document id.
+            deltas: Map of counter name -> numeric delta (int or float).
+                Keys must be safe identifiers (alphanumeric + underscore,
+                not starting with a digit).
+
+        Returns:
+            1 if the row exists and was updated, 0 otherwise.
+        """
+        return self._catalog.increment_metadata(doc_id, deltas)
+
+    @property
+    def counters(self) -> "_CountersNamespace":
+        """Sub-namespace for atomic counter operations (gap 4)."""
+        ns = self.__dict__.get("_counters_ns")
+        if ns is None:
+            ns = _CountersNamespace(self)
+            self.__dict__["_counters_ns"] = ns
+        return ns
+
+    @property
+    def edges(self) -> "_EdgesNamespace":
+        """Sub-namespace for weighted directed edges (gap 3)."""
+        ns = self.__dict__.get("_edges_ns")
+        if ns is None:
+            ns = _EdgesNamespace(self)
+            self.__dict__["_edges_ns"] = ns
+        return ns
+
+    @property
+    def events(self) -> "_EventsNamespace":
+        """Sub-namespace for the change feed (gap 7)."""
+        ns = self.__dict__.get("_events_ns")
+        if ns is None:
+            ns = _EventsNamespace(self)
+            self.__dict__["_events_ns"] = ns
+        return ns
+
+    @property
+    def ttl(self) -> "_TTLNamespace":
+        """Sub-namespace for TTL/expiry (gap 8)."""
+        ns = self.__dict__.get("_ttl_ns")
+        if ns is None:
+            ns = _TTLNamespace(self)
+            self.__dict__["_ttl_ns"] = ns
+        return ns
+
+    def tx(self) -> "_CollectionTransaction":
+        """Single-collection transaction convenience (gap 2).
+
+        Equivalent to opening a `db.transaction()` at the parent
+        VectorDB, but the context manager yields this collection
+        directly instead of a dict-of-collections proxy.
+        """
+        return _CollectionTransaction(self)
+
+    @property
+    def maintenance(self) -> "_MaintenanceNamespace":
+        """Sub-namespace for periodic rebuild scheduling (gap 9)."""
+        ns = self.__dict__.get("_maint_ns")
+        if ns is None:
+            ns = _MaintenanceNamespace(self)
+            self.__dict__["_maint_ns"] = ns
+        return ns
+
     @property
     def dim(self) -> int | None:
         """Vector dimension (None if no vectors added yet)."""
@@ -1501,6 +1597,721 @@ class VectorCollection:
             f"VectorCollection(name={self.name!r}, dim={self.dim}, "
             f"distance={self.distance_strategy.value})"
         )
+
+
+class _PendingNamespace:
+    """Buffered vector updates exposed as `collection.pending` (gaps 1 & 6).
+
+    The buffer stores new vectors in a SQL table; HNSW only sees them
+    after `flush()` promotes the batch in a single locked operation.
+    Multiple updates to the same doc_id between flushes coalesce
+    (last-write-wins).
+    """
+
+    __slots__ = ("_collection",)
+
+    def __init__(self, collection: "VectorCollection") -> None:
+        self._collection = collection
+
+    def update(
+        self,
+        doc_id: int,
+        vector: Sequence[float] | "np.ndarray",
+        *,
+        source: str | None = None,
+    ) -> None:
+        """Alias for `VectorCollection.update_embedding`."""
+        self._collection.update_embedding(doc_id, vector, source=source)
+
+    def update_many(
+        self,
+        updates: Sequence[tuple[int, Sequence[float]]],
+        *,
+        source: str | None = None,
+    ) -> None:
+        """Buffer many vector updates in one SQL transaction."""
+        if not updates:
+            return
+        ndim = self._collection._index.ndim
+        rows: list[tuple[int, bytes, str | None]] = []
+        for doc_id, vec in updates:
+            arr = np.asarray(vec, dtype=np.float32)
+            if arr.ndim != 1:
+                raise ValueError(
+                    f"update_many: vector for {doc_id} must be 1-D, "
+                    f"got shape {arr.shape}"
+                )
+            if ndim is not None and arr.shape[0] != ndim:
+                raise ValueError(
+                    f"update_many: vector dim {arr.shape[0]} for {doc_id} "
+                    f"!= index dim {ndim}"
+                )
+            rows.append((int(doc_id), arr.tobytes(), source))
+        self._collection._catalog.upsert_pending_vectors_many(rows)
+
+    def blend_toward(
+        self,
+        doc_ids: Sequence[int],
+        centroid: Sequence[float],
+        alpha: float,
+        *,
+        source: str | None = "blend_toward",
+    ) -> int:
+        """Drift each doc's vector toward `centroid` by alpha.
+
+        v' = (1 - alpha) * v + alpha * centroid
+
+        Reads the current vector from the pending buffer first (so
+        repeated blends compose) and falls back to the HNSW index. The
+        blended vector is written back to the buffer; HNSW is untouched
+        until flush.
+
+        Args:
+            doc_ids: Documents to drift.
+            centroid: Target vector (same dim as the index).
+            alpha: Mixing weight in [0, 1]. 0 keeps the original; 1
+                replaces with the centroid entirely.
+            source: Tag stored on the buffered rows.
+
+        Returns:
+            Number of vectors blended and re-buffered.
+        """
+        if not doc_ids:
+            return 0
+        if not 0.0 <= alpha <= 1.0:
+            raise ValueError(f"alpha must be in [0, 1], got {alpha!r}")
+        c = np.asarray(centroid, dtype=np.float32)
+        if c.ndim != 1:
+            raise ValueError(f"centroid must be 1-D, got shape {c.shape}")
+
+        ids_arr = np.asarray(list(doc_ids), dtype=np.uint64)
+        # Pull current vectors: pending wins, fallback to HNSW.
+        cat = self._collection._catalog
+        idx = self._collection._index
+        rows: list[tuple[int, bytes, str | None]] = []
+        # Bulk fetch from HNSW once; fall through to per-id pending overlay.
+        idx_vecs = idx.get(ids_arr)
+        for i, doc_id in enumerate(doc_ids):
+            pending = cat.get_pending_vector(int(doc_id))
+            if pending is not None:
+                v = np.frombuffer(pending, dtype=np.float32)
+            else:
+                v = np.asarray(idx_vecs[i], dtype=np.float32)
+            if v.shape[0] != c.shape[0]:
+                raise ValueError(
+                    f"blend_toward: vector dim {v.shape[0]} for {doc_id} "
+                    f"!= centroid dim {c.shape[0]}"
+                )
+            blended = ((1.0 - alpha) * v + alpha * c).astype(np.float32)
+            rows.append((int(doc_id), blended.tobytes(), source))
+        cat.upsert_pending_vectors_many(rows)
+        return len(rows)
+
+    def size(self) -> int:
+        """Number of buffered vector updates not yet flushed."""
+        return self._collection._catalog.count_pending_vectors()
+
+    def flush(self, *, max_batch: int | None = None) -> int:
+        """Promote buffered vectors to the HNSW index.
+
+        Reads up to `max_batch` rows in enqueue order, calls
+        `UsearchIndex.add()` (which already does remove+add atomically
+        under a single lock), then deletes the flushed pending rows in
+        the same SQL transaction. Returns the count flushed.
+        """
+        cat = self._collection._catalog
+        idx = self._collection._index
+        rows = cat.list_pending_vectors(limit=max_batch)
+        if not rows:
+            return 0
+        ids = np.asarray([r[0] for r in rows], dtype=np.uint64)
+        # Reconstruct float32 matrix from BLOBs.
+        ndim = idx.ndim
+        if ndim is None:
+            # Empty index — infer from first row.
+            ndim = len(np.frombuffer(rows[0][1], dtype=np.float32))
+        mat = (
+            np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float32)
+            .reshape(len(rows), ndim)
+            .copy()
+        )
+        # add() takes the write lock and does remove+add per existing key.
+        idx.add(ids, mat)
+        cat.delete_pending_vectors([int(i) for i in ids])
+        # Track flush count for the rebuild scheduler.
+        try:
+            self._collection.maintenance.record_flush(len(rows))
+        except Exception:
+            _logger.debug("flush counter record failed", exc_info=True)
+        return len(rows)
+
+
+class _TTLNamespace:
+    """Sub-namespace exposed as `collection.ttl` (gap 8).
+
+    Stores per-doc expiry timestamps. `sweep()` is the explicit cleanup
+    pass; `start_background()` launches an opt-in daemon thread that
+    calls `sweep()` on a fixed cadence. The thread is off by default —
+    nothing wakes up unless the caller asks.
+    """
+
+    __slots__ = ("_collection", "_thread", "_stop_event")
+
+    def __init__(self, collection: "VectorCollection") -> None:
+        self._collection = collection
+        self._thread: threading.Thread | None = None
+        self._stop_event: threading.Event | None = None
+
+    def set(
+        self,
+        doc_id: int,
+        expires_at: float | None = None,
+        *,
+        seconds: float | None = None,
+        on_expire: str = "delete",
+    ) -> int:
+        """Set a TTL by absolute timestamp or relative seconds.
+
+        Either pass `expires_at` (unix seconds) or `seconds`
+        (relative to now). Both is an error.
+        """
+        if expires_at is None and seconds is None:
+            raise ValueError("Must pass expires_at or seconds")
+        if expires_at is not None and seconds is not None:
+            raise ValueError("Pass exactly one of expires_at / seconds")
+        if on_expire not in ("delete", "callback"):
+            raise ValueError(
+                f"on_expire must be 'delete' or 'callback', got {on_expire!r}"
+            )
+        if seconds is not None:
+            secs = float(seconds)
+            if not math.isfinite(secs):
+                raise ValueError(f"ttl.set seconds must be finite, got {seconds!r}")
+            resolved = time.time() + secs
+        else:
+            assert expires_at is not None  # narrowed by guards above
+            resolved = float(expires_at)
+            if not math.isfinite(resolved):
+                raise ValueError(f"ttl.set expires_at must be finite, got {resolved!r}")
+        return self._collection._catalog.set_ttl(
+            doc_id,
+            resolved,
+            on_expire=on_expire,
+        )
+
+    def clear(self, doc_id: int) -> int:
+        """Remove a TTL entry. Returns 1 if removed, 0 otherwise."""
+        return self._collection._catalog.clear_ttl(doc_id)
+
+    def sweep(
+        self,
+        *,
+        now: float | None = None,
+        limit: int = 1000,
+    ) -> tuple[list[int], list[int]]:
+        """Apply expired entries; returns (deleted_ids, callback_ids).
+
+        Also removes the doc from the in-memory HNSW index when an
+        entry is deleted. Callers handling on_expire='callback' rows
+        are responsible for any further action on those ids.
+        """
+        deleted, callback_ids = self._collection._catalog.sweep_ttl(
+            now=now, limit=limit
+        )
+        if deleted:
+            try:
+                self._collection._index.remove(deleted)
+            except Exception:
+                # Catalog rows are already gone; index drift means
+                # subsequent searches may surface phantom hits until a
+                # rebuild_index() runs. Log loud enough to be noticed.
+                _logger.warning(
+                    "ttl.sweep: catalog deleted %d ids but HNSW remove "
+                    "failed; index is now divergent — call "
+                    "rebuild_index() to resync",
+                    len(deleted),
+                    exc_info=True,
+                )
+        return deleted, callback_ids
+
+    def start_background(
+        self,
+        *,
+        interval: float = constants.TTL_SWEEP_DEFAULT_INTERVAL_S,
+    ) -> None:
+        """Launch a daemon thread that calls sweep() every `interval`s.
+
+        Idempotent: a second call is a no-op. The thread runs until
+        `stop_background()` is called or the process exits.
+        """
+        interval_f = float(interval)
+        if not math.isfinite(interval_f) or interval_f <= 0:
+            raise ValueError(
+                f"ttl.start_background interval must be a positive finite "
+                f"number, got {interval!r}"
+            )
+        if self._thread is not None and self._thread.is_alive():
+            return
+        stop_event = threading.Event()
+        coll = self._collection
+
+        def _loop() -> None:
+            while not stop_event.is_set():
+                try:
+                    self.sweep()
+                except Exception:
+                    _logger.warning(
+                        "ttl background sweep failed for collection %s",
+                        coll.name,
+                        exc_info=True,
+                    )
+                stop_event.wait(interval_f)
+
+        thread = threading.Thread(
+            target=_loop,
+            name=f"simplevecdb-ttl-{coll.name}",
+            daemon=True,
+        )
+        self._stop_event = stop_event
+        self._thread = thread
+        thread.start()
+
+    def stop_background(self) -> None:
+        """Stop the background sweeper. Idempotent.
+
+        Waits up to 5s for the loop to observe the stop event. If the
+        thread is still alive after the timeout (e.g. blocked in a
+        long-running sweep), `_thread` is left in place so a subsequent
+        start_background() does not spawn a duplicate sweeper.
+        """
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=5.0)
+            if self._thread.is_alive():
+                _logger.warning(
+                    "ttl.stop_background: sweeper for %s did not exit "
+                    "within 5s; leaving handle in place to prevent "
+                    "duplicate threads on next start_background()",
+                    self._collection.name,
+                )
+                return
+        self._thread = None
+        self._stop_event = None
+
+
+class _EventsNamespace:
+    """Append-only change feed exposed as `collection.events` (gap 7).
+
+    Backed by the per-collection `_events` SQL table. SQLite WAL mode
+    (already enabled at connection open) lets cross-process readers see
+    committed rows immediately, so multi-process subscribers work
+    without an external bus.
+    """
+
+    __slots__ = ("_collection",)
+
+    def __init__(self, collection: "VectorCollection") -> None:
+        self._collection = collection
+
+    def append(
+        self,
+        kind: str,
+        *,
+        doc_id: int | None = None,
+        payload: dict | None = None,
+    ) -> int:
+        """Append an event (caller-driven). Returns the assigned seq."""
+        return self._collection._catalog.append_event(
+            kind, doc_id=doc_id, payload=payload
+        )
+
+    def last_seq(self) -> int:
+        """Highest seq currently in the feed (0 if empty)."""
+        return self._collection._catalog.last_event_seq()
+
+    def read(
+        self,
+        *,
+        since: int = 0,
+        kind: str | None = None,
+        limit: int | None = None,
+    ) -> list["Event"]:
+        """Read events with seq > since."""
+        rows = self._collection._catalog.read_events(
+            since=since, kind=kind, limit=limit
+        )
+
+        return [
+            Event(seq=r[0], ts=r[1], kind=r[2], doc_id=r[3], payload=r[4]) for r in rows
+        ]
+
+    def subscribe(
+        self,
+        *,
+        since: int = 0,
+        kind: str | None = None,
+        poll_interval: float = constants.EVENTS_POLL_INTERVAL_S,
+        batch: int = 500,
+    ) -> "Iterator[Event]":
+        """Generator yielding events as they appear. Caller controls exit.
+
+        Uses simple polling on a background-friendly cadence; WAL mode
+        means cross-process commits become visible to this reader on
+        the next iteration without explicit synchronization.
+        """
+        last = int(since)
+        while True:
+            events = self.read(since=last, kind=kind, limit=batch)
+            if events:
+                for e in events:
+                    yield e
+                last = events[-1].seq
+                if len(events) == batch:
+                    # Drained a full batch; loop again immediately to keep up.
+                    continue
+            time.sleep(poll_interval)
+
+    def prune(self, *, before_seq: int) -> int:
+        """Drop events with seq < before_seq."""
+        return self._collection._catalog.prune_events(before_seq=before_seq)
+
+
+class _MaintenanceNamespace:
+    """Threshold-driven rebuild scheduler (gap 9).
+
+    Wraps `VectorCollection.rebuild_index()` with a heuristic gate so
+    callers can opportunistically rebuild without rolling their own
+    bookkeeping. The triggers compose with OR — any one being true
+    fires a rebuild.
+
+    Triggers (overridable per call):
+      * max_pending  — total pending flushes since last rebuild
+      * max_deleted  — tombstones in usearch (size mismatch with catalog)
+      * max_age_s    — wall-clock seconds since last rebuild
+    """
+
+    __slots__ = ("_collection", "_pending_flushes", "_last_rebuild_ts")
+
+    def __init__(self, collection: "VectorCollection") -> None:
+        self._collection = collection
+        self._pending_flushes = 0
+        self._last_rebuild_ts = time.time()
+
+    def record_flush(self, count: int = 1) -> None:
+        """Bump the pending-flush counter (called by pending.flush())."""
+        self._pending_flushes += int(count)
+
+    def suggest_rebuild(
+        self,
+        *,
+        max_pending: int = constants.REBUILD_PENDING_THRESHOLD,
+        max_deleted: int = constants.REBUILD_TOMBSTONE_THRESHOLD,
+        max_age_s: float = constants.REBUILD_MIN_INTERVAL_S,
+    ) -> tuple[bool, str | None]:
+        """Return (should_rebuild, reason)."""
+        if self._pending_flushes >= max_pending:
+            return True, f"pending_flushes={self._pending_flushes}"
+        # Tombstones: usearch reports deletions as size shrinkage but
+        # the index file may still be larger; approximate as
+        # catalog_count vs index.size disagreement scaled by deletions.
+        try:
+            cat_count = self._collection._catalog.count()
+            idx_size = self._collection._index.size
+            tombstones = max(0, idx_size - cat_count)
+            if tombstones >= max_deleted:
+                return True, f"tombstones={tombstones}"
+        except Exception:
+            pass
+        age = time.time() - self._last_rebuild_ts
+        if age >= max_age_s and self._pending_flushes > 0:
+            return True, f"age_s={age:.0f}"
+        return False, None
+
+    def rebuild_if_needed(
+        self,
+        *,
+        max_pending: int = constants.REBUILD_PENDING_THRESHOLD,
+        max_deleted: int = constants.REBUILD_TOMBSTONE_THRESHOLD,
+        max_age_s: float = constants.REBUILD_MIN_INTERVAL_S,
+    ) -> bool:
+        """Run rebuild_index() iff a trigger fired. Returns True if it ran."""
+        should, reason = self.suggest_rebuild(
+            max_pending=max_pending,
+            max_deleted=max_deleted,
+            max_age_s=max_age_s,
+        )
+        if not should:
+            return False
+        _logger.info(
+            "Rebuilding %s index (reason=%s)",
+            self._collection.name,
+            reason,
+        )
+        self._collection.rebuild_index()
+        self._pending_flushes = 0
+        self._last_rebuild_ts = time.time()
+        try:
+            self._collection.events.append("rebuild", payload={"reason": reason})
+        except Exception:
+            _logger.debug("rebuild event append failed", exc_info=True)
+        return True
+
+
+class _DBTransaction:
+    """Context manager backing `VectorDB.transaction()` (gap 2).
+
+    Acquires the DB-level RLock, opens a SAVEPOINT, and increments the
+    shared transaction-depth counter so every catalog method this DB
+    owns skips its per-call commit. On success the SAVEPOINT is
+    released; on exception it's rolled back and the depth is reset.
+
+    Yields a mapping-like object so callers can do
+    `tx["collection_name"]` to operate on individual collections.
+    """
+
+    __slots__ = ("_db", "_savepoint_name", "_entered")
+
+    def __init__(self, db: "VectorDB") -> None:
+        self._db = db
+        self._savepoint_name: str | None = None
+        self._entered = False
+
+    def __enter__(self) -> "_DBTransaction":
+        self._db._lock.acquire()
+        try:
+            depth = self._db._tx_state.depth
+            name = f"simplevecdb_tx_{depth + 1}"
+            self._db.conn.execute(f"SAVEPOINT {name}")
+            self._db._tx_state.depth = depth + 1
+            self._savepoint_name = name
+            self._entered = True
+        except Exception:
+            self._db._lock.release()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            name = self._savepoint_name
+            assert name is not None
+            try:
+                if exc_type is None:
+                    self._db.conn.execute(f"RELEASE SAVEPOINT {name}")
+                else:
+                    self._db.conn.execute(f"ROLLBACK TO SAVEPOINT {name}")
+                    self._db.conn.execute(f"RELEASE SAVEPOINT {name}")
+            finally:
+                self._db._tx_state.depth = max(0, self._db._tx_state.depth - 1)
+                # Outermost commit: if depth fell to 0, finalize the
+                # implicit Python sqlite3 transaction so changes flush.
+                if self._db._tx_state.depth == 0 and exc_type is None:
+                    try:
+                        self._db.conn.commit()
+                    except Exception:
+                        _logger.error("outer transaction commit failed", exc_info=True)
+                        raise
+        finally:
+            self._db._lock.release()
+
+    def __getitem__(self, name: str) -> "VectorCollection":
+        return self._db.collection(name)
+
+    def collection(self, name: str) -> "VectorCollection":
+        return self._db.collection(name)
+
+
+class _CollectionTransaction(_DBTransaction):
+    """Single-collection wrapper that yields the collection directly."""
+
+    __slots__ = ("_collection",)
+
+    def __init__(self, collection: "VectorCollection") -> None:
+        self._collection = collection
+        # Reuse the shared tx_state and lock from the collection.
+        # _DBTransaction expects ._db; we create a shim.
+        super().__init__(_CollectionTxShim(collection))  # type: ignore[arg-type]
+
+    def __enter__(self) -> "VectorCollection":  # type: ignore[override]
+        super().__enter__()
+        return self._collection
+
+
+class _CollectionTxShim:
+    """Minimal proxy emulating the VectorDB attributes _DBTransaction reads."""
+
+    __slots__ = ("_lock", "_tx_state", "conn")
+
+    def __init__(self, collection: "VectorCollection") -> None:
+        self._lock = collection._lock
+        self._tx_state = collection._tx_state
+        self.conn = collection.conn
+
+
+class _EdgesNamespace:
+    """Sub-namespace exposed as `collection.edges` (gap 3).
+
+    Provides the four canonical primitives — `add_edge`, `get_edges`,
+    `update_edge`, `delete_edge` — plus `upsert` and `prune` convenience.
+    Numeric attributes (weight, bonus, hits, last_touch) are real
+    columns and are addressable through the range-filter grammar
+    (`filter={"weight": {"$lt": 0.1}}`).
+    """
+
+    __slots__ = ("_collection",)
+
+    def __init__(self, collection: "VectorCollection") -> None:
+        self._collection = collection
+
+    def add_edge(
+        self,
+        src_id: int,
+        dst_id: int,
+        *,
+        kind: str = "",
+        weight: float = 0.0,
+        bonus: float = 0.0,
+        hits: int = 0,
+        metadata: dict | None = None,
+    ) -> int:
+        """Insert a new edge. Use upsert() if collisions are expected."""
+        return self._collection._catalog.add_edge(
+            src_id,
+            dst_id,
+            kind=kind,
+            weight=weight,
+            bonus=bonus,
+            hits=hits,
+            metadata=metadata,
+        )
+
+    def upsert(
+        self,
+        src_id: int,
+        dst_id: int,
+        *,
+        kind: str = "",
+        weight: float | None = None,
+        bonus: float | None = None,
+        hits: int | None = None,
+        metadata: dict | None = None,
+    ) -> int:
+        """Create-or-update; preserves existing fields where args are None."""
+        return self._collection._catalog.upsert_edge(
+            src_id,
+            dst_id,
+            kind=kind,
+            weight=weight,
+            bonus=bonus,
+            hits=hits,
+            metadata=metadata,
+        )
+
+    def update_edge(
+        self,
+        src_id: int,
+        dst_id: int,
+        *,
+        kind: str = "",
+        weight: float | None = None,
+        bonus: float | None = None,
+        hits: int | None = None,
+        metadata: dict | None = None,
+        dweight: float = 0.0,
+        dbonus: float = 0.0,
+        dhits: int = 0,
+    ) -> int:
+        """Set absolutes and/or apply atomic deltas. See catalog.update_edge."""
+        return self._collection._catalog.update_edge(
+            src_id,
+            dst_id,
+            kind=kind,
+            weight=weight,
+            bonus=bonus,
+            hits=hits,
+            metadata=metadata,
+            dweight=dweight,
+            dbonus=dbonus,
+            dhits=dhits,
+        )
+
+    def delete_edge(self, src_id: int, dst_id: int, *, kind: str = "") -> int:
+        """Drop a single edge by (src, dst, kind)."""
+        return self._collection._catalog.delete_edge(src_id, dst_id, kind=kind)
+
+    def get_edges(
+        self,
+        src: int | None = None,
+        dst: int | None = None,
+        *,
+        kind: str | None = None,
+        filter: dict | None = None,
+        limit: int | None = None,
+    ) -> list["Edge"]:
+        """Read edges. `src`/`dst` constrain to outgoing/incoming/specific.
+
+        `filter` accepts the same grammar as similarity_search; numeric
+        keys (weight/bonus/hits/last_touch) map to direct column
+        comparisons, anything else queries the JSON metadata column.
+        """
+        rows = self._collection._catalog.get_edges(
+            src_id=src,
+            dst_id=dst,
+            kind=kind,
+            filter=filter,
+            limit=limit,
+        )
+
+        return [
+            Edge(
+                src_id=r[0],
+                dst_id=r[1],
+                kind=r[2],
+                weight=r[3],
+                hits=r[4],
+                bonus=r[5],
+                last_touch=r[6],
+                metadata=r[7],
+            )
+            for r in rows
+        ]
+
+    def prune(
+        self,
+        *,
+        kind: str | None = None,
+        max_weight: float | None = None,
+        idle_before: float | None = None,
+    ) -> int:
+        """Bulk-delete edges by weight ceiling and/or age cutoff."""
+        return self._collection._catalog.prune_edges(
+            kind=kind,
+            max_weight=max_weight,
+            idle_before=idle_before,
+        )
+
+
+class _CountersNamespace:
+    """Sub-namespace exposed as `collection.counters` (gap 4)."""
+
+    __slots__ = ("_collection",)
+
+    def __init__(self, collection: "VectorCollection") -> None:
+        self._collection = collection
+
+    def increment(self, doc_id: int, deltas: dict[str, float | int]) -> int:
+        """Alias for `VectorCollection.increment_metadata`."""
+        return self._collection._catalog.increment_metadata(doc_id, deltas)
+
+    def increment_many(self, updates: list[tuple[int, dict[str, float | int]]]) -> int:
+        """Apply many counter increments in one transaction."""
+        return self._collection._catalog.increment_metadata_many(updates)
+
+    def get(
+        self, doc_id: int, key: str, default: float | int = 0
+    ) -> float | int | None:
+        """Read a single numeric counter value (None if row missing)."""
+        return self._collection._catalog.get_metadata_counter(doc_id, key, default)
 
 
 class VectorDB:
@@ -1523,11 +2334,12 @@ class VectorDB:
     def __init__(
         self,
         path: str | Path = ":memory:",
-        distance_strategy: DistanceStrategy = DistanceStrategy(constants.DEFAULT_DISTANCE_STRATEGY),
+        distance_strategy: DistanceStrategy = DistanceStrategy(
+            constants.DEFAULT_DISTANCE_STRATEGY
+        ),
         quantization: Quantization = Quantization(constants.DEFAULT_QUANTIZATION),
         *,
         encryption_key: str | bytes | None = None,
-        auto_migrate: bool = False,
     ):
         """Initialize the vector database.
 
@@ -1537,13 +2349,8 @@ class VectorDB:
             quantization: Default vector compression strategy.
             encryption_key: Optional passphrase or 32-byte key for at-rest encryption.
                 Encrypts both SQLite (via SQLCipher) and usearch index files (via AES-256-GCM).
-            auto_migrate: If True, automatically migrate v1.x sqlite-vec data
-                to usearch. If False (default), raise MigrationRequiredError
-                when legacy data is detected. Use check_migration() to preview.
 
         Raises:
-            MigrationRequiredError: If auto_migrate=False and legacy sqlite-vec
-                data is detected. Contains details about what needs migration.
             EncryptionUnavailableError: If encryption_key provided but encryption
                 dependencies are missing.
             EncryptionError: If encrypted database cannot be opened (wrong key).
@@ -1552,7 +2359,6 @@ class VectorDB:
         self.path = str(path)
         self.distance_strategy = distance_strategy
         self.quantization = quantization
-        self.auto_migrate = auto_migrate
         self._encryption_key = encryption_key
         self._collections: dict[tuple, VectorCollection] = {}
         # Single RLock serializing both the _collections cache (avoid
@@ -1560,6 +2366,9 @@ class VectorDB:
         # Python-level transaction context. Shared with every VectorCollection
         # and CatalogManager constructed by this VectorDB.
         self._lock = threading.RLock()
+        # Shared transaction-depth counter. Bumped by VectorDB.transaction()
+        # so all catalogs in this DB suspend per-call commits.
+        self._tx_state: _TxState = _TxState()
 
         # Create connection (encrypted or plain)
         if encryption_key is not None:
@@ -1576,6 +2385,11 @@ class VectorDB:
             )
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA synchronous=NORMAL")
+            # Native lock-wait window so SQLite blocks the caller in C
+            # rather than surfacing 'database is locked' immediately
+            # under multi-writer load (gap 10).
+            self.conn.execute(f"PRAGMA busy_timeout={constants.SQLITE_BUSY_TIMEOUT_MS}")
+            self.conn.execute("PRAGMA foreign_keys=ON")
             self._encrypted = True
             _logger.info("Opened encrypted database: %s", self.path)
         else:
@@ -1584,6 +2398,8 @@ class VectorDB:
             )
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA synchronous=NORMAL")
+            self.conn.execute(f"PRAGMA busy_timeout={constants.SQLITE_BUSY_TIMEOUT_MS}")
+            self.conn.execute("PRAGMA foreign_keys=ON")
             self._encrypted = False
 
         # Verify connection is healthy
@@ -1593,17 +2409,29 @@ class VectorDB:
             self.conn.close()
             raise RuntimeError(f"Database health check failed: {e}") from e
 
-        # Check for required migration before allowing collection access
-        if not auto_migrate and self.path != ":memory:":
-            migration_info = VectorDB.check_migration(self.path)
-            if migration_info["needs_migration"]:
-                self.conn.close()
-                raise MigrationRequiredError(
-                    path=self.path,
-                    collections=migration_info["collections"],
-                    total_vectors=migration_info["total_vectors"],
-                    migration_info=migration_info,
-                )
+    def transaction(self) -> "_DBTransaction":
+        """Atomic write context spanning all collections (gap 2).
+
+        Wraps the work in a single SQLite SAVEPOINT and bumps the shared
+        transaction-depth counter so every catalog method skips its
+        per-call commit. SQL-side mutations (metadata, counters, edges,
+        events, TTL, and `update_embedding`'s pending-vector overlay) are
+        atomic: a raised exception triggers ROLLBACK TO SAVEPOINT and all
+        SQL writes are reverted.
+
+        The HNSW index is not rolled back. Coarse vector mutations
+        (`add_texts`, `delete`, etc.) call into usearch directly and
+        their effects persist even if the surrounding SAVEPOINT rolls
+        back. Use `update_embedding` + `pending.flush()` for vector
+        changes whose visibility you want gated on commit.
+
+        Example:
+            >>> with db.transaction() as tx:
+            ...     tx["docs"].update_embedding(id, vec)
+            ...     tx["docs"].increment_metadata(id, {"hits": 1})
+            ...     tx["docs"].edges.add_edge(src, dst, weight=0.7)
+        """
+        return _DBTransaction(self)
 
     def list_collections(self) -> list[str]:
         """
@@ -1643,14 +2471,23 @@ class VectorDB:
                 all_suffixes.add(table_name[6:])
 
         # A suffix is a real collection if no other suffix is a prefix of it
-        # followed by _fts* or _clusters.
-        _fts_suffixes = ("_fts", "_fts_data", "_fts_idx", "_fts_content",
-                         "_fts_docsize", "_fts_config")
+        # followed by an auxiliary suffix. 2.6.1 added _pending_vectors,
+        # _edges, _events, _ttl alongside the existing FTS / cluster ones.
+        _fts_suffixes = (
+            "_fts",
+            "_fts_data",
+            "_fts_idx",
+            "_fts_content",
+            "_fts_docsize",
+            "_fts_config",
+        )
+        _aux_suffixes = ("_clusters", "_pending_vectors", "_edges", "_events", "_ttl")
         derivative_suffixes: set[str] = set()
         for s in all_suffixes:
             for fts in _fts_suffixes:
                 derivative_suffixes.add(f"{s}{fts}")
-            derivative_suffixes.add(f"{s}_clusters")
+            for aux in _aux_suffixes:
+                derivative_suffixes.add(f"{s}{aux}")
 
         names: list[str] = []
         if has_default:
@@ -1681,6 +2518,10 @@ class VectorDB:
         table_name = "tinyvec_items" if name == "default" else f"items_{name}"
         fts_table = f"{table_name}_fts"
         cluster_table = f"{table_name}_clusters"
+        pending_table = f"{table_name}_pending_vectors"
+        edges_table = f"{table_name}_edges"
+        events_table = f"{table_name}_events"
+        ttl_table = f"{table_name}_ttl"
 
         # Hold the lock for the full delete: drop tables, remove files, and
         # evict cached collections atomically. The existence check runs
@@ -1707,10 +2548,17 @@ class VectorDB:
                             exc_info=True,
                         )
 
-            # Drop SQLite tables
+            # Drop SQLite tables. Auxiliary tables (gap 2.6.1) reference
+            # the main table via FK ON DELETE CASCADE, so dropping the
+            # main table cleans the children too — but DROP TABLE doesn't
+            # cascade in SQLite, so drop them explicitly first.
             with self.conn:
                 self.conn.execute(f"DROP TABLE IF EXISTS {fts_table}")
                 self.conn.execute(f"DROP TABLE IF EXISTS {cluster_table}")
+                self.conn.execute(f"DROP TABLE IF EXISTS {pending_table}")
+                self.conn.execute(f"DROP TABLE IF EXISTS {edges_table}")
+                self.conn.execute(f"DROP TABLE IF EXISTS {events_table}")
+                self.conn.execute(f"DROP TABLE IF EXISTS {ttl_table}")
                 self.conn.execute(f"DROP TABLE IF EXISTS {table_name}")
 
             # Delete usearch index file (and encrypted variant if present),
@@ -1727,7 +2575,8 @@ class VectorDB:
                         pass
                     except OSError:
                         _logger.debug(
-                            "Could not unlink %s during delete_collection", p,
+                            "Could not unlink %s during delete_collection",
+                            p,
                             exc_info=True,
                         )
 
@@ -1831,7 +2680,10 @@ class VectorDB:
         # Execute searches
         all_results: list[tuple[Document, float, str]] = []
         if parallel and len(targets) > 1:
-            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+            from concurrent.futures import (
+                ThreadPoolExecutor,
+                TimeoutError as FuturesTimeoutError,
+            )
 
             with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as executor:
                 futures = [executor.submit(_search_one, coll) for coll in targets]
@@ -1907,6 +2759,7 @@ class VectorDB:
                     encryption_key=self._encryption_key,
                     store_embeddings=store_embeddings,
                     lock=self._lock,
+                    tx_state=self._tx_state,
                 )
             return self._collections[cache_key]
 
@@ -1928,152 +2781,6 @@ class VectorDB:
         from .integrations.llamaindex import SimpleVecDBLlamaStore
 
         return SimpleVecDBLlamaStore(db_path=self.path, collection_name=collection_name)
-
-    # ------------------------------------------------------------------ #
-    # Convenience
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def check_migration(path: str | Path) -> dict[str, Any]:
-        """
-        Check if a database needs migration from sqlite-vec (dry-run).
-
-        Use this before opening a v1.x database to understand what will
-        be migrated. Does not modify the database.
-
-        Args:
-            path: Path to the SQLite database file
-
-        Returns:
-            Dict with migration info:
-            - needs_migration: bool
-            - collections: list of collection names with legacy data
-            - total_vectors: estimated total vector count
-            - estimated_size_mb: approximate usearch index size
-            - rollback_notes: instructions for reverting if needed
-
-        Example:
-            >>> info = VectorDB.check_migration("mydb.db")
-            >>> if info["needs_migration"]:
-            ...     print(f"Will migrate {info['total_vectors']} vectors")
-            ...     print(info["rollback_notes"])
-        """
-        path = str(path)
-        if path == ":memory:" or not Path(path).exists():
-            return {
-                "needs_migration": False,
-                "collections": [],
-                "total_vectors": 0,
-                "estimated_size_mb": 0.0,
-                "rollback_notes": "",
-            }
-
-        try:
-            conn = sqlite3.connect(path, check_same_thread=False)
-        except sqlite3.DatabaseError:
-            # Database may be encrypted or corrupted - cannot check migration
-            return {
-                "needs_migration": False,
-                "collections": [],
-                "total_vectors": 0,
-                "estimated_size_mb": 0.0,
-                "rollback_notes": "",
-            }
-
-        try:
-            # Check for legacy sqlite-vec tables
-            tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        except sqlite3.DatabaseError:
-            # Database is encrypted or corrupted - cannot check migration
-            conn.close()
-            return {
-                "needs_migration": False,
-                "collections": [],
-                "total_vectors": 0,
-                "estimated_size_mb": 0.0,
-                "rollback_notes": "",
-            }
-
-        try:
-            table_names = {t[0] for t in tables}
-
-            legacy_collections = []
-            total_vectors = 0
-            total_bytes = 0
-
-            # Check default collection
-            if "vec_index" in table_names:
-                try:
-                    count = conn.execute("SELECT COUNT(*) FROM vec_index").fetchone()[0]
-                    if count > 0:
-                        legacy_collections.append("default")
-                        total_vectors += count
-                        # Estimate: rowid(8) + embedding blob
-                        row = conn.execute(
-                            "SELECT embedding FROM vec_index LIMIT 1"
-                        ).fetchone()
-                        if row and row[0]:
-                            dim = len(row[0]) // 4
-                            total_bytes += count * dim * 4  # float32
-                except Exception:
-                    pass
-
-            # Check named collections (vectors_{name})
-            for table in table_names:
-                if table.startswith("vectors_") and table != "vec_index":
-                    # Validate table name from sqlite_master (defense-in-depth)
-                    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", table):
-                        continue
-                    collection_name = table[8:]  # Remove "vectors_" prefix
-                    try:
-                        count = conn.execute(
-                            f"SELECT COUNT(*) FROM {table}"
-                        ).fetchone()[0]
-                        if count > 0:
-                            legacy_collections.append(collection_name)
-                            total_vectors += count
-                            row = conn.execute(
-                                f"SELECT embedding FROM {table} LIMIT 1"
-                            ).fetchone()
-                            if row and row[0]:
-                                dim = len(row[0]) // 4
-                                total_bytes += count * dim * 4
-                    except Exception:
-                        pass
-
-            estimated_mb = total_bytes / (1024 * 1024)
-
-            rollback_notes = ""
-            if legacy_collections:
-                rollback_notes = f"""
-MIGRATION ROLLBACK INSTRUCTIONS:
-================================
-1. BEFORE upgrading, backup your database:
-   cp {path} {path}.backup
-
-2. If migration fails or you need to revert:
-   - Delete the new .usearch files: {path}.*.usearch
-   - Restore from backup: cp {path}.backup {path}
-   - Downgrade to simplevecdb<2.0.0
-
-3. After successful migration, the legacy sqlite-vec tables are dropped.
-   Keep your backup until you've verified the migration worked correctly.
-
-4. New storage layout after migration:
-   - {path} (SQLite: metadata, text, FTS, embeddings)
-   - {path}.<collection>.usearch (usearch HNSW index per collection)
-"""
-
-            return {
-                "needs_migration": len(legacy_collections) > 0,
-                "collections": legacy_collections,
-                "total_vectors": total_vectors,
-                "estimated_size_mb": round(estimated_mb, 2),
-                "rollback_notes": rollback_notes.strip(),
-            }
-        finally:
-            conn.close()
 
     def vacuum(self, checkpoint_wal: bool = True) -> None:
         """
@@ -2115,8 +2822,11 @@ MIGRATION ROLLBACK INSTRUCTIONS:
             for col in self._collections.values():
                 ephemeral = getattr(col, "_ephemeral_index_path", None)
                 if ephemeral:
-                    for p in (Path(ephemeral), Path(ephemeral + ".tmp"),
-                              Path(ephemeral + ".lock")):
+                    for p in (
+                        Path(ephemeral),
+                        Path(ephemeral + ".tmp"),
+                        Path(ephemeral + ".lock"),
+                    ):
                         try:
                             p.unlink()
                         except FileNotFoundError:

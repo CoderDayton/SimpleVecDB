@@ -53,41 +53,6 @@ class Quantization(StrEnum):
     BIT = "bit"
 
 
-class MigrationRequiredError(Exception):
-    """Raised when a v1.x database needs migration to v2.0 usearch backend.
-
-    This error is raised when opening a database that contains sqlite-vec
-    data that needs to be migrated to the usearch backend.
-
-    Attributes:
-        path: Path to the database file
-        collections: List of collection names that need migration
-        total_vectors: Total number of vectors to migrate
-        migration_info: Full migration info dict from check_migration()
-    """
-
-    def __init__(
-        self,
-        path: str,
-        collections: list[str],
-        total_vectors: int,
-        migration_info: dict,
-    ):
-        self.path = path
-        self.collections = collections
-        self.total_vectors = total_vectors
-        self.migration_info = migration_info
-
-        msg = (
-            f"Database '{path}' requires migration from sqlite-vec to usearch.\n"
-            f"Collections: {', '.join(collections)} ({total_vectors} vectors total)\n\n"
-            f"To migrate automatically, open with: VectorDB('{path}', auto_migrate=True)\n"
-            f"Or check migration details first: VectorDB.check_migration('{path}')\n\n"
-            f"⚠️  BACKUP YOUR DATABASE BEFORE MIGRATING: cp {path} {path}.backup"
-        )
-        super().__init__(msg)
-
-
 @dataclasses.dataclass
 class ClusterResult:
     """Result of a clustering operation."""
@@ -123,3 +88,63 @@ class ClusterResult:
 
 
 ClusterTagCallback = Callable[[list[str]], str]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Edge:
+    """Weighted directed edge between two documents (gap 3).
+
+    Attributes:
+        src_id: Source document id.
+        dst_id: Destination document id.
+        kind: Optional edge type label (default ""). Same (src, dst, kind)
+            triple is unique; distinct kinds coexist between the same pair.
+        weight: Numeric weight (e.g. similarity, plasticity).
+        bonus: Secondary weight (free for caller — e.g. priority bias).
+        hits: Counter of edge traversals/reinforcements.
+        last_touch: Unix timestamp (seconds) of the most recent write.
+        metadata: Optional extra JSON metadata.
+    """
+
+    src_id: int
+    dst_id: int
+    kind: str = ""
+    weight: float = 0.0
+    bonus: float = 0.0
+    hits: int = 0
+    last_touch: float = 0.0
+    metadata: dict | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Event:
+    """Change-feed entry (gap 7).
+
+    Attributes:
+        seq: Monotonic sequence number assigned by SQLite.
+        ts: Unix timestamp (seconds) at append time.
+        kind: Event kind (insert/update/delete/edge/counter/ttl/flush/...).
+        doc_id: Optional document id this event refers to.
+        payload: Optional JSON-decoded payload dict.
+    """
+
+    seq: int
+    ts: float
+    kind: str
+    doc_id: int | None = None
+    payload: dict | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class TTLEntry:
+    """A pending expiry hook (gap 8).
+
+    Attributes:
+        doc_id: Target document id.
+        expires_at: Unix timestamp (seconds) at which the entry expires.
+        on_expire: Action when the entry expires ("delete" or "callback").
+    """
+
+    doc_id: int
+    expires_at: float
+    on_expire: str = "delete"

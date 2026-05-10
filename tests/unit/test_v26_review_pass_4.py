@@ -107,9 +107,7 @@ class TestLegacyPassphraseDBStillOpens:
     def sqlcipher_module(self):
         return pytest.importorskip("sqlcipher3")
 
-    def test_pre_2_6_passphrase_db_opens_under_2_6(
-        self, tmp_path, sqlcipher_module
-    ):
+    def test_pre_2_6_passphrase_db_opens_under_2_6(self, tmp_path, sqlcipher_module):
         # Step 1: create a SQLCipher DB the pre-2.6 way — passphrase
         # PRAGMA, SQLCipher does its own internal KDF, no sidecar.
         db_path = tmp_path / "legacy.db"
@@ -132,9 +130,7 @@ class TestLegacyPassphraseDBStillOpens:
 
         conn = create_encrypted_connection(db_path, passphrase)
         try:
-            row = conn.execute(
-                "SELECT val FROM secrets WHERE id=1"
-            ).fetchone()
+            row = conn.execute("SELECT val FROM secrets WHERE id=1").fetchone()
             assert row is not None
             assert row[0] == "hello"
         finally:
@@ -148,9 +144,7 @@ class TestLegacyPassphraseDBStillOpens:
             "KDF; a sidecar was incorrectly created."
         )
 
-    def test_post_2_6_db_still_uses_raw_key_path(
-        self, tmp_path, sqlcipher_module
-    ):
+    def test_post_2_6_db_still_uses_raw_key_path(self, tmp_path, sqlcipher_module):
         """Brand-new DBs written under 2.6+ must use the new raw-key
         path with a sidecar; reopening must still work."""
         from simplevecdb.encryption import create_encrypted_connection

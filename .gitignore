@@ -1,25 +1,61 @@
 # Python / uv
 .venv/
 __pycache__/
-*.pyc
-.env
-dist/
-build/
+*.py[cod]
 *.egg-info/
+.eggs/
+build/
+dist/
+.tox/
+.nox/
+
+# Tooling caches
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.cache/
+.hypothesis/
+cython_debug/
 
-# IDE
-.vscode/
-.idea/
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+htmlcov/
 
 # Jupyter
-.ipynb_checkpoints
+.ipynb_checkpoints/
 
-# Databases
+# Environment / secrets
+.env
+.envrc
+.direnv/
+
+# Databases (SimpleVecDB writes WAL/SHM sidecars)
 *.db
+*.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
+*.sqlite3
+
+# Editor / IDE
+.vscode/
+.idea/
+.history/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docs build
+site/
 
 # Agentic CLI tools (per-developer state)
 .opencode/
@@ -27,12 +63,8 @@ opencode.json
 .claude/
 .codex
 
-# Project specific
+# Project-specific scratch
 simplevecdb_plan.md
 AGENTS.md
-htmlcov/
-site/
-htmlcov/
-.coverage
 NEXT_UPDATES.md
 pro_pack/

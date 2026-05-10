@@ -76,7 +76,9 @@ class TestGracefulShutdown:
             captured_handlers[signum] = handler
             return original_signal(signum, signal.SIG_DFL)
 
-        with patch("simplevecdb.embeddings.server.signal.signal", side_effect=fake_signal):
+        with patch(
+            "simplevecdb.embeddings.server.signal.signal", side_effect=fake_signal
+        ):
             from simplevecdb.embeddings.server import run_server
 
             run_server(host="127.0.0.1", port=9000)
@@ -141,9 +143,7 @@ class TestModelWarmUp:
         """Simulate --no-warmup by calling run_server via CLI path."""
         mock_server_cls.return_value = MagicMock()
 
-        with patch(
-            "simplevecdb.embeddings.server._build_cli_parser"
-        ) as mock_parser_fn:
+        with patch("simplevecdb.embeddings.server._build_cli_parser") as mock_parser_fn:
             mock_args = argparse.Namespace(host=None, port=None, no_warmup=True)
             mock_parser = MagicMock()
             mock_parser.parse_args.return_value = mock_args

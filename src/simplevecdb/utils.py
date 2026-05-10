@@ -268,64 +268,238 @@ def async_retry_on_lock(
     return decorator
 
 
+# Range/numeric filter operators (gap 5). Mongo-style operator dicts:
+#   {"score": {"$gt": 0.5, "$lte": 0.9}}
+#   {"tag":   {"$in": ["a", "b"]}}
+#   {"flag":  {"$exists": True}}
+# Plus tuple shorthand normalized to the same operator dicts:
+#   {"score": (">", 0.5)}                         -> {"$gt": 0.5}
+#   {"score": ("range", 0.5, 0.9)}                -> {"$between": [0.5, 0.9]}
+_FILTER_OPERATORS: frozenset[str] = frozenset(
+    {
+        "$eq",
+        "$ne",
+        "$gt",
+        "$gte",
+        "$lt",
+        "$lte",
+        "$in",
+        "$nin",
+        "$exists",
+        "$between",
+    }
+)
+
+_TUPLE_OP_MAP: dict[str, str] = {
+    "==": "$eq",
+    "eq": "$eq",
+    "!=": "$ne",
+    "ne": "$ne",
+    ">": "$gt",
+    "gt": "$gt",
+    ">=": "$gte",
+    "gte": "$gte",
+    "<": "$lt",
+    "lt": "$lt",
+    "<=": "$lte",
+    "lte": "$lte",
+    "in": "$in",
+    "nin": "$nin",
+    "exists": "$exists",
+    "range": "$between",
+    "between": "$between",
+}
+
+
+def _is_finite_number(x: Any) -> bool:
+    if not isinstance(x, (int, float)) or isinstance(x, bool):
+        return False
+    if isinstance(x, float) and (x != x or x in (float("inf"), float("-inf"))):
+        return False
+    return True
+
+
+def _normalize_filter_value(key: str, value: Any) -> Any:
+    """Normalize tuple shorthand into operator dicts; pass through others."""
+    if isinstance(value, tuple):
+        if not value:
+            raise ValueError(f"Filter tuple for '{key}' must not be empty")
+        op_raw = value[0]
+        if not isinstance(op_raw, str):
+            raise ValueError(
+                f"Filter tuple operator for '{key}' must be a string, "
+                f"got {type(op_raw).__name__}: {op_raw!r}"
+            )
+        op = _TUPLE_OP_MAP.get(op_raw)
+        if op is None:
+            raise ValueError(
+                f"Unknown tuple operator '{op_raw}' for '{key}'. "
+                f"Valid: {sorted(set(_TUPLE_OP_MAP))}"
+            )
+        rest = list(value[1:])
+        if op == "$between":
+            if len(rest) != 2:
+                raise ValueError(
+                    f"'{key}' range/between expects exactly 2 args, got {len(rest)}"
+                )
+            return {op: rest}
+        if op in ("$in", "$nin"):
+            arg = rest[0] if len(rest) == 1 else rest
+            if not isinstance(arg, list):
+                arg = list(arg) if isinstance(arg, (tuple, set)) else [arg]
+            return {op: arg}
+        if len(rest) != 1:
+            raise ValueError(
+                f"'{key}' operator '{op_raw}' expects exactly 1 arg, got {len(rest)}"
+            )
+        return {op: rest[0]}
+    return value
+
+
+def normalize_filter(
+    filter_dict: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Convert tuple shorthand to operator dicts; otherwise return as-is.
+
+    Pure: callers can rely on the result not aliasing the input for keys
+    that needed conversion.
+    """
+    if not filter_dict:
+        return filter_dict
+    return {k: _normalize_filter_value(k, v) for k, v in filter_dict.items()}
+
+
 def validate_filter(filter_dict: dict[str, Any] | None) -> None:
     """
     Validate metadata filter structure before SQL generation.
 
-    Ensures filter keys are strings and values are supported types.
-    Call this before building SQL WHERE clauses to provide clear error
-    messages for invalid filters.
+    Accepts:
+      - scalar equality: {"category": "tech"}
+      - list IN: {"tag": ["a", "b"]}
+      - operator dicts: {"score": {"$gt": 0.5, "$lte": 0.9}}
+      - tuple shorthand: {"score": (">", 0.5)} (normalized internally)
 
     Args:
         filter_dict: Metadata filter dictionary to validate.
 
     Raises:
-        ValueError: If filter keys are not strings or values are unsupported types.
+        ValueError: If keys are not strings, operators unknown, or values
+            are unsupported types/non-finite.
 
     Example:
         >>> validate_filter({"category": "tech", "score": 0.95})  # OK
-        >>> validate_filter({123: "value"})  # Raises ValueError
+        >>> validate_filter({"score": {"$gt": 0.5}})              # OK
+        >>> validate_filter({"score": (">", 0.5)})                # OK
+        >>> validate_filter({123: "value"})                       # ValueError
     """
     if filter_dict is None:
         return
 
-    for key, value in filter_dict.items():
+    for key, raw_value in filter_dict.items():
         if not isinstance(key, str):
             raise ValueError(
                 f"Filter keys must be strings, got {type(key).__name__}: {key!r}"
             )
+        # Normalize tuple shorthand for validation; the actual SQL builder
+        # also normalizes, so this is just for the error path here.
+        value = _normalize_filter_value(key, raw_value)
+
+        if isinstance(value, dict):
+            _validate_operator_dict(key, value)
+            continue
+
+        if isinstance(value, bool):
+            # bool is a subclass of int; allow as exact equality.
+            continue
         if not isinstance(value, (int, float, str, list)):
             raise ValueError(
-                f"Filter value for '{key}' must be int, float, str, or list, "
-                f"got {type(value).__name__}: {value!r}"
+                f"Filter value for '{key}' must be int, float, str, list, "
+                f"or operator dict, got {type(value).__name__}: {value!r}"
             )
-        if isinstance(value, float) and (
-            value != value or value == float("inf") or value == float("-inf")
-        ):
-            raise ValueError(
-                f"Filter value for '{key}' must be finite, got {value!r}"
-            )
+        if isinstance(value, float) and not _is_finite_number(value):
+            raise ValueError(f"Filter value for '{key}' must be finite, got {value!r}")
         if isinstance(value, list):
-            if not value:
-                raise ValueError(
-                    f"Filter list for '{key}' must not be empty"
-                )
-            for i, item in enumerate(value):
-                if not isinstance(item, (int, float, str)):
-                    raise ValueError(
-                        f"Filter list items for '{key}' must be int, float, or str, "
-                        f"got {type(item).__name__} at index {i}: {item!r}"
-                    )
-                if isinstance(item, float) and (
-                    item != item
-                    or item == float("inf")
-                    or item == float("-inf")
-                ):
-                    raise ValueError(
-                        f"Filter list item for '{key}' at index {i} must be finite, "
-                        f"got {item!r}"
-                    )
+            _validate_filter_list(key, value)
 
+
+# SQLite's SQLITE_MAX_VARIABLE_NUMBER defaults to 999 in builds <3.32 and
+# 32766 from 3.32 onward. Cap at the universally-safe minimum so $in/$nin
+# never blow past the limit at runtime regardless of which SQLite the host
+# python is linked against.
+_FILTER_LIST_MAX_LEN = 999
+
+
+def _validate_filter_list(key: str, value: list[Any]) -> None:
+    if not value:
+        raise ValueError(f"Filter list for '{key}' must not be empty")
+    if len(value) > _FILTER_LIST_MAX_LEN:
+        raise ValueError(
+            f"Filter list for '{key}' has {len(value)} items; max "
+            f"{_FILTER_LIST_MAX_LEN} (SQLite parameter limit)"
+        )
+    for i, item in enumerate(value):
+        if isinstance(item, bool):
+            continue
+        if not isinstance(item, (int, float, str)):
+            raise ValueError(
+                f"Filter list items for '{key}' must be int, float, or str, "
+                f"got {type(item).__name__} at index {i}: {item!r}"
+            )
+        if isinstance(item, float) and not _is_finite_number(item):
+            raise ValueError(
+                f"Filter list item for '{key}' at index {i} must be finite, "
+                f"got {item!r}"
+            )
+
+
+def _validate_operator_dict(key: str, op_dict: dict[str, Any]) -> None:
+    if not op_dict:
+        raise ValueError(f"Operator dict for '{key}' must not be empty")
+    for op, arg in op_dict.items():
+        if op not in _FILTER_OPERATORS:
+            raise ValueError(
+                f"Unknown operator '{op}' for '{key}'. "
+                f"Valid: {sorted(_FILTER_OPERATORS)}"
+            )
+        if op in ("$gt", "$gte", "$lt", "$lte"):
+            if not _is_finite_number(arg):
+                raise ValueError(f"'{key}' {op} expects a finite number, got {arg!r}")
+        elif op in ("$eq", "$ne"):
+            if isinstance(arg, bool):
+                continue
+            if arg is None or isinstance(arg, str):
+                continue
+            if isinstance(arg, (int, float)) and _is_finite_number(arg):
+                continue
+            raise ValueError(
+                f"'{key}' {op} expects scalar (str/number/bool/None), "
+                f"got {type(arg).__name__}: {arg!r}"
+            )
+        elif op in ("$in", "$nin"):
+            if not isinstance(arg, list):
+                raise ValueError(
+                    f"'{key}' {op} expects a list, got {type(arg).__name__}"
+                )
+            _validate_filter_list(key, arg)
+        elif op == "$exists":
+            if not isinstance(arg, bool):
+                raise ValueError(
+                    f"'{key}' $exists expects a bool, got {type(arg).__name__}"
+                )
+        elif op == "$between":
+            if not isinstance(arg, (list, tuple)) or len(arg) != 2:
+                raise ValueError(f"'{key}' $between expects [lo, hi], got {arg!r}")
+            lo, hi = arg
+            if not (_is_finite_number(lo) and _is_finite_number(hi)):
+                raise ValueError(
+                    f"'{key}' $between bounds must be finite numbers, got {arg!r}"
+                )
+            if lo > hi:
+                # SQL `BETWEEN lo AND hi` evaluates to false when lo > hi,
+                # silently returning no rows. Surface the mistake instead.
+                raise ValueError(
+                    f"'{key}' $between requires lo <= hi, got [{lo}, {hi}]"
+                )
 
 
 @contextmanager

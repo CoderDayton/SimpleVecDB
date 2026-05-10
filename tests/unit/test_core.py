@@ -361,9 +361,7 @@ def test_normalize_l2():
     assert np.allclose(normalize_l2(zero_vec), zero_vec)
 
 
-@pytest.mark.skipif(
-    not _has_langchain, reason="langchain-core not installed"
-)
+@pytest.mark.skipif(not _has_langchain, reason="langchain-core not installed")
 def test_as_langchain(empty_db):
     """Test LangChain integration factory method."""
     lc_store = empty_db.as_langchain()
@@ -373,9 +371,7 @@ def test_as_langchain(empty_db):
     assert isinstance(lc_store, SimpleVecDBVectorStore)
 
 
-@pytest.mark.skipif(
-    not _has_llamaindex, reason="llama-index not installed"
-)
+@pytest.mark.skipif(not _has_llamaindex, reason="llama-index not installed")
 def test_as_llama_index(empty_db):
     """Test LlamaIndex integration factory method."""
     li_store = empty_db.as_llama_index()
@@ -549,39 +545,6 @@ def test_rebuild_index_empty_collection(tmp_path):
     assert count == 0
 
     db.close()
-
-
-def test_check_migration_no_legacy(tmp_path):
-    """Test check_migration() on a fresh v2.0 database."""
-    db_path = str(tmp_path / "fresh.db")
-
-    # Create a new database (no legacy data)
-    db = VectorDB(db_path)
-    collection = db.collection("default")
-    collection.add_texts(["test"], embeddings=[[0.1] * 64])
-    db.close()
-
-    # Check migration status
-    info = VectorDB.check_migration(db_path)
-
-    assert info["needs_migration"] is False
-    assert info["collections"] == []
-    assert info["total_vectors"] == 0
-
-
-def test_check_migration_nonexistent():
-    """Test check_migration() on nonexistent file."""
-    info = VectorDB.check_migration("/nonexistent/path.db")
-
-    assert info["needs_migration"] is False
-    assert info["collections"] == []
-
-
-def test_check_migration_memory():
-    """Test check_migration() on :memory: database."""
-    info = VectorDB.check_migration(":memory:")
-
-    assert info["needs_migration"] is False
 
 
 def test_adaptive_search_uses_exact_for_small_collections(tmp_path):

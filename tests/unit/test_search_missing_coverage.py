@@ -26,7 +26,9 @@ def db_3d(tmp_path):
         {"cat": "A", "score": 30},
         {"cat": "B", "score": 40},
     ]
-    col.add_texts(["doc1", "doc2", "doc3", "doc4"], embeddings=embeddings, metadatas=metadatas)
+    col.add_texts(
+        ["doc1", "doc2", "doc3", "doc4"], embeddings=embeddings, metadatas=metadatas
+    )
     return db
 
 
@@ -178,9 +180,7 @@ class TestMMRSearch:
         """Line 376: when candidates <= k, return all candidates directly."""
         col = db_3d.collection("test")
         # Request k=10 but only 4 docs exist, so candidates <= k
-        results = col.max_marginal_relevance_search(
-            [1.0, 0.0, 0.0], k=10, fetch_k=4
-        )
+        results = col.max_marginal_relevance_search([1.0, 0.0, 0.0], k=10, fetch_k=4)
         assert len(results) <= 4
         assert len(results) > 0
 
