@@ -23,9 +23,13 @@ upgrade transparently (the new tables are created on first open).
 - **Bulk vector math** — `collection.pending.update_many([(id, vec), …])` and
   `collection.pending.blend_toward(ids, centroid, alpha)` for batched edits.
 - **Atomic transaction boundary** — `with db.transaction() as tx: …` and
-  `with collection.tx(): …` wrap a SAVEPOINT around catalog writes; usearch
-  side effects are buffered and applied only on commit. Nested contexts
-  share a single savepoint stack via the new `_TxState` helper.
+  `with collection.tx(): …` wrap a SAVEPOINT around catalog writes
+  (metadata, counters, edges, events, TTL, and `update_embedding`'s
+  pending overlay) so a raised exception rolls all SQL writes back.
+  Coarse vector mutations (`add_texts`, `delete`) are NOT rolled back —
+  use `update_embedding` + `pending.flush()` for vector changes that
+  must be commit-gated. Nested contexts share a single savepoint stack
+  via the new `_TxState` helper.
 - **Weighted directed edges** — new `collection.edges` namespace with
   `add_edge / get_edges / update_edge / delete_edge / prune` over a
   per-collection `_edges` table. Numeric columns (`weight`, `bonus`, `hits`,
@@ -57,7 +61,8 @@ upgrade transparently (the new tables are created on first open).
   `PRAGMA foreign_keys=ON` at every connection-open site (encrypted and
   unencrypted). The native 5 s wait window reduces `DatabaseLockedError`
   pressure under contention; foreign keys cascade-delete pending /
-  edges / events / TTL rows when a doc is deleted.
+  edges / TTL rows when a doc is deleted. The events table is
+  intentionally FK-less so the audit trail survives deletions.
 - **Async wrappers** — `AsyncVectorCollection` gains async equivalents of the
   new methods (`update_embedding`, `flush_pending`, `increment_metadata`,
   `add_edge`, `update_edge`, `delete_edge`, `get_edges`, `set_ttl`,
@@ -83,10 +88,22 @@ upgrade transparently (the new tables are created on first open).
   `similarity_search`; events append on every mutation; TTL sweep with
   `delete` and `callback` paths; threshold-driven rebuild scheduler.
 
+#### Removed
+
+- **`sqlite-vec` dependency** dropped from `pyproject.toml`. The package was
+  never imported and the v1.x → v2.0 auto-migration code path could not have
+  worked without explicitly loading the extension at connection time.
+- **`MigrationRequiredError`**, **`VectorDB.check_migration()`**, and the
+  **`auto_migrate=`** constructor flag have been removed. Databases written
+  by `simplevecdb < 2.0.0` (sqlite-vec backend) are no longer auto-migrated
+  on open. To upgrade a v1.x database, dump the rows with a v1.x install and
+  re-ingest them through the v2 API; or stay on the last release that shipped
+  the migration path (anything ≤ v2.6.1's predecessor).
+- The catalog helpers `check_legacy_sqlite_vec`, `get_legacy_vectors`, and
+  `drop_legacy_vec_table` are gone alongside the migration entry point.
+
 #### Out of scope
 
-- No migration to `sqlite-vec` (deferred). Vectors continue to live in the
-  usearch index; the pending overlay is the bridge.
 - No external pub/sub for events — polling only.
 - No multi-master writer support; single-writer + many readers remains the
   recommended topology.

@@ -405,9 +405,21 @@ def validate_filter(filter_dict: dict[str, Any] | None) -> None:
             _validate_filter_list(key, value)
 
 
+# SQLite's SQLITE_MAX_VARIABLE_NUMBER defaults to 999 in builds <3.32 and
+# 32766 from 3.32 onward. Cap at the universally-safe minimum so $in/$nin
+# never blow past the limit at runtime regardless of which SQLite the host
+# python is linked against.
+_FILTER_LIST_MAX_LEN = 999
+
+
 def _validate_filter_list(key: str, value: list[Any]) -> None:
     if not value:
         raise ValueError(f"Filter list for '{key}' must not be empty")
+    if len(value) > _FILTER_LIST_MAX_LEN:
+        raise ValueError(
+            f"Filter list for '{key}' has {len(value)} items; max "
+            f"{_FILTER_LIST_MAX_LEN} (SQLite parameter limit)"
+        )
     for i, item in enumerate(value):
         if isinstance(item, bool):
             continue

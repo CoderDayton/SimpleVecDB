@@ -217,6 +217,15 @@ class TestValidateFilter:
         with pytest.raises(ValueError, match="list items.*must be int, float, or str"):
             validate_filter({"tags": [[1, 2, 3]]})  # nested list
 
+    def test_filter_list_length_capped(self):
+        """Lists exceeding the SQLite parameter limit raise."""
+        # Just under the cap is fine; just over raises.
+        validate_filter({"ids": list(range(999))})
+        with pytest.raises(ValueError, match="SQLite parameter limit"):
+            validate_filter({"ids": list(range(1000))})
+        with pytest.raises(ValueError, match="SQLite parameter limit"):
+            validate_filter({"ids": {"$in": list(range(1000))}})
+
 
 # ============================================================================
 # Logging tests

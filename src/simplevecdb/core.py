@@ -2058,9 +2058,10 @@ class _DBTransaction:
                     try:
                         self._db.conn.commit()
                     except Exception:
-                        _logger.debug(
+                        _logger.error(
                             "outer transaction commit failed", exc_info=True
                         )
+                        raise
         finally:
             self._db._lock.release()
 
@@ -2077,12 +2078,6 @@ class _CollectionTransaction(_DBTransaction):
     __slots__ = ("_collection",)
 
     def __init__(self, collection: "VectorCollection") -> None:
-        # Find the owning VectorDB by walking the collections cache.
-        from .core import VectorDB  # noqa: F401  -- self-import: typing only
-        # We don't keep a back-ref to the db on the collection; the txn
-        # state is attached directly to the collection so we can drive
-        # it without needing the db. We mimic _DBTransaction's API by
-        # exposing a lightweight tx state holder.
         self._collection = collection
         # Reuse the shared tx_state and lock from the collection.
         # _DBTransaction expects ._db; we create a shim.
@@ -2354,20 +2349,22 @@ class VectorDB:
 
         Wraps the work in a single SQLite SAVEPOINT and bumps the shared
         transaction-depth counter so every catalog method skips its
-        per-call commit. Usearch operations are buffered and applied
-        only after the SQL SAVEPOINT releases successfully; if any work
-        inside the block raises, both SQL and usearch are rolled back.
+        per-call commit. SQL-side mutations (metadata, counters, edges,
+        events, TTL, and `update_embedding`'s pending-vector overlay) are
+        atomic: a raised exception triggers ROLLBACK TO SAVEPOINT and all
+        SQL writes are reverted.
+
+        The HNSW index is not rolled back. Coarse vector mutations
+        (`add_texts`, `delete`, etc.) call into usearch directly and
+        their effects persist even if the surrounding SAVEPOINT rolls
+        back. Use `update_embedding` + `pending.flush()` for vector
+        changes whose visibility you want gated on commit.
 
         Example:
             >>> with db.transaction() as tx:
             ...     tx["docs"].update_embedding(id, vec)
             ...     tx["docs"].increment_metadata(id, {"hits": 1})
             ...     tx["docs"].edges.add_edge(src, dst, weight=0.7)
-
-        Limitations:
-            * Usearch's HNSW does not support real rollback; the buffer
-              defers the apply until SQL has committed. A failed usearch
-              apply after SQL commit logs a warning but cannot undo SQL.
         """
         return _DBTransaction(self)
 

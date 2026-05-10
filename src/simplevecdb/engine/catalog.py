@@ -233,7 +233,11 @@ class CatalogManager:
         lock: threading.RLock | None = None,
         tx_state: "_TxState | None" = None,
     ):
-        # Defense-in-depth: validate table names
+        # Defense-in-depth: validate table names. After this point every
+        # f-string SQL site that interpolates self._table_name (or its
+        # _pending_vectors / _edges / _events / _ttl / _clusters
+        # suffixes) is safe by construction; do not reintroduce arbitrary
+        # name interpolation downstream.
         _validate_table_name(table_name)
         _validate_table_name(fts_table_name)
 

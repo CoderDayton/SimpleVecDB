@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -90,6 +91,29 @@ class TestTransaction:
             assert ctx is c
             ctx.increment_metadata(1, {"hits": 3})
         assert c.counters.get(1, "hits") == 3
+
+    def test_outer_commit_failure_propagates(self, db_with_docs):
+        """Outer commit failures must surface, not be swallowed."""
+        db, _c, _ = db_with_docs
+        real_conn = db.conn
+        calls = {"n": 0}
+
+        class FlakyConn:
+            def __getattr__(self, name):
+                return getattr(real_conn, name)
+
+            def commit(self):
+                calls["n"] += 1
+                raise sqlite3.OperationalError("disk full")
+
+        db.conn = FlakyConn()  # type: ignore[assignment]
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="disk full"):
+                with db.transaction() as tx:
+                    tx["default"].increment_metadata(1, {"hits": 1})
+        finally:
+            db.conn = real_conn
+        assert calls["n"] == 1
 
 
 # ---------------------------- gap 3: edges --------------------------------
