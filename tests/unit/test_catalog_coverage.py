@@ -204,8 +204,8 @@ class TestBuildFilterClause:
         assert params == []
 
     def test_unsupported_filter_type_raises(self, catalog):
-        """Line 525: unsupported value type raises ValueError."""
-        with pytest.raises(ValueError, match="must be int, float, str, or list"):
+        """Unsupported scalar types still raise ValueError (gap 5 grammar)."""
+        with pytest.raises(ValueError, match="must be int, float, str"):
             catalog.build_filter_clause({"key": object()})
 
 

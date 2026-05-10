@@ -290,6 +290,193 @@ class AsyncVectorCollection:
         )
 
     # ─────────────────────────────────────────────────────────────────────────
+    # 2.6.1 — pending vectors, counters, edges, events, TTL (Async)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def update_embedding(
+        self,
+        doc_id: int,
+        vector: Any,
+        *,
+        source: str | None = None,
+    ) -> None:
+        """Buffer a vector update; promoted to HNSW on flush_pending()."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.update_embedding(doc_id, vector, source=source),
+        )
+
+    async def flush_pending(self, *, max_batch: int | None = None) -> int:
+        """Flush buffered vector updates into the HNSW index."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.pending.flush(max_batch=max_batch),
+        )
+
+    async def increment_metadata(
+        self,
+        doc_id: int,
+        deltas: dict[str, int | float],
+    ) -> None:
+        """Atomically apply numeric deltas to JSON metadata counters."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.increment_metadata(doc_id, deltas),
+        )
+
+    async def add_edge(
+        self,
+        src: int,
+        dst: int,
+        *,
+        kind: str = "",
+        weight: float = 0.0,
+        bonus: float = 0.0,
+        hits: int = 0,
+        metadata: dict | None = None,
+    ) -> int:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.edges.add_edge(
+                src, dst, kind=kind, weight=weight, bonus=bonus,
+                hits=hits, metadata=metadata,
+            ),
+        )
+
+    async def update_edge(
+        self,
+        src: int,
+        dst: int,
+        *,
+        kind: str = "",
+        weight: float | None = None,
+        bonus: float | None = None,
+        hits: int | None = None,
+        metadata: dict | None = None,
+        dweight: float = 0.0,
+        dbonus: float = 0.0,
+        dhits: int = 0,
+    ) -> int:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.edges.update_edge(
+                src, dst, kind=kind, weight=weight, bonus=bonus,
+                hits=hits, metadata=metadata,
+                dweight=dweight, dbonus=dbonus, dhits=dhits,
+            ),
+        )
+
+    async def delete_edge(
+        self,
+        src: int,
+        dst: int,
+        *,
+        kind: str = "",
+    ) -> int:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.edges.delete_edge(src, dst, kind=kind),
+        )
+
+    async def get_edges(
+        self,
+        src: int | None = None,
+        dst: int | None = None,
+        *,
+        kind: str | None = None,
+        filter: dict[str, Any] | None = None,
+        limit: int | None = None,
+    ) -> list:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.edges.get_edges(
+                src=src, dst=dst, kind=kind, filter=filter, limit=limit,
+            ),
+        )
+
+    async def set_ttl(
+        self,
+        doc_id: int,
+        *,
+        seconds: float | None = None,
+        expires_at: float | None = None,
+        on_expire: str = "delete",
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.ttl.set(
+                doc_id, seconds=seconds, expires_at=expires_at,
+                on_expire=on_expire,
+            ),
+        )
+
+    async def clear_ttl(self, doc_id: int) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.ttl.clear(doc_id),
+        )
+
+    async def sweep_ttl(
+        self,
+        *,
+        now: float | None = None,
+        limit: int = 1000,
+    ) -> tuple[list[int], list[int]]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.ttl.sweep(now=now, limit=limit),
+        )
+
+    async def read_events(
+        self,
+        *,
+        since: int = 0,
+        kind: str | None = None,
+        limit: int = 500,
+    ) -> list:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.events.read(
+                since=since, kind=kind, limit=limit,
+            ),
+        )
+
+    async def last_event_seq(self) -> int:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._collection.events.last_seq,
+        )
+
+    async def rebuild_if_needed(
+        self,
+        *,
+        max_pending: int | None = None,
+        max_deleted: int | None = None,
+    ) -> bool:
+        kwargs: dict[str, Any] = {}
+        if max_pending is not None:
+            kwargs["max_pending"] = max_pending
+        if max_deleted is not None:
+            kwargs["max_deleted"] = max_deleted
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: self._collection.maintenance.rebuild_if_needed(**kwargs),
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Index & Hierarchy (Async)
     # ─────────────────────────────────────────────────────────────────────────
 

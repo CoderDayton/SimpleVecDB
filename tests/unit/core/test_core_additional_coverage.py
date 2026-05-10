@@ -197,16 +197,19 @@ class TestFilterClauseCoverage:
         db.close()
 
     def test_filter_with_unsupported_type_raises(self, tmp_path):
-        """Filter with unsupported type raises ValueError."""
+        """Operator dicts must use a recognized $-prefixed operator (gap 5)."""
         db = VectorDB(str(tmp_path / "unsupported_filter.db"))
         collection = db.collection("test")
         collection.add_texts(
             ["doc"],
             embeddings=[[1.0, 0.0]],
         )
-        # dict as filter value is not supported
-        with pytest.raises(ValueError, match="must be int, float, str, or list"):
+        # Plain string-keyed nested dicts are rejected as unknown operators.
+        with pytest.raises(ValueError, match="Unknown operator"):
             collection._catalog.build_filter_clause({"key": {"nested": "dict"}})
+        # Bytes values are also unsupported.
+        with pytest.raises(ValueError, match="must be int, float, str"):
+            collection._catalog.build_filter_clause({"key": b"bytes"})
         db.close()
 
     def test_keyword_search_empty_query(self, tmp_path):

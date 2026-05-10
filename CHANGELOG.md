@@ -5,6 +5,92 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-05-10
+
+### Storage, mutation, and eventing improvements
+
+This release closes ten long-standing gaps in the catalog layer with a coherent
+set of additive primitives. No public API breaks; existing 2.6.0 databases
+upgrade transparently (the new tables are created on first open).
+
+#### New features
+
+- **Native vector update via pending buffer** — `collection.update_embedding(id, vector)`
+  writes a row to a per-collection `_pending_vectors` overlay inside one SQL
+  transaction; the new vector becomes visible to reads immediately and is
+  promoted to the HNSW index on `collection.pending.flush()`. Removes the
+  HNSW remove+re-add churn previously required for in-place updates.
+- **Bulk vector math** — `collection.pending.update_many([(id, vec), …])` and
+  `collection.pending.blend_toward(ids, centroid, alpha)` for batched edits.
+- **Atomic transaction boundary** — `with db.transaction() as tx: …` and
+  `with collection.tx(): …` wrap a SAVEPOINT around catalog writes; usearch
+  side effects are buffered and applied only on commit. Nested contexts
+  share a single savepoint stack via the new `_TxState` helper.
+- **Weighted directed edges** — new `collection.edges` namespace with
+  `add_edge / get_edges / update_edge / delete_edge / prune` over a
+  per-collection `_edges` table. Numeric columns (`weight`, `bonus`, `hits`,
+  `last_touch`) are addressable by the new range-filter grammar; deltas
+  (`dweight=+0.02, dhits=+1`) compile to a single atomic SQL UPDATE.
+- **Atomic counter increments** — `collection.increment_metadata(id, {"hits": 1, "drift": 0.02})`
+  applies a dict of numeric deltas to JSON metadata in one statement using
+  chained `json_set(... json_extract + ?)` calls. WAL-atomic; safe under
+  concurrent writers.
+- **Mongo-style range filters** — `filter={"score": {"$gt": 0.5, "$lte": 0.9}}`
+  on `similarity_search`, `keyword_search`, `hybrid_search`, `edges.get_edges`,
+  and `events.read`. Supported operators: `$eq $ne $gt $gte $lt $lte $in $nin
+  $exists $between`. Tuple shorthand (`("range", lo, hi)`, `(">", x)`) is
+  normalised into the operator-dict form.
+- **Append-only change feed** — every mutating method now appends one row to
+  a per-collection `_events` table (kind, doc_id, payload, monotonic seq).
+  `collection.events.read(since=, kind=, limit=)`,
+  `collection.events.subscribe(since=, poll_interval=)`, and
+  `collection.events.prune(before_seq=)` expose the feed; cross-process
+  visibility comes from the existing WAL mode.
+- **TTL / expiry hooks** — `collection.ttl.set(id, seconds=…, on_expire="delete"|"callback")`,
+  `collection.ttl.clear(id)`, and `collection.ttl.sweep()` over a
+  `_ttl` table; `start_background(interval=…)` runs the sweep in a daemon
+  thread (off by default).
+- **Incremental rebuild scheduler** — `collection.maintenance.rebuild_if_needed(max_pending=, max_deleted=)`
+  triggers a full `rebuild_index()` only when the configured pending /
+  tombstone / wall-time thresholds are crossed.
+- **Multi-process write safety** — added `PRAGMA busy_timeout=5000` and
+  `PRAGMA foreign_keys=ON` at every connection-open site (encrypted and
+  unencrypted). The native 5 s wait window reduces `DatabaseLockedError`
+  pressure under contention; foreign keys cascade-delete pending /
+  edges / events / TTL rows when a doc is deleted.
+- **Async wrappers** — `AsyncVectorCollection` gains async equivalents of the
+  new methods (`update_embedding`, `flush_pending`, `increment_metadata`,
+  `add_edge`, `update_edge`, `delete_edge`, `get_edges`, `set_ttl`,
+  `clear_ttl`, `sweep_ttl`, `read_events`, `last_event_seq`,
+  `rebuild_if_needed`).
+
+#### New types & constants
+
+- `simplevecdb.types`: `Edge`, `Event`, `TTLEntry` frozen dataclasses.
+- `simplevecdb.constants`: `PENDING_FLUSH_DEFAULT_BATCH=1000`,
+  `EVENTS_POLL_INTERVAL_S=0.1`, `EVENTS_RETENTION_LIMIT=100_000`,
+  `TTL_SWEEP_DEFAULT_INTERVAL_S=60.0`, `REBUILD_PENDING_THRESHOLD=5_000`,
+  `REBUILD_TOMBSTONE_THRESHOLD=5_000`, `REBUILD_MIN_INTERVAL_S=3600.0`,
+  `SQLITE_BUSY_TIMEOUT_MS=5000`.
+
+#### Test coverage
+
+- `tests/unit/test_v26_1_features.py` — 25 tests covering the five must-have
+  primitives end-to-end: `update_embedding` + pending buffer + flush; edges
+  CRUD with atomic deltas, range filtering, and prune; `increment_metadata`
+  under 800-thread contention (exact total preserved); transaction rollback
+  and commit semantics; Mongo-style and tuple-shorthand range filters in
+  `similarity_search`; events append on every mutation; TTL sweep with
+  `delete` and `callback` paths; threshold-driven rebuild scheduler.
+
+#### Out of scope
+
+- No migration to `sqlite-vec` (deferred). Vectors continue to live in the
+  usearch index; the pending overlay is the bridge.
+- No external pub/sub for events — polling only.
+- No multi-master writer support; single-writer + many readers remains the
+  recommended topology.
+
 ## [2.6.0] - 2026-05-06
 
 ### Review pass 3 — final correctness/security pass before tag

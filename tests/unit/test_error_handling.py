@@ -194,12 +194,20 @@ class TestValidateFilter:
             validate_filter({None: "value"})  # type: ignore
 
     def test_invalid_value_type(self):
-        """Unsupported value types raise ValueError."""
-        with pytest.raises(ValueError, match="must be int, float, str, or list"):
+        """Unsupported value types raise ValueError.
+
+        Operator dicts now accept $-prefixed operators (gap 5); plain
+        nested dicts are rejected as unknown operators. Tuple shorthand
+        is accepted but the first element must be a recognized op string.
+        """
+        with pytest.raises(ValueError, match="Unknown operator"):
             validate_filter({"key": {"nested": "dict"}})
 
-        with pytest.raises(ValueError, match="must be int, float, str, or list"):
-            validate_filter({"key": (1, 2, 3)})  # tuple not allowed
+        with pytest.raises(ValueError, match="operator.*must be a string"):
+            validate_filter({"key": (1, 2, 3)})  # numeric op invalid
+
+        with pytest.raises(ValueError, match="must be int, float, str"):
+            validate_filter({"key": b"bytes"})
 
     def test_invalid_list_item_type(self):
         """List items must be int, float, or str."""
@@ -327,8 +335,8 @@ class TestErrorHandlingIntegration:
             embeddings=[[0.1, 0.2, 0.3]],
         )
 
-        # Search with invalid filter
-        with pytest.raises(ValueError, match="must be int, float, str, or list"):
+        # Search with invalid filter (unknown operator name).
+        with pytest.raises(ValueError, match="Unknown operator"):
             collection.keyword_search(
                 query="hello",
                 k=5,

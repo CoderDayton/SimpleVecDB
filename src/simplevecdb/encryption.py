@@ -353,6 +353,12 @@ def create_encrypted_connection(
         # Set performance optimizations (same as non-encrypted)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        # Native lock-wait window (gap 10): SQLite blocks the caller in
+        # C for up to busy_timeout ms before surfacing "database is
+        # locked", trimming retry pressure under multi-writer load.
+        from . import constants as _c
+        conn.execute(f"PRAGMA busy_timeout={_c.SQLITE_BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA foreign_keys=ON")
 
         return conn  # type: ignore[return-value]
 
