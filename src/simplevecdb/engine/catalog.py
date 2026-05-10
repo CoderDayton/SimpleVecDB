@@ -984,10 +984,17 @@ class CatalogManager:
             json_path = f"$.{key}"
             text_extract = f"json_extract({metadata_column}, ?)"
             num_extract = f"CAST({text_extract} AS REAL)"
+            type_extract = f"json_type({metadata_column}, ?)"
 
             if isinstance(value, dict):
                 self._build_operator_clauses(
-                    json_path, text_extract, num_extract, value, clauses, params
+                    json_path,
+                    text_extract,
+                    num_extract,
+                    type_extract,
+                    value,
+                    clauses,
+                    params,
                 )
                 continue
 
@@ -1014,11 +1021,24 @@ class CatalogManager:
         json_path: str,
         text_extract: str,
         num_extract: str,
+        type_extract: str,
         op_dict: dict[str, Any],
         clauses: list[str],
         params: list[Any],
     ) -> None:
         """Compile a single key's operator dict into WHERE clause fragments."""
+
+        def numeric(sql_op: str, arg: Any) -> None:
+            # Gate the comparison on json_type so non-numeric values aren't
+            # coerced to 0.0 by CAST(... AS REAL); without this guard a row
+            # with `score: "oops"` would match `{"$lt": 1}` because the
+            # cast silently produces 0.0. Mirrors `_eval_operator_dict`,
+            # which rejects non-numeric `meta_value` for these ops.
+            clauses.append(
+                f"({type_extract} IN ('integer', 'real') AND {num_extract} {sql_op} ?)"
+            )
+            params.extend([json_path, json_path, arg])
+
         for op, arg in op_dict.items():
             if op == "$eq":
                 clauses.append(f"{text_extract} = ?")
@@ -1028,17 +1048,13 @@ class CatalogManager:
                 clauses.append(f"({text_extract} IS NULL OR {text_extract} != ?)")
                 params.extend([json_path, json_path, _coerce_scalar(arg)])
             elif op == "$gt":
-                clauses.append(f"{num_extract} > ?")
-                params.extend([json_path, arg])
+                numeric(">", arg)
             elif op == "$gte":
-                clauses.append(f"{num_extract} >= ?")
-                params.extend([json_path, arg])
+                numeric(">=", arg)
             elif op == "$lt":
-                clauses.append(f"{num_extract} < ?")
-                params.extend([json_path, arg])
+                numeric("<", arg)
             elif op == "$lte":
-                clauses.append(f"{num_extract} <= ?")
-                params.extend([json_path, arg])
+                numeric("<=", arg)
             elif op == "$in":
                 placeholders = ",".join("?" for _ in arg)
                 clauses.append(f"{text_extract} IN ({placeholders})")
@@ -1061,8 +1077,11 @@ class CatalogManager:
                 params.append(json_path)
             elif op == "$between":
                 lo, hi = arg
-                clauses.append(f"{num_extract} BETWEEN ? AND ?")
-                params.extend([json_path, lo, hi])
+                clauses.append(
+                    f"({type_extract} IN ('integer', 'real') "
+                    f"AND {num_extract} BETWEEN ? AND ?)"
+                )
+                params.extend([json_path, json_path, lo, hi])
             else:
                 raise ValueError(f"Unsupported operator '{op}'")
 
@@ -1830,44 +1849,70 @@ class CatalogManager:
         now: float | None = None,
         limit: int = 1000,
     ) -> tuple[list[int], list[int]]:
-        """Apply due TTL entries.
+        """Apply due TTL entries atomically.
 
         For each expired entry:
           - on_expire == "delete": deletes from the main table (and the
-            new 2.6.1 aux tables explicitly, since FK enforcement may be
+            2.6.1 aux tables explicitly, since FK enforcement may be
             off), then drops the TTL row.
           - on_expire == "callback": leaves the doc in place and just
             drops the TTL row.
 
+        The expiration check and the TTL-row deletion happen as a single
+        atomic ``DELETE … RETURNING`` inside one write transaction —
+        otherwise a concurrent ``set_ttl`` extending the deadline (or
+        ``clear_ttl``) between a separate SELECT and DELETE would let
+        this method delete docs whose TTL was just renewed.
+
         Returns (deleted_ids, callback_ids). Both lists are empty when
         there's nothing to do.
         """
-        rows = self.list_expired_ttl(now=now, limit=limit)
-        if not rows:
-            return [], []
-        delete_ids = [r[0] for r in rows if r[2] == "delete"]
-        callback_ids = [r[0] for r in rows if r[2] == "callback"]
-        all_ids = [r[0] for r in rows]
         with self._writable():
+            if now is None:
+                claim_sql = (
+                    f"DELETE FROM {self._table_name}_ttl "
+                    f"WHERE doc_id IN ("
+                    f"  SELECT doc_id FROM {self._table_name}_ttl "
+                    f"  WHERE expires_at <= unixepoch('subsec') "
+                    f"  ORDER BY expires_at ASC LIMIT ?"
+                    f") "
+                    f"RETURNING doc_id, on_expire"
+                )
+                claim_params: tuple[Any, ...] = (int(limit),)
+            else:
+                claim_sql = (
+                    f"DELETE FROM {self._table_name}_ttl "
+                    f"WHERE doc_id IN ("
+                    f"  SELECT doc_id FROM {self._table_name}_ttl "
+                    f"  WHERE expires_at <= ? "
+                    f"  ORDER BY expires_at ASC LIMIT ?"
+                    f") "
+                    f"RETURNING doc_id, on_expire"
+                )
+                claim_params = (float(now), int(limit))
+
+            claimed = self.conn.execute(claim_sql, claim_params).fetchall()
+            if not claimed:
+                return [], []
+
+            delete_ids = [int(r[0]) for r in claimed if r[1] == "delete"]
+            callback_ids = [int(r[0]) for r in claimed if r[1] == "callback"]
+
             if delete_ids:
                 placeholders = ",".join("?" for _ in delete_ids)
-                # Children first (FK pragma may be off).
-                for child in (
-                    f"{self._table_name}_pending_vectors",
-                    f"{self._table_name}_edges",
-                    f"{self._table_name}_ttl",
-                ):
-                    if child.endswith("_edges"):
-                        self.conn.execute(
-                            f"DELETE FROM {child} WHERE src_id IN "
-                            f"({placeholders}) OR dst_id IN ({placeholders})",
-                            tuple(delete_ids) * 2,
-                        )
-                    else:
-                        self.conn.execute(
-                            f"DELETE FROM {child} WHERE doc_id IN ({placeholders})",
-                            tuple(delete_ids),
-                        )
+                # Children first (FK pragma may be off). The TTL row is
+                # already gone above via RETURNING.
+                self.conn.execute(
+                    f"DELETE FROM {self._table_name}_pending_vectors "
+                    f"WHERE doc_id IN ({placeholders})",
+                    tuple(delete_ids),
+                )
+                self.conn.execute(
+                    f"DELETE FROM {self._table_name}_edges "
+                    f"WHERE src_id IN ({placeholders}) "
+                    f"OR dst_id IN ({placeholders})",
+                    tuple(delete_ids) * 2,
+                )
                 # Main row.
                 self.conn.execute(
                     f"DELETE FROM {self._table_name} WHERE id IN ({placeholders})",
@@ -1879,14 +1924,8 @@ class CatalogManager:
                         f"WHERE rowid IN ({placeholders})",
                         tuple(delete_ids),
                     )
-            if callback_ids:
-                placeholders = ",".join("?" for _ in callback_ids)
-                self.conn.execute(
-                    f"DELETE FROM {self._table_name}_ttl "
-                    f"WHERE doc_id IN ({placeholders})",
-                    tuple(callback_ids),
-                )
-            for doc_id in all_ids:
+
+            for doc_id in delete_ids + callback_ids:
                 self.append_event_in_tx("ttl_expire", doc_id=doc_id)
         return delete_ids, callback_ids
 

@@ -523,3 +523,133 @@ class TestTTLFortification:
         # After clean stop the next start spawns fresh.
         c.ttl.start_background(interval=60.0)
         c.ttl.stop_background()
+
+
+# ----- regression: numeric filter type guard --------------------------------
+
+
+class TestNumericFilterTypeGuard:
+    """SQL numeric ops must reject non-numeric JSON values.
+
+    Without ``json_type`` gating, ``CAST(json_extract(...) AS REAL)``
+    coerces strings/null/objects to 0.0, so ``{"score": "oops"}`` would
+    spuriously match ``{"score": {"$lt": 1}}``. The python-side
+    ``_matches_filter`` already filters these out, so SQL and Python
+    were disagreeing.
+    """
+
+    def _build_collection(self, tmp_path):
+        db = VectorDB(str(tmp_path / "guard.db"))
+        c = db.collection("default")
+        c.add_texts(
+            ["numeric-half", "numeric-five", "string-oops", "missing-key"],
+            embeddings=np.random.rand(4, 4).astype(np.float32),
+            metadatas=[
+                {"score": 0.5},
+                {"score": 5.0},
+                {"score": "oops"},  # would CAST to 0.0 without the guard
+                {"other": "no score key"},
+            ],
+        )
+        return db, c
+
+    def test_lt_skips_string_value(self, tmp_path):
+        db, c = self._build_collection(tmp_path)
+        try:
+            docs = c.get_documents(filter_dict={"score": {"$lt": 1.0}})
+            texts = {t for _, t, _ in docs}
+            # Only the numeric 0.5 row passes; "oops" must NOT coerce to 0.0.
+            assert texts == {"numeric-half"}
+        finally:
+            db.close()
+
+    def test_between_skips_string_value(self, tmp_path):
+        db, c = self._build_collection(tmp_path)
+        try:
+            docs = c.get_documents(filter_dict={"score": {"$between": (-1, 1)}})
+            texts = {t for _, t, _ in docs}
+            assert texts == {"numeric-half"}
+        finally:
+            db.close()
+
+    def test_gt_skips_string_and_missing(self, tmp_path):
+        db, c = self._build_collection(tmp_path)
+        try:
+            docs = c.get_documents(filter_dict={"score": {"$gt": 0.0}})
+            texts = {t for _, t, _ in docs}
+            # Both numeric rows pass; string and missing are excluded.
+            assert texts == {"numeric-half", "numeric-five"}
+        finally:
+            db.close()
+
+    def test_sql_and_python_agree_on_string_value(self, tmp_path):
+        """SQL pre-filter (get_documents) and Python post-filter
+        (similarity_search) must produce the same set of rows."""
+        db, c = self._build_collection(tmp_path)
+        try:
+            sql_texts = {
+                text
+                for _, text, _ in c.get_documents(filter_dict={"score": {"$lt": 1.0}})
+            }
+            # similarity_search applies _matches_filter post-fetch
+            hits = c.similarity_search([0.0] * 4, k=10, filter={"score": {"$lt": 1.0}})
+            py_texts = {doc.page_content for doc, _ in hits}
+            assert sql_texts == py_texts == {"numeric-half"}
+        finally:
+            db.close()
+
+
+# ----- regression: TTL sweep atomicity --------------------------------------
+
+
+class TestTTLSweepAtomic:
+    """sweep_ttl must claim expired rows atomically.
+
+    Before the fix, ``sweep_ttl`` ran a SELECT and then a DELETE in two
+    separate steps; a concurrent ``set_ttl`` extending the deadline (or
+    ``clear_ttl``) between those two steps would still see the doc
+    deleted off the stale read. Post-fix it uses
+    ``DELETE … RETURNING`` inside one write transaction.
+    """
+
+    def test_basic_sweep_still_works(self, db_with_docs):
+        _, c, _ = db_with_docs
+        c.ttl.set(1, expires_at=time.time() - 1, on_expire="delete")
+        c.ttl.set(2, expires_at=time.time() - 1, on_expire="callback")
+        deleted, callbacks = c.ttl.sweep()
+        assert deleted == [1]
+        assert callbacks == [2]
+        # TTL rows for both must be cleared (RETURNING removed them).
+        assert c.ttl.sweep() == ([], [])
+
+    def test_extension_between_logical_check_and_delete(self, db_with_docs):
+        """If a TTL is renewed before the sweep transaction runs, the
+        atomic ``DELETE … RETURNING`` must observe the new value and
+        skip the row — even when the test races by snapshotting the
+        cutoff first.
+        """
+        _, c, _ = db_with_docs
+        c.ttl.set(3, expires_at=time.time() - 5, on_expire="delete")
+        # Capture a "what would expire as of cutoff_t0" snapshot, then
+        # extend the TTL before sweeping with that same cutoff.
+        cutoff_t0 = time.time()
+        c.ttl.set(3, expires_at=time.time() + 3600, on_expire="delete")
+        deleted, callbacks = c.ttl.sweep(now=cutoff_t0)
+        # The renewed TTL is now > cutoff_t0 → must NOT be swept.
+        assert deleted == []
+        assert callbacks == []
+        # Doc itself still present.
+        rows = c.get_documents()
+        assert any(doc_id == 3 for doc_id, _, _ in rows)
+
+    def test_clear_between_logical_check_and_delete(self, db_with_docs):
+        _, c, _ = db_with_docs
+        c.ttl.set(4, expires_at=time.time() - 1, on_expire="delete")
+        cutoff_t0 = time.time()
+        c.ttl.clear(4)
+        # Cleared TTL means there's no row to claim → no delete.
+        deleted, callbacks = c.ttl.sweep(now=cutoff_t0)
+        assert deleted == []
+        assert callbacks == []
+        rows = c.get_documents()
+        assert any(doc_id == 4 for doc_id, _, _ in rows)
