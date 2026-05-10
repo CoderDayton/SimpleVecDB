@@ -25,6 +25,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import functools
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Sequence
 from threading import Lock
@@ -62,6 +63,12 @@ class AsyncVectorCollection:
     def __repr__(self) -> str:
         return f"AsyncVectorCollection(name={self._collection.name!r})"
 
+    async def _run(self, fn, /, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, functools.partial(fn, *args, **kwargs)
+        )
+
     async def add_texts(
         self,
         texts: Sequence[str],
@@ -76,13 +83,10 @@ class AsyncVectorCollection:
 
         See VectorCollection.add_texts for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.add_texts(
-                texts, metadatas, embeddings, ids,
-                parent_ids=parent_ids, threads=threads,
-            ),
+        return await self._run(
+            self._collection.add_texts,
+            texts, metadatas, embeddings, ids,
+            parent_ids=parent_ids, threads=threads,
         )
 
     async def similarity_search(
@@ -99,12 +103,9 @@ class AsyncVectorCollection:
 
         See VectorCollection.similarity_search for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.similarity_search(
-                query, k, filter, exact=exact, threads=threads
-            ),
+        return await self._run(
+            self._collection.similarity_search,
+            query, k, filter, exact=exact, threads=threads,
         )
 
     async def similarity_search_batch(
@@ -121,12 +122,9 @@ class AsyncVectorCollection:
 
         See VectorCollection.similarity_search_batch for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.similarity_search_batch(
-                queries, k, filter, exact=exact, threads=threads
-            ),
+        return await self._run(
+            self._collection.similarity_search_batch,
+            queries, k, filter, exact=exact, threads=threads,
         )
 
     async def keyword_search(
@@ -140,10 +138,8 @@ class AsyncVectorCollection:
 
         See VectorCollection.keyword_search for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.keyword_search(query, k, filter),
+        return await self._run(
+            self._collection.keyword_search, query, k, filter,
         )
 
     async def hybrid_search(
@@ -162,18 +158,13 @@ class AsyncVectorCollection:
 
         See VectorCollection.hybrid_search for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.hybrid_search(
-                query,
-                k,
-                filter,
-                query_vector=query_vector,
-                vector_k=vector_k,
-                keyword_k=keyword_k,
-                rrf_k=rrf_k,
-            ),
+        return await self._run(
+            self._collection.hybrid_search,
+            query, k, filter,
+            query_vector=query_vector,
+            vector_k=vector_k,
+            keyword_k=keyword_k,
+            rrf_k=rrf_k,
         )
 
     async def max_marginal_relevance_search(
@@ -189,12 +180,9 @@ class AsyncVectorCollection:
 
         See VectorCollection.max_marginal_relevance_search for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.max_marginal_relevance_search(
-                query, k, fetch_k, lambda_mult, filter
-            ),
+        return await self._run(
+            self._collection.max_marginal_relevance_search,
+            query, k, fetch_k, lambda_mult, filter,
         )
 
     async def delete_by_ids(self, ids: Sequence[int]) -> None:
@@ -203,11 +191,7 @@ class AsyncVectorCollection:
 
         See VectorCollection.delete_by_ids for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.delete_by_ids(ids),
-        )
+        await self._run(self._collection.delete_by_ids, ids)
 
     async def get_documents(
         self,
@@ -220,12 +204,9 @@ class AsyncVectorCollection:
 
         See VectorCollection.get_documents for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.get_documents(
-                filter_dict=filter_dict, limit=limit, offset=offset
-            ),
+        return await self._run(
+            self._collection.get_documents,
+            filter_dict=filter_dict, limit=limit, offset=offset,
         )
 
     async def get_embeddings_by_ids(self, ids: Sequence[int]) -> dict[int, Any]:
@@ -233,10 +214,8 @@ class AsyncVectorCollection:
 
         See VectorCollection.get_embeddings_by_ids for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.get_embeddings_by_ids(list(ids)),
+        return await self._run(
+            self._collection.get_embeddings_by_ids, list(ids),
         )
 
     async def update_metadata(
@@ -246,27 +225,15 @@ class AsyncVectorCollection:
 
         See VectorCollection.update_metadata for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.update_metadata(updates),
-        )
+        return await self._run(self._collection.update_metadata, updates)
 
     async def count(self) -> int:
         """Count documents in collection."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            self._collection.count,
-        )
+        return await self._run(self._collection.count)
 
     async def save(self) -> None:
         """Save collection to disk."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor,
-            self._collection.save,
-        )
+        await self._run(self._collection.save)
 
     @property
     def dim(self) -> int | None:
@@ -283,11 +250,7 @@ class AsyncVectorCollection:
 
         See VectorCollection.remove_texts for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.remove_texts(texts, filter),
-        )
+        return await self._run(self._collection.remove_texts, texts, filter)
 
     # ─────────────────────────────────────────────────────────────────────────
     # 2.6.1 — pending vectors, counters, edges, events, TTL (Async)
@@ -301,19 +264,13 @@ class AsyncVectorCollection:
         source: str | None = None,
     ) -> None:
         """Buffer a vector update; promoted to HNSW on flush_pending()."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.update_embedding(doc_id, vector, source=source),
+        await self._run(
+            self._collection.update_embedding, doc_id, vector, source=source,
         )
 
     async def flush_pending(self, *, max_batch: int | None = None) -> int:
         """Flush buffered vector updates into the HNSW index."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.pending.flush(max_batch=max_batch),
-        )
+        return await self._run(self._collection.pending.flush, max_batch=max_batch)
 
     async def increment_metadata(
         self,
@@ -321,11 +278,7 @@ class AsyncVectorCollection:
         deltas: dict[str, int | float],
     ) -> None:
         """Atomically apply numeric deltas to JSON metadata counters."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.increment_metadata(doc_id, deltas),
-        )
+        await self._run(self._collection.increment_metadata, doc_id, deltas)
 
     async def add_edge(
         self,
@@ -338,13 +291,10 @@ class AsyncVectorCollection:
         hits: int = 0,
         metadata: dict | None = None,
     ) -> int:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.edges.add_edge(
-                src, dst, kind=kind, weight=weight, bonus=bonus,
-                hits=hits, metadata=metadata,
-            ),
+        return await self._run(
+            self._collection.edges.add_edge,
+            src, dst, kind=kind, weight=weight, bonus=bonus,
+            hits=hits, metadata=metadata,
         )
 
     async def update_edge(
@@ -361,14 +311,11 @@ class AsyncVectorCollection:
         dbonus: float = 0.0,
         dhits: int = 0,
     ) -> int:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.edges.update_edge(
-                src, dst, kind=kind, weight=weight, bonus=bonus,
-                hits=hits, metadata=metadata,
-                dweight=dweight, dbonus=dbonus, dhits=dhits,
-            ),
+        return await self._run(
+            self._collection.edges.update_edge,
+            src, dst, kind=kind, weight=weight, bonus=bonus,
+            hits=hits, metadata=metadata,
+            dweight=dweight, dbonus=dbonus, dhits=dhits,
         )
 
     async def delete_edge(
@@ -378,10 +325,8 @@ class AsyncVectorCollection:
         *,
         kind: str = "",
     ) -> int:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.edges.delete_edge(src, dst, kind=kind),
+        return await self._run(
+            self._collection.edges.delete_edge, src, dst, kind=kind,
         )
 
     async def get_edges(
@@ -393,12 +338,9 @@ class AsyncVectorCollection:
         filter: dict[str, Any] | None = None,
         limit: int | None = None,
     ) -> list:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.edges.get_edges(
-                src=src, dst=dst, kind=kind, filter=filter, limit=limit,
-            ),
+        return await self._run(
+            self._collection.edges.get_edges,
+            src=src, dst=dst, kind=kind, filter=filter, limit=limit,
         )
 
     async def set_ttl(
@@ -409,21 +351,14 @@ class AsyncVectorCollection:
         expires_at: float | None = None,
         on_expire: str = "delete",
     ) -> None:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.ttl.set(
-                doc_id, seconds=seconds, expires_at=expires_at,
-                on_expire=on_expire,
-            ),
+        await self._run(
+            self._collection.ttl.set,
+            doc_id, seconds=seconds, expires_at=expires_at,
+            on_expire=on_expire,
         )
 
     async def clear_ttl(self, doc_id: int) -> None:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.ttl.clear(doc_id),
-        )
+        await self._run(self._collection.ttl.clear, doc_id)
 
     async def sweep_ttl(
         self,
@@ -431,10 +366,8 @@ class AsyncVectorCollection:
         now: float | None = None,
         limit: int = 1000,
     ) -> tuple[list[int], list[int]]:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.ttl.sweep(now=now, limit=limit),
+        return await self._run(
+            self._collection.ttl.sweep, now=now, limit=limit,
         )
 
     async def read_events(
@@ -444,20 +377,13 @@ class AsyncVectorCollection:
         kind: str | None = None,
         limit: int = 500,
     ) -> list:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.events.read(
-                since=since, kind=kind, limit=limit,
-            ),
+        return await self._run(
+            self._collection.events.read,
+            since=since, kind=kind, limit=limit,
         )
 
     async def last_event_seq(self) -> int:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            self._collection.events.last_seq,
-        )
+        return await self._run(self._collection.events.last_seq)
 
     async def rebuild_if_needed(
         self,
@@ -470,10 +396,8 @@ class AsyncVectorCollection:
             kwargs["max_pending"] = max_pending
         if max_deleted is not None:
             kwargs["max_deleted"] = max_deleted
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.maintenance.rebuild_if_needed(**kwargs),
+        return await self._run(
+            self._collection.maintenance.rebuild_if_needed, **kwargs,
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -488,58 +412,41 @@ class AsyncVectorCollection:
         expansion_search: int | None = None,
     ) -> int:
         """Rebuild the HNSW index. See VectorCollection.rebuild_index."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.rebuild_index(
-                connectivity=connectivity,
-                expansion_add=expansion_add,
-                expansion_search=expansion_search,
-            ),
+        return await self._run(
+            self._collection.rebuild_index,
+            connectivity=connectivity,
+            expansion_add=expansion_add,
+            expansion_search=expansion_search,
         )
 
     async def get_children(self, doc_id: int) -> list:
         """Get direct children of a document."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.get_children(doc_id),
-        )
+        return await self._run(self._collection.get_children, doc_id)
 
     async def get_parent(self, doc_id: int):
         """Get parent document, or None."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.get_parent(doc_id),
-        )
+        return await self._run(self._collection.get_parent, doc_id)
 
     async def get_descendants(
         self, doc_id: int, max_depth: int | None = None
     ) -> list:
         """Get all descendants recursively."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.get_descendants(doc_id, max_depth),
+        return await self._run(
+            self._collection.get_descendants, doc_id, max_depth,
         )
 
     async def get_ancestors(
         self, doc_id: int, max_depth: int | None = None
     ) -> list:
         """Get all ancestors to root."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.get_ancestors(doc_id, max_depth),
+        return await self._run(
+            self._collection.get_ancestors, doc_id, max_depth,
         )
 
     async def set_parent(self, doc_id: int, parent_id: int | None) -> bool:
         """Set or remove parent relationship."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.set_parent(doc_id, parent_id),
+        return await self._run(
+            self._collection.set_parent, doc_id, parent_id,
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -574,17 +481,13 @@ class AsyncVectorCollection:
 
         narrowed = cast(Literal["kmeans", "minibatch_kmeans", "hdbscan"], algorithm)
 
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.cluster(
-                n_clusters,
-                narrowed,
-                filter=filter,
-                sample_size=sample_size,
-                min_cluster_size=min_cluster_size,
-                random_state=random_state,
-            ),
+        return await self._run(
+            self._collection.cluster,
+            n_clusters, narrowed,
+            filter=filter,
+            sample_size=sample_size,
+            min_cluster_size=min_cluster_size,
+            random_state=random_state,
         )
 
     async def auto_tag(
@@ -600,15 +503,12 @@ class AsyncVectorCollection:
 
         See VectorCollection.auto_tag for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.auto_tag(
-                cluster_result,
-                method=method,
-                n_keywords=n_keywords,
-                custom_callback=custom_callback,
-            ),
+        return await self._run(
+            self._collection.auto_tag,
+            cluster_result,
+            method=method,
+            n_keywords=n_keywords,
+            custom_callback=custom_callback,
         )
 
     async def assign_cluster_metadata(
@@ -624,15 +524,11 @@ class AsyncVectorCollection:
 
         See VectorCollection.assign_cluster_metadata for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.assign_cluster_metadata(
-                cluster_result,
-                tags,
-                metadata_key=metadata_key,
-                tag_key=tag_key,
-            ),
+        return await self._run(
+            self._collection.assign_cluster_metadata,
+            cluster_result, tags,
+            metadata_key=metadata_key,
+            tag_key=tag_key,
         )
 
     async def get_cluster_members(
@@ -646,12 +542,9 @@ class AsyncVectorCollection:
 
         See VectorCollection.get_cluster_members for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.get_cluster_members(
-                cluster_id, metadata_key=metadata_key
-            ),
+        return await self._run(
+            self._collection.get_cluster_members,
+            cluster_id, metadata_key=metadata_key,
         )
 
     async def save_cluster(
@@ -666,12 +559,9 @@ class AsyncVectorCollection:
 
         See VectorCollection.save_cluster for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.save_cluster(
-                name, cluster_result, metadata=metadata
-            ),
+        await self._run(
+            self._collection.save_cluster,
+            name, cluster_result, metadata=metadata,
         )
 
     async def load_cluster(
@@ -683,11 +573,7 @@ class AsyncVectorCollection:
 
         See VectorCollection.load_cluster for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.load_cluster(name),
-        )
+        return await self._run(self._collection.load_cluster, name)
 
     async def list_clusters(self) -> list[dict[str, Any]]:
         """
@@ -695,11 +581,7 @@ class AsyncVectorCollection:
 
         See VectorCollection.list_clusters for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            self._collection.list_clusters,
-        )
+        return await self._run(self._collection.list_clusters)
 
     async def delete_cluster(self, name: str) -> bool:
         """
@@ -707,11 +589,7 @@ class AsyncVectorCollection:
 
         See VectorCollection.delete_cluster for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.delete_cluster(name),
-        )
+        return await self._run(self._collection.delete_cluster, name)
 
     async def assign_to_cluster(
         self,
@@ -725,12 +603,9 @@ class AsyncVectorCollection:
 
         See VectorCollection.assign_to_cluster for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._collection.assign_to_cluster(
-                name, doc_ids, metadata_key=metadata_key
-            ),
+        return await self._run(
+            self._collection.assign_to_cluster,
+            name, doc_ids, metadata_key=metadata_key,
         )
 
 
@@ -810,16 +685,19 @@ class AsyncVectorDB:
                 )
             return self._collections[cache_key]
 
+    async def _run(self, fn, /, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, functools.partial(fn, *args, **kwargs)
+        )
+
     def list_collections(self) -> list[str]:
         """Return names of all persisted collections in the database."""
         return self._db.list_collections()
 
     async def delete_collection(self, name: str) -> None:
         """Delete a collection and all its data."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor, lambda: self._db.delete_collection(name)
-        )
+        await self._run(self._db.delete_collection, name)
         # Evict from async-level cache too — match any tuple whose first
         # element is this name (the cache key now includes store_embeddings).
         with self._collections_lock:
@@ -842,17 +720,11 @@ class AsyncVectorDB:
 
         See VectorDB.search_collections for full documentation.
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: self._db.search_collections(
-                query,
-                collections,
-                k,
-                filter,
-                normalize_scores=normalize_scores,
-                parallel=parallel,
-            ),
+        return await self._run(
+            self._db.search_collections,
+            query, collections, k, filter,
+            normalize_scores=normalize_scores,
+            parallel=parallel,
         )
 
     async def vacuum(self, checkpoint_wal: bool = True) -> None:
@@ -864,10 +736,7 @@ class AsyncVectorDB:
         Args:
             checkpoint_wal: If True (default), also truncate the WAL file.
         """
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor, lambda: self._db.vacuum(checkpoint_wal)
-        )
+        await self._run(self._db.vacuum, checkpoint_wal)
 
     def __repr__(self) -> str:
         return f"AsyncVectorDB(path={self._db.path!r})"
