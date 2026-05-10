@@ -8,6 +8,7 @@ using usearch HNSW index with SQLite metadata storage.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -1483,6 +1484,11 @@ class VectorCollection:
             raise ValueError(
                 f"Vector dim {arr.shape[0]} != index dim {self._index.ndim}"
             )
+        # NaN/inf would survive the buffer and corrupt distance math on flush.
+        if not np.all(np.isfinite(arr)):
+            raise ValueError(
+                "update_embedding vector must be finite (no NaN/inf)"
+            )
         self._catalog.upsert_pending_vector(doc_id, arr.tobytes(), source)
 
     @property
@@ -1767,11 +1773,25 @@ class _TTLNamespace:
             raise ValueError("Must pass expires_at or seconds")
         if expires_at is not None and seconds is not None:
             raise ValueError("Pass exactly one of expires_at / seconds")
+        if on_expire not in ("delete", "callback"):
+            raise ValueError(
+                f"on_expire must be 'delete' or 'callback', got {on_expire!r}"
+            )
         if seconds is not None:
-            expires_at = time.time() + float(seconds)
-        assert expires_at is not None
+            secs = float(seconds)
+            if not math.isfinite(secs):
+                raise ValueError(
+                    f"ttl.set seconds must be finite, got {seconds!r}"
+                )
+            expires_at = time.time() + secs
+        else:
+            expires_at = float(expires_at)
+            if not math.isfinite(expires_at):
+                raise ValueError(
+                    f"ttl.set expires_at must be finite, got {expires_at!r}"
+                )
         return self._collection._catalog.set_ttl(
-            doc_id, float(expires_at), on_expire=on_expire,
+            doc_id, expires_at, on_expire=on_expire,
         )
 
     def clear(self, doc_id: int) -> int:
@@ -1797,8 +1817,13 @@ class _TTLNamespace:
             try:
                 self._collection._index.remove(deleted)
             except Exception:
-                _logger.debug(
-                    "ttl.sweep: failed to remove %d ids from HNSW",
+                # Catalog rows are already gone; index drift means
+                # subsequent searches may surface phantom hits until a
+                # rebuild_index() runs. Log loud enough to be noticed.
+                _logger.warning(
+                    "ttl.sweep: catalog deleted %d ids but HNSW remove "
+                    "failed; index is now divergent — call "
+                    "rebuild_index() to resync",
                     len(deleted), exc_info=True,
                 )
         return deleted, callback_ids
@@ -1813,6 +1838,12 @@ class _TTLNamespace:
         Idempotent: a second call is a no-op. The thread runs until
         `stop_background()` is called or the process exits.
         """
+        interval_f = float(interval)
+        if not math.isfinite(interval_f) or interval_f <= 0:
+            raise ValueError(
+                f"ttl.start_background interval must be a positive finite "
+                f"number, got {interval!r}"
+            )
         if self._thread is not None and self._thread.is_alive():
             return
         stop_event = threading.Event()
@@ -1823,9 +1854,11 @@ class _TTLNamespace:
                 try:
                     self.sweep()
                 except Exception:
-                    _logger.debug("ttl background sweep failed",
-                                  exc_info=True)
-                stop_event.wait(interval)
+                    _logger.warning(
+                        "ttl background sweep failed for collection %s",
+                        coll.name, exc_info=True,
+                    )
+                stop_event.wait(interval_f)
 
         thread = threading.Thread(
             target=_loop,
@@ -1837,11 +1870,25 @@ class _TTLNamespace:
         thread.start()
 
     def stop_background(self) -> None:
-        """Stop the background sweeper. Idempotent."""
+        """Stop the background sweeper. Idempotent.
+
+        Waits up to 5s for the loop to observe the stop event. If the
+        thread is still alive after the timeout (e.g. blocked in a
+        long-running sweep), `_thread` is left in place so a subsequent
+        start_background() does not spawn a duplicate sweeper.
+        """
         if self._stop_event is not None:
             self._stop_event.set()
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=5.0)
+            if self._thread.is_alive():
+                _logger.warning(
+                    "ttl.stop_background: sweeper for %s did not exit "
+                    "within 5s; leaving handle in place to prevent "
+                    "duplicate threads on next start_background()",
+                    self._collection.name,
+                )
+                return
         self._thread = None
         self._stop_event = None
 

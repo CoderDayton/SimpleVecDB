@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import threading
 from typing import Any, TYPE_CHECKING, Callable
@@ -58,6 +59,23 @@ def _validate_identifier(name: str, what: str = "identifier") -> None:
         raise ValueError(
             f"Invalid {what} '{name}'. Must match {_SAFE_IDENT_RE.pattern}."
         )
+
+
+def _check_finite_edge_field(value: Any, field: str) -> None:
+    """Reject NaN/inf for numeric edge columns (weight/bonus/dweight/dbonus).
+
+    A NaN value would persist into the column and silently break every
+    subsequent range filter (NaN comparisons return false in SQL), so
+    fail at the boundary instead.
+    """
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"edge {field} must be int or float, got {type(value).__name__}"
+        )
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"edge {field} must be finite, got {value!r}")
 
 
 class _TxState:
@@ -1399,6 +1417,8 @@ class CatalogManager:
         """Insert an edge; raises if (src, dst, kind) already exists."""
         if not isinstance(kind, str):
             raise TypeError(f"edge kind must be str, got {type(kind).__name__}")
+        _check_finite_edge_field(weight, "weight")
+        _check_finite_edge_field(bonus, "bonus")
         with self._writable():
             cur = self.conn.execute(
                 f"""
@@ -1438,6 +1458,8 @@ class CatalogManager:
         """
         if not isinstance(kind, str):
             raise TypeError(f"edge kind must be str, got {type(kind).__name__}")
+        _check_finite_edge_field(weight, "weight")
+        _check_finite_edge_field(bonus, "bonus")
         meta_json = json.dumps(metadata) if metadata is not None else None
         with self._writable():
             cur = self.conn.execute(
@@ -1491,6 +1513,10 @@ class CatalogManager:
         """
         if not isinstance(kind, str):
             raise TypeError(f"edge kind must be str, got {type(kind).__name__}")
+        _check_finite_edge_field(weight, "weight")
+        _check_finite_edge_field(bonus, "bonus")
+        _check_finite_edge_field(dweight, "dweight")
+        _check_finite_edge_field(dbonus, "dbonus")
         meta_json = json.dumps(metadata) if metadata is not None else None
         with self._writable():
             cur = self.conn.execute(

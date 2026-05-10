@@ -481,6 +481,12 @@ def _validate_operator_dict(key: str, op_dict: dict[str, Any]) -> None:
                 raise ValueError(
                     f"'{key}' $between bounds must be finite numbers, got {arg!r}"
                 )
+            if lo > hi:
+                # SQL `BETWEEN lo AND hi` evaluates to false when lo > hi,
+                # silently returning no rows. Surface the mistake instead.
+                raise ValueError(
+                    f"'{key}' $between requires lo <= hi, got [{lo}, {hi}]"
+                )
 
 
 
