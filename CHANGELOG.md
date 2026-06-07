@@ -43,6 +43,12 @@ surfaced by a code review. Two intentional behavior changes are noted under
   expensive build runs without the shared lock (held only to snapshot and swap);
   writes that land during the build are folded into the new index before the
   swap.
+- **Embedding server caps request body size** — an ASGI middleware rejects
+  request bodies larger than the server's own accept limits before they are
+  buffered/parsed, closing an unauthenticated memory-exhaustion vector (only
+  relevant with the `[server]` extra exposed on a network). A missing
+  encryption salt sidecar now logs a warning instead of silently falling back
+  to the shared legacy salt.
 
 #### Changed
 

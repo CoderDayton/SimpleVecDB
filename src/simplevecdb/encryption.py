@@ -186,7 +186,15 @@ def _resolve_salt(
         return _NORMALIZE_KEY_SALT
 
     if not create_if_missing:
-        # Legacy resource — created before per-DB salts existed.
+        # Legacy resource — created before per-DB salts existed, or a sidecar
+        # that was removed. Either way per-DB salt protection is not active;
+        # surface it (instead of silently using the shared fixed salt) so
+        # operators can migrate, or notice a deleted sidecar.
+        _logger.warning(
+            "No salt sidecar for %s; using the legacy shared salt. Per-DB salt "
+            "protection is not active for this resource.",
+            resource_path,
+        )
         return _NORMALIZE_KEY_SALT
 
     salt = secrets.token_bytes(SALT_SIZE)
@@ -322,6 +330,11 @@ def create_encrypted_connection(
             # database (sidecar present). Normalize every key shape to a
             # 32-byte derived value and feed it as ``x'hex'`` so we never
             # interpolate raw passphrase characters into SQL.
+            #
+            # At-rest key strength comes from the application-layer PBKDF2
+            # (PBKDF2_ITERATIONS = 600k) used to derive this 32-byte key. The
+            # ``x'hex'`` form is a raw key, so SQLCipher runs no internal KDF
+            # and its build-dependent ``kdf_iter`` default does not apply here.
             salt = _resolve_salt(db_path_obj, create_if_missing=is_new_db)
             normalized_key = _normalize_key(key, salt=salt)
             conn.execute(f"PRAGMA key = \"x'{normalized_key.hex()}'\"")
