@@ -224,6 +224,12 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         if internal_id is not None:
             self._collection.delete_by_ids([internal_id])
             self._id_map.pop(internal_id, None)
+        else:
+            _logger.warning(
+                "delete(ref_doc_id=%r): no matching document found; nothing "
+                "was deleted.",
+                ref_doc_id,
+            )
 
     def delete_nodes(
         self,

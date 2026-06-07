@@ -102,7 +102,7 @@ def _derive_key(passphrase: str | bytes, salt: bytes) -> bytes:
 # cap. Access is serialized by ``_NORMALIZE_KEY_CACHE_LOCK`` so concurrent
 # normalization from multiple threads stays consistent.
 _NORMALIZE_KEY_CACHE_MAX = 64
-_NORMALIZE_KEY_CACHE: "OrderedDict[tuple[bytes, bytes], bytes]" = OrderedDict()
+_NORMALIZE_KEY_CACHE: "OrderedDict[bytes, bytes]" = OrderedDict()
 _NORMALIZE_KEY_CACHE_LOCK = Lock()
 
 
@@ -120,10 +120,13 @@ def _normalize_key(key: str | bytes, salt: bytes | None = None) -> bytes:
 
     salt_to_use = salt if salt is not None else _NORMALIZE_KEY_SALT
 
-    # Cache key includes both the raw passphrase bytes and the salt so the
-    # same passphrase yields different cache entries for different DBs.
+    # Key the cache by a salted hash rather than the raw passphrase, so
+    # passphrase bytes are not retained in this long-lived process dict.
+    # (key_bytes itself is transient and eligible for GC after this call.)
     key_bytes = key.encode("utf-8") if isinstance(key, str) else bytes(key)
-    cache_key = (key_bytes, salt_to_use)
+    cache_key = hashlib.sha256(
+        b"svdb-key\x00" + salt_to_use + b"\x00" + key_bytes
+    ).digest()
 
     with _NORMALIZE_KEY_CACHE_LOCK:
         cached = _NORMALIZE_KEY_CACHE.get(cache_key)

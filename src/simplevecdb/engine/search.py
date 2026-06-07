@@ -356,6 +356,11 @@ class SearchEngine:
             if cid not in docs_map:
                 continue
             text, metadata = docs_map[cid]
+            # Defensive parity with the vector side: the SQL filter already
+            # excluded non-matches, but apply the Python check too so a
+            # SQL/Python grammar divergence can't admit a wrong candidate.
+            if filter and not self._matches_filter(metadata, filter):
+                continue
             rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (rrf_k + kw_rank + 1)
             if cid not in doc_lookup:
                 doc_lookup[cid] = Document(page_content=text, metadata=metadata)

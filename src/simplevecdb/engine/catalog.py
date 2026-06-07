@@ -324,6 +324,10 @@ class CatalogManager:
         self._ensure_embedding_column()
         self._ensure_parent_id_column()
         self._ensure_fts_table()
+        # Create the cluster-state table eagerly so a first save_cluster inside a
+        # rolled-back transaction cannot leave _cluster_table_ready set without
+        # the table actually existing.
+        self._ensure_cluster_table()
         # 2.6.1 auxiliary tables (pending vectors, edges, events, TTL).
         # Each is idempotent (CREATE TABLE IF NOT EXISTS), so existing 2.6.0
         # databases gain them transparently on first open.
@@ -945,9 +949,24 @@ class CatalogManager:
             ORDER BY score ASC
             LIMIT ?
         """
+        import sqlite3  # noqa: PLC0415
+
         params = (query,) + tuple(filter_params) + (k,)
-        with self._lock:
-            rows = self.conn.execute(sql, params).fetchall()
+        try:
+            with self._lock:
+                rows = self.conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError as exc:
+            # FTS5 raises OperationalError on a malformed MATCH query (unbalanced
+            # quotes, a bare operator, ...). Surface a clear caller-facing error
+            # instead of the raw SQLite message; re-raise unrelated op errors.
+            msg = str(exc).lower()
+            if any(
+                s in msg for s in ("fts5", "syntax error", "unterminated", "malformed")
+            ):
+                raise ValueError(
+                    f"Invalid full-text search query {query!r}: {exc}"
+                ) from exc
+            raise
         return [(int(row[0]), float(row[1])) for row in rows]
 
     def build_filter_clause(

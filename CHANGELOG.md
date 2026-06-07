@@ -49,6 +49,18 @@ surfaced by a code review. Two intentional behavior changes are noted under
   relevant with the `[server]` extra exposed on a network). A missing
   encryption salt sidecar now logs a warning instead of silently falling back
   to the shared legacy salt.
+- **Robustness pass** — malformed FTS5 keyword queries raise `ValueError` instead
+  of a raw SQLite error; the cluster-state table is created eagerly so a
+  rolled-back first `save_cluster` cannot desync it; a non-integer
+  `EMBEDDING_BATCH_SIZE`/`EMBEDDING_SERVER_MAX_REQUEST_ITEMS` env value warns and
+  falls back instead of crashing import; `vacuum()` holds the DB lock; a failed
+  index add after the catalog commit is logged (divergence visibility); hybrid
+  search applies the Python metadata filter on the keyword side too (SQL/Python
+  parity); `logging.configure_logging` swaps handlers atomically.
+- **Encryption key cache no longer retains raw passphrases** — it is keyed by a
+  salted hash of the passphrase rather than the passphrase bytes.
+- **LangChain `asimilarity_search_with_score`** offloads to a thread instead of
+  blocking the event loop.
 
 #### Changed
 

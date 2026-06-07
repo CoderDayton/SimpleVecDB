@@ -398,10 +398,22 @@ class VectorCollection:
                 parent_ids=batch_parent_ids,
             )
 
-            # Add to usearch index
-            self._index.add(
-                np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads
-            )
+            # Add to usearch index. The catalog rows above are already
+            # committed, so if this fails the two stores diverge (rows present,
+            # vectors missing). Log it so the divergence is visible instead of
+            # silent; recovery is rebuild_index() (needs store_embeddings=True).
+            try:
+                self._index.add(
+                    np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads
+                )
+            except Exception:
+                _logger.error(
+                    "Index add failed for %d docs after catalog commit; catalog "
+                    "and index have diverged. Run rebuild_index() to resync "
+                    "(requires store_embeddings=True).",
+                    len(doc_ids),
+                )
+                raise
 
             all_ids.extend(doc_ids)
 
@@ -2846,10 +2858,13 @@ class VectorDB:
         Args:
             checkpoint_wal: If True (default), also truncate the WAL file.
         """
-        if checkpoint_wal:
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        self.conn.execute("VACUUM")
-        self.conn.execute("PRAGMA optimize")
+        # Hold the DB lock: wal_checkpoint(TRUNCATE) and VACUUM require exclusive
+        # access, and other threads share this sqlite3 connection.
+        with self._lock:
+            if checkpoint_wal:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.conn.execute("VACUUM")
+            self.conn.execute("PRAGMA optimize")
 
     def save(self) -> None:
         """Save all collection indexes to disk."""

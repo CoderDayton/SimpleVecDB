@@ -104,9 +104,6 @@ def configure_logging(
 
     logger.setLevel(level)
 
-    # Remove existing handlers to avoid duplicates
-    logger.handlers.clear()
-
     # Create handler
     if handler is None:
         handler = logging.StreamHandler()
@@ -116,7 +113,9 @@ def configure_logging(
     handler.setFormatter(formatter)
     handler.setLevel(level)
 
-    logger.addHandler(handler)
+    # Replace handlers in a single assignment so a concurrent logging call never
+    # observes a window with no handlers (clear()+addHandler() leaves one).
+    logger.handlers[:] = [handler]
 
 
 @contextmanager

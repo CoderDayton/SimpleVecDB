@@ -359,7 +359,8 @@ class UsearchIndex:
 
         Note: usearch HNSW doesn't support true deletion efficiently.
         Keys are marked as deleted but space isn't reclaimed until rebuild.
-        For heavy delete workloads, consider periodic rebuild().
+        For heavy delete workloads, periodically call
+        ``VectorCollection.rebuild_index()`` to reclaim space and recall.
 
         Args:
             keys: Keys to remove

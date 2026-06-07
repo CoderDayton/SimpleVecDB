@@ -76,19 +76,41 @@ class Config:
     EMBEDDING_MODEL_REGISTRY_LOCKED: bool = _parse_bool_env(
         os.getenv("EMBEDDING_MODEL_REGISTRY_LOCKED"), True
     )
-    # Auto-detect optimal batch size if not explicitly set
+    # Auto-detect optimal batch size if not explicitly set. Tolerate a malformed
+    # env value (e.g. "auto") instead of crashing every import of the package.
     _batch_size_env = os.getenv("EMBEDDING_BATCH_SIZE")
-    EMBEDDING_BATCH_SIZE: int = (
-        int(_batch_size_env)
-        if _batch_size_env is not None
-        else get_optimal_batch_size()
-    )
+    try:
+        EMBEDDING_BATCH_SIZE: int = (
+            int(_batch_size_env)
+            if _batch_size_env is not None
+            else get_optimal_batch_size()
+        )
+    except ValueError:
+        import warnings as _warnings
+
+        _warnings.warn(
+            f"Invalid EMBEDDING_BATCH_SIZE={_batch_size_env!r}; using auto-detected size.",
+            stacklevel=2,
+        )
+        EMBEDDING_BATCH_SIZE = get_optimal_batch_size()
     _request_limit_env = os.getenv("EMBEDDING_SERVER_MAX_REQUEST_ITEMS") or os.getenv(
         "EMBEDDING_SERVER_MAX_BATCH"
     )
-    EMBEDDING_SERVER_MAX_REQUEST_ITEMS: int = (
-        int(_request_limit_env) if _request_limit_env else max(32, EMBEDDING_BATCH_SIZE)
-    )
+    try:
+        EMBEDDING_SERVER_MAX_REQUEST_ITEMS: int = (
+            int(_request_limit_env)
+            if _request_limit_env
+            else max(32, EMBEDDING_BATCH_SIZE)
+        )
+    except ValueError:
+        import warnings as _warnings
+
+        _warnings.warn(
+            f"Invalid EMBEDDING_SERVER_MAX_REQUEST_ITEMS={_request_limit_env!r}; "
+            "using a default.",
+            stacklevel=2,
+        )
+        EMBEDDING_SERVER_MAX_REQUEST_ITEMS = max(32, EMBEDDING_BATCH_SIZE)
     EMBEDDING_SERVER_API_KEYS: set[str] = _parse_api_keys(
         os.getenv("EMBEDDING_SERVER_API_KEYS")
     )

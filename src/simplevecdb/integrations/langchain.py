@@ -294,6 +294,14 @@ class SimpleVecDBVectorStore(VectorStore):
 
         return await asyncio.to_thread(self.similarity_search, *args, **kwargs)
 
+    async def asimilarity_search_with_score(self, *args, **kwargs):
+        import asyncio
+
+        # Base class would call the sync version on the event loop; offload it.
+        return await asyncio.to_thread(
+            self.similarity_search_with_score, *args, **kwargs
+        )
+
     async def amax_marginal_relevance_search(
         self,
         *args,
