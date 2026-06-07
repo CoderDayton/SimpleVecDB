@@ -1143,6 +1143,29 @@ class CatalogManager:
             result.append((int(row_id), text, meta))
         return result
 
+    def find_ids_without_metadata_key(self, key: str) -> list[int]:
+        """Return ids whose metadata object lacks the top-level ``key``.
+
+        Pushes the key-existence test into SQLite so callers that only need the
+        unassigned ids avoid loading and JSON-parsing every row's text +
+        metadata. ``json_each`` enumerates the literal top-level members, so the
+        bound ``key`` is matched exactly as stored. Unlike a ``$.<key>`` JSON
+        path this is correct for keys containing ``.`` or ``[`` (which a path
+        would misread as nested access) and treats a present-but-null value as
+        assigned — matching the Python ``key in meta`` test it replaces. NULL or
+        ``{}`` metadata yields no members, so such rows count as unassigned.
+        ``key`` is bound as a parameter and cannot inject SQL.
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                f"SELECT id FROM {self._table_name} "
+                f"WHERE NOT EXISTS ("
+                f"SELECT 1 FROM json_each({self._table_name}.metadata) "
+                f"WHERE key = ?)",
+                (key,),
+            ).fetchall()
+        return [int(r[0]) for r in rows]
+
     def update_metadata_batch(self, updates: list[tuple[int, dict[str, Any]]]) -> int:
         """
         Update metadata for multiple documents in a single transaction.
@@ -2123,13 +2146,36 @@ class CatalogManager:
         # writer cannot create a cycle-forming edge between the check and the
         # UPDATE. The lock serializes; `with self.conn:` wraps the UPDATE in
         # an implicit transaction that commits on success.
+        from .. import constants
+
         with self._writable():
             if parent_id is not None:
                 if parent_id == doc_id:
                     raise ValueError("A document cannot be its own parent")
-                descendants = self.get_descendants(doc_id)
-                descendant_ids = {d[0] for d in descendants}
-                if parent_id in descendant_ids:
+                # A cycle forms iff doc_id is already an ancestor of parent_id
+                # (then doc_id -> parent_id -> ... -> doc_id). Walk *up* the
+                # ancestor chain of parent_id — bounded by MAX_HIERARCHY_DEPTH,
+                # ids only, with an early LIMIT 1 — instead of materialising
+                # doc_id's entire descendant subtree (text + metadata) just to
+                # test one membership.
+                cycle = self.conn.execute(
+                    f"""
+                    WITH RECURSIVE ancestors(id, depth) AS (
+                        SELECT parent_id, 1 FROM {self._table_name}
+                        WHERE id = ? AND parent_id IS NOT NULL
+
+                        UNION ALL
+
+                        SELECT t.parent_id, a.depth + 1
+                        FROM {self._table_name} t
+                        JOIN ancestors a ON t.id = a.id
+                        WHERE t.parent_id IS NOT NULL AND a.depth < ?
+                    )
+                    SELECT 1 FROM ancestors WHERE id = ? LIMIT 1
+                    """,
+                    (parent_id, constants.MAX_HIERARCHY_DEPTH, doc_id),
+                ).fetchone()
+                if cycle is not None:
                     raise ValueError(
                         f"Cannot set parent: document {parent_id} is a descendant of {doc_id}"
                     )

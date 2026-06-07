@@ -5,6 +5,43 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2026-06-06
+
+### Clustering and hierarchy fixes
+
+Internal correctness and performance work on the clustering and hierarchy
+layers. No public API changes; existing databases are unaffected.
+
+#### Fixed
+
+- **`load_cluster` survives empty k-means clusters** — when k-means leaves a
+  requested cluster empty (common with duplicate vectors or `n_clusters` near
+  the number of distinct points), the stored `n_clusters` is smaller than the
+  number of centroid rows. The centroid reshape now derives its row count from
+  the stored buffer rather than `n_clusters`, which previously raised
+  `ValueError` on load.
+- **`assign_to_cluster` matches metadata keys literally** — a `metadata_key`
+  containing `.` or `[` is now matched as a literal top-level key (via
+  `json_each`) instead of being misread as a nested JSON path, which had caused
+  every already-assigned document to be re-assigned on each call.
+- **`cluster(algorithm="hdbscan", sample_size=…)` raises instead of silently
+  dropping documents** — HDBSCAN produces no centroids, so out-of-sample
+  documents cannot be assigned. The combination now raises a clear `ValueError`
+  rather than clustering only the sample.
+
+#### Performance
+
+- **BLAS-backed out-of-sample centroid assignment** — nearest-centroid
+  assignment uses the `‖c‖² − 2·x·c` expansion (a single matmul) instead of
+  materialising the dense `(n_vectors, n_centroids, dim)` broadcast temporary
+  that could exhaust memory on large collections.
+- **Unassigned-id lookup pushed into SQLite** — `assign_to_cluster(doc_ids=None)`
+  finds documents lacking the cluster key with one `json_each` query instead of
+  loading and JSON-parsing every row's text and metadata.
+- **Bounded ancestor-walk for cycle detection** — `set_parent` detects
+  parent/child cycles by walking the ancestor chain with a depth-bounded
+  recursive CTE instead of materialising the entire descendant subtree.
+
 ## [2.6.1] - 2026-05-10
 
 ### Storage, mutation, and eventing improvements

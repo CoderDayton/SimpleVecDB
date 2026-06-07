@@ -1112,6 +1112,12 @@ class VectorCollection:
             effective_n_clusters = min(n_clusters, len(doc_ids))
 
         if sample_size and sample_size < len(doc_ids):
+            if algorithm == "hdbscan":
+                raise ValueError(
+                    "sample_size is not supported with the 'hdbscan' algorithm: "
+                    "HDBSCAN produces no centroids, so out-of-sample documents "
+                    "cannot be assigned to clusters. Cluster the full set instead."
+                )
             rng = np.random.default_rng(random_state)
             sample_indices = rng.choice(len(doc_ids), sample_size, replace=False)
             sample_ids = [doc_ids[i] for i in sample_indices]
@@ -1320,8 +1326,13 @@ class VectorCollection:
         if centroids_bytes is not None:
             dim = self.dim
             if dim:
+                # Derive the row count from the buffer (-1) rather than the
+                # stored ``n_clusters``: k-means can leave a requested cluster
+                # empty (common with duplicate vectors or n_clusters near the
+                # number of distinct points), so n_clusters_found < centroid
+                # rows and a reshape(n_clusters, dim) would raise ValueError.
                 centroids = np.frombuffer(centroids_bytes, dtype=np.float32).reshape(
-                    n_clusters, dim
+                    -1, dim
                 )
 
         result = ClusterResult(
@@ -1382,13 +1393,13 @@ class VectorCollection:
             )
 
         if doc_ids is None:
-            all_ids = list(self._index.keys())
-            # Get all documents to check for metadata key existence
-            all_docs = self._catalog.get_all_docs_with_text()
-            assigned_ids = {
-                doc_id for doc_id, _, meta in all_docs if metadata_key in meta
-            }
-            doc_ids = [d for d in all_ids if d not in assigned_ids]
+            # Push the "already assigned?" test into SQLite so we don't load
+            # and JSON-parse every row's text + metadata just to find the
+            # unassigned ids. Intersect with the index keys so we only try to
+            # assign documents that actually have a vector.
+            index_keys = set(self._index.keys())
+            unassigned = self._catalog.find_ids_without_metadata_key(metadata_key)
+            doc_ids = [d for d in unassigned if d in index_keys]
 
         if not doc_ids:
             return 0
@@ -2316,7 +2327,7 @@ class _CountersNamespace:
 
 class VectorDB:
     """
-    Dead-simple local vector database powered by usearch HNSW.
+    Local-first, embedded vector database powered by usearch HNSW.
 
     SQLite stores metadata and text; usearch stores vectors in separate
     .usearch files per collection. Provides Chroma-like API with built-in
