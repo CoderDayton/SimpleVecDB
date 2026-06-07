@@ -119,9 +119,15 @@ class _CatalogWritable:
 
     def __enter__(self):
         self._lock.acquire()
-        if self._tx.depth == 0:
-            self._conn.__enter__()
-            self._owns_conn = True
+        try:
+            if self._tx.depth == 0:
+                self._conn.__enter__()
+                self._owns_conn = True
+        except BaseException:
+            # __exit__ is not called if __enter__ raises; release the lock
+            # ourselves so a connection-level error cannot leak it.
+            self._lock.release()
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -981,7 +987,10 @@ class CatalogManager:
         clauses: list[str] = []
         params: list[Any] = []
         for key, value in normalized.items():
-            json_path = f"$.{key}"
+            # Quote the path label so a literal key like "a.b" matches the
+            # top-level member, not the nested path a -> b (matches the Python
+            # _matches_filter semantics and find_ids_without_metadata_key).
+            json_path = f'$."{key}"'
             text_extract = f"json_extract({metadata_column}, ?)"
             num_extract = f"CAST({text_extract} AS REAL)"
             type_extract = f"json_type({metadata_column}, ?)"

@@ -470,6 +470,18 @@ class UsearchIndex:
             return []
         return [int(k) for k in self._index.keys]
 
+    def _vectors_from_index(self, keys: NDArray[np.uint64]) -> NDArray[np.float32]:
+        """Fetch stored vectors for keys, unpacking BIT-quantized bytes to ±1 floats.
+
+        For BIT quantization usearch stores packed bytes (ndim/8 per vector); a
+        plain float cast would yield the wrong shape and meaningless values, so
+        the bits are unpacked back to the float dimension.
+        """
+        raw = self._index[keys]
+        if self._quantization == Quantization.BIT:
+            return _unpack_bits(np.asarray(raw, dtype=np.uint8), self._ndim or 1)
+        return np.asarray(raw, dtype=np.float32)
+
     def get(self, keys: NDArray[np.uint64]) -> NDArray[np.float32]:
         """
         Retrieve vectors by their keys.
@@ -498,7 +510,7 @@ class UsearchIndex:
 
         if existing_mask.all():
             # Fast path: all keys exist, batch retrieve
-            return np.asarray(self._index[keys], dtype=np.float32)
+            return self._vectors_from_index(keys)
 
         # Mixed: some keys missing
         _logger.warning(
@@ -507,7 +519,7 @@ class UsearchIndex:
         )
         result = np.zeros((len(keys), ndim), dtype=np.float32)
         existing_keys = keys[existing_mask]
-        result[existing_mask] = np.asarray(self._index[existing_keys], dtype=np.float32)
+        result[existing_mask] = self._vectors_from_index(existing_keys)
         return result
 
     def __del__(self) -> None:

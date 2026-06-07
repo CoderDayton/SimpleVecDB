@@ -198,6 +198,9 @@ class VectorCollection:
         # collections sharing the same sqlite3.Connection serialize their
         # transactional access from Python.
         self._lock: threading.RLock = lock if lock is not None else threading.RLock()
+        # Serializes rebuild_index() calls against each other WITHOUT holding the
+        # shared DB lock during the (slow) HNSW build. Distinct from self._lock.
+        self._rebuild_lock = threading.Lock()
         # Shared transaction depth; defaults to a per-collection state when
         # the parent VectorDB didn't pass one (e.g. legacy direct ctor use).
         self._tx_state: _TxState = tx_state if tx_state is not None else _TxState()
@@ -844,37 +847,61 @@ class VectorCollection:
         """
         _logger.info("Rebuilding usearch index for collection '%s'...", self.name)
 
-        # Serialize the entire fetch + build + swap on the connection-level
-        # lock so concurrent add/delete operations cannot mutate the catalog
-        # mid-rebuild and produce a stale or inconsistent snapshot. The lock
-        # is reentrant; CatalogManager read methods reacquire it but that
-        # is harmless under RLock.
-        with self._lock:
-            return self._rebuild_index_locked(
-                connectivity, expansion_add, expansion_search
+        # Serialize rebuilds against each other with a dedicated lock so two
+        # concurrent rebuild_index() calls cannot race on the .rebuild file —
+        # WITHOUT holding the shared DB lock during the slow HNSW build below.
+        with self._rebuild_lock:
+            # Phase 1 (DB lock): snapshot ids + embeddings from SQLite.
+            with self._lock:
+                snapshot = self._rebuild_snapshot()
+            if snapshot is None:
+                return 0
+            keys, vectors, ndim, old_path = snapshot
+
+            # Phase 2 (no DB lock): build the new index from the snapshot. The
+            # HNSW build is the expensive step and does not need the DB lock, so
+            # searches and writes on this and other collections are not blocked.
+            rebuild_path = old_path.with_suffix(old_path.suffix + ".rebuild")
+            if rebuild_path.exists():
+                rebuild_path.unlink()
+            new_index = UsearchIndex(
+                index_path=str(rebuild_path),
+                ndim=ndim,
+                distance_strategy=self.distance_strategy,
+                quantization=self.quantization,
+                connectivity=connectivity
+                if connectivity is not None
+                else constants.USEARCH_DEFAULT_CONNECTIVITY,
+                expansion_add=expansion_add
+                if expansion_add is not None
+                else constants.USEARCH_DEFAULT_EXPANSION_ADD,
+                expansion_search=expansion_search
+                if expansion_search is not None
+                else constants.USEARCH_DEFAULT_EXPANSION_SEARCH,
             )
+            new_index.add(keys, vectors)
 
-    def _rebuild_index_locked(
+            # Phase 3 (DB lock): fold in writes that landed during the build,
+            # then atomically swap the rebuilt index into place.
+            with self._lock:
+                return self._rebuild_commit(
+                    new_index, keys, ndim, old_path, rebuild_path
+                )
+
+    def _rebuild_snapshot(
         self,
-        connectivity: int | None,
-        expansion_add: int | None,
-        expansion_search: int | None,
-    ) -> int:
-        # Precondition: caller must already hold ``self._lock``. ``rebuild_index``
-        # is the only public entry point and acquires it before delegating; this
-        # private helper relies on RLock re-entrancy so the catalog reads below
-        # are serialized against concurrent add/delete on the shared connection.
-        # Routing the read through CatalogManager keeps the lock invariant
-        # explicit instead of bare ``self.conn.execute(...)``.
-        all_ids = self._catalog.list_all_ids()
+    ) -> tuple[np.ndarray, np.ndarray, int, Path] | None:
+        """Snapshot (keys, vectors, ndim, old_path) from SQLite under the DB lock.
 
+        Returns None when the collection has no documents; raises if no usable
+        embeddings are stored. The caller must hold ``self._lock``.
+        """
+        all_ids = self._catalog.list_all_ids()
         if not all_ids:
             _logger.warning("No documents found in collection")
-            return 0
+            return None
 
-        # Fetch embeddings from SQLite
         embeddings_map = self._catalog.get_embeddings_by_ids(all_ids)
-
         if not embeddings_map and not self._store_embeddings:
             raise RuntimeError(
                 "Cannot rebuild index: no embeddings stored in SQLite. "
@@ -882,13 +909,11 @@ class VectorCollection:
                 "rebuild_index(), or re-add documents with store_embeddings=True."
             )
 
-        # Filter to only docs with embeddings
         valid_pairs = [
             (doc_id, emb)
             for doc_id in all_ids
             if (emb := embeddings_map.get(doc_id)) is not None
         ]
-
         if not valid_pairs:
             raise RuntimeError(
                 "No embeddings found in SQLite. Cannot rebuild index. "
@@ -897,61 +922,68 @@ class VectorCollection:
 
         keys = np.array([doc_id for doc_id, _ in valid_pairs], dtype=np.uint64)
         vectors = np.array([emb for _, emb in valid_pairs], dtype=np.float32)
+        return keys, vectors, vectors.shape[1], self._index._path
 
-        # Determine dimension
-        ndim = vectors.shape[1]
+    def _rebuild_commit(
+        self,
+        new_index: UsearchIndex,
+        keys: np.ndarray,
+        ndim: int,
+        old_path: Path,
+        rebuild_path: Path,
+    ) -> int:
+        """Fold in concurrent catalog writes, then atomically swap. Holds DB lock."""
+        # Catch up mutations that landed during the unlocked build so the new
+        # index reflects the current catalog, not just the snapshot.
+        snap_ids = {int(k) for k in keys}
+        current_ids = set(self._catalog.list_all_ids())
+        added = current_ids - snap_ids
+        removed = snap_ids - current_ids
 
-        # Atomic rebuild: build the new index at a sibling path, save it
-        # durably, then os.replace() it onto the live path. The old index
-        # remains intact and recoverable until the final rename succeeds.
-        old_path = self._index._path
+        if added:
+            emap = self._catalog.get_embeddings_by_ids(list(added))
+            add_pairs = [(i, emb) for i in added if (emb := emap.get(i)) is not None]
+            if add_pairs:
+                new_index.add(
+                    np.array([i for i, _ in add_pairs], dtype=np.uint64),
+                    np.array([emb for _, emb in add_pairs], dtype=np.float32),
+                )
+        if removed:
+            new_index.remove(np.array(sorted(removed), dtype=np.uint64))
+
+        total = len(snap_ids) + len(added) - len(removed)
+
+        # Atomic swap: the old index file stays canonical until os.replace().
         self._index.close()
-
-        rebuild_path = old_path.with_suffix(old_path.suffix + ".rebuild")
-        if rebuild_path.exists():
-            # Clean up remnant from a prior failed rebuild
-            rebuild_path.unlink()
-
-        new_index = UsearchIndex(
-            index_path=str(rebuild_path),
-            ndim=ndim,
-            distance_strategy=self.distance_strategy,
-            quantization=self.quantization,
-            connectivity=connectivity
-            if connectivity is not None
-            else constants.USEARCH_DEFAULT_CONNECTIVITY,
-            expansion_add=expansion_add
-            if expansion_add is not None
-            else constants.USEARCH_DEFAULT_EXPANSION_ADD,
-            expansion_search=expansion_search
-            if expansion_search is not None
-            else constants.USEARCH_DEFAULT_EXPANSION_SEARCH,
-        )
-        new_index.add(keys, vectors)
-        new_index.save()
-
-        # Atomically swap the rebuilt index into place. Until this rename,
-        # the old index file at old_path is still the canonical copy.
-        os.replace(str(rebuild_path), str(old_path))
         try:
-            dir_fd = os.open(str(old_path.parent), os.O_RDONLY)
+            new_index.save()
+            os.replace(str(rebuild_path), str(old_path))
             try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except OSError:
-            pass
+                dir_fd = os.open(str(old_path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
+            new_index._path = old_path
+            self._index = new_index
+        except BaseException:
+            # The live index was already closed and the swap failed; old_path
+            # still holds a valid index (original or rebuilt). Re-open it so the
+            # collection stays usable instead of holding a closed (bricked) index.
+            self._index = UsearchIndex(
+                index_path=str(old_path),
+                ndim=ndim,
+                distance_strategy=self.distance_strategy,
+                quantization=self.quantization,
+            )
+            self._search._index = self._index
+            raise
 
-        # Repoint the rebuilt index at the canonical path so future saves
-        # land at old_path rather than the now-vanished rebuild_path.
-        new_index._path = old_path
-        self._index = new_index
-
-        # Update search engine reference
         self._search._index = self._index
-
-        _logger.info("Rebuilt index with %d vectors", len(keys))
-        return len(keys)
+        _logger.info("Rebuilt index with %d vectors", total)
+        return total
 
     # ------------------------------------------------------------------ #
     # Hierarchical Relationships
@@ -1107,9 +1139,20 @@ class VectorCollection:
 
         vectors = self._index.get(np.array(doc_ids, dtype=np.uint64))
 
+        # Cap n_clusters to the number of vectors actually clustered (the
+        # sample when sampling, else the full set). This is a friendly
+        # public-API convenience; the low-level ClusterEngine.cluster_vectors()
+        # raises instead, for direct callers that want strictness.
+        _clustered_count = len(doc_ids)
+        if (
+            sample_size is not None
+            and sample_size < len(doc_ids)
+            and algorithm != "hdbscan"
+        ):
+            _clustered_count = sample_size
         effective_n_clusters = n_clusters
         if n_clusters is not None and algorithm in ("kmeans", "minibatch_kmeans"):
-            effective_n_clusters = min(n_clusters, len(doc_ids))
+            effective_n_clusters = min(n_clusters, _clustered_count)
 
         if sample_size and sample_size < len(doc_ids):
             if algorithm == "hdbscan":

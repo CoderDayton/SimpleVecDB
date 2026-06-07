@@ -56,6 +56,16 @@ class ClusterEngine:
                 algorithm=algorithm,
             )
 
+        if (
+            algorithm in ("kmeans", "minibatch_kmeans")
+            and n_clusters is not None
+            and n_clusters > len(vectors)
+        ):
+            raise ValueError(
+                f"n_clusters ({n_clusters}) cannot exceed the number of vectors "
+                f"({len(vectors)})"
+            )
+
         if algorithm == "hdbscan":
             labels, centroids, inertia = self._hdbscan(vectors, min_cluster_size)
         elif algorithm == "minibatch_kmeans":

@@ -171,8 +171,15 @@ class SearchEngine:
 
         validate_filter(filter)
 
-        # For small query counts, sequential search avoids batch overhead
-        if len(queries) <= constants.USEARCH_BATCH_THRESHOLD:
+        # The native batch path requires pre-embedded vector queries and does a
+        # single fixed over-fetch, so it can neither auto-embed text queries nor
+        # re-fetch to fill k under a selective filter. Route through the per-query
+        # path (which handles both) for small batches, any filter, or text queries.
+        if (
+            len(queries) <= constants.USEARCH_BATCH_THRESHOLD
+            or filter is not None
+            or any(isinstance(q, str) for q in queries)
+        ):
             return [
                 self.similarity_search(q, k, filter, exact=exact, threads=threads)
                 for q in queries
@@ -453,6 +460,7 @@ class SearchEngine:
         sel_matrix: np.ndarray | None = (
             emb[np.newaxis, :].copy() if emb is not None else None
         )
+        is_l2 = self._distance_strategy == DistanceStrategy.L2
 
         while len(selected) < k and unselected:
             best_score = -float("inf")
@@ -461,9 +469,15 @@ class SearchEngine:
             for pos, idx in enumerate(unselected):
                 _, _, dist, emb = candidates[idx]
 
-                # Relevance: convert distance to similarity (lower distance = higher similarity)
-                # For cosine distance in [0, 2], similarity = 1 - distance/2
-                relevance = 1.0 - dist / 2.0
+                # Relevance: convert distance to similarity (lower distance = higher).
+                if is_l2:
+                    # usearch returns squared L2 in [0, inf); map to a bounded,
+                    # monotonically-decreasing similarity so large distances don't
+                    # swamp the diversity (redundancy) term.
+                    relevance = 1.0 / (1.0 + dist**0.5)
+                else:
+                    # Cosine distance in [0, 2]: similarity = 1 - distance/2
+                    relevance = 1.0 - dist / 2.0
 
                 # Redundancy: max similarity to any already-selected doc
                 redundancy = 0.0

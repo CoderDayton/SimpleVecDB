@@ -301,9 +301,12 @@ class AsyncVectorCollection:
         self,
         doc_id: int,
         deltas: dict[str, int | float],
-    ) -> None:
-        """Atomically apply numeric deltas to JSON metadata counters."""
-        await self._run(self._collection.increment_metadata, doc_id, deltas)
+    ) -> int:
+        """Atomically apply numeric deltas to JSON metadata counters.
+
+        Returns 1 if the row existed and was updated, 0 otherwise.
+        """
+        return await self._run(self._collection.increment_metadata, doc_id, deltas)
 
     async def add_edge(
         self,

@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.6.2] - 2026-06-06
 
+### Correctness and contract fixes
+
+Hardening of the index-rebuild, search, clustering, and integration layers
+surfaced by a code review. Two intentional behavior changes are noted under
+“Changed”.
+
+#### Fixed
+
+- **`rebuild_index` no longer bricks a collection on failure** — if building or
+  swapping the new HNSW index raises after the live index is closed, the
+  collection re-opens the intact on-disk index instead of holding a closed one.
+- **Catalog write lock released on connection error** — a raising
+  `connection.__enter__` no longer leaks the catalog lock (which could deadlock
+  the database).
+- **Max-Marginal-Relevance respects the distance metric** — MMR on `l2`
+  collections used a cosine-specific relevance formula that swamped the
+  diversity term; it now uses a bounded, metric-appropriate relevance.
+- **`similarity_search_batch` fills `k` under filters and accepts text queries**
+  — large filtered batches no longer silently under-deliver, and a text query in
+  a large batch behaves the same as in a small one.
+- **Clustering handles impossible `n_clusters`** — `ClusterEngine.cluster_vectors`
+  raises a clear error when `n_clusters` exceeds the number of vectors;
+  `Collection.cluster()` caps `n_clusters` to the number of vectors actually
+  clustered (the sample when `sample_size` is set, fixing a latent error when
+  `n_clusters > sample_size`).
+- **Metadata filter keys match literally** — a filter key containing a dot
+  (e.g. `{"a.b": x}`) now matches the literal top-level key `a.b` instead of the
+  nested JSON path `a → b`, consistent with the Python filter path. Keys
+  containing a double-quote are rejected.
+- **BIT-quantized vector retrieval unpacks correctly** — `UsearchIndex.get()`
+  (used by the MMR fallback) returned packed bytes for BIT indexes instead of
+  the unpacked ±1 float vectors; it now unpacks them.
+- **`rebuild_index` no longer blocks the database during the HNSW build** — the
+  expensive build runs without the shared lock (held only to snapshot and swap);
+  writes that land during the build are folded into the new index before the
+  swap.
+
+#### Changed
+
+- **`AsyncVectorCollection.increment_metadata` now returns `int`** (1 if the row
+  existed and was updated, 0 otherwise), matching the synchronous API; it
+  previously discarded the value and returned `None`.
+- **LlamaIndex metadata filters fail loudly on unsupported shapes** — the
+  `SimpleVecDBLlamaStore` adapter now maps comparison operators
+  (`$gt/$gte/$lt/$lte/$ne/$in/$nin`) instead of silently treating them as
+  equality, and raises `NotImplementedError` for `OR`/`NOT` conditions and
+  unsupported operators rather than returning wrong results.
+- **LangChain relevance scoring now works** — `SimpleVecDBVectorStore` implements
+  `_select_relevance_score_fn`, so `similarity_search_with_relevance_scores` and
+  `as_retriever(search_type="similarity_score_threshold")` return metric-aware
+  `[0, 1]` relevance (higher = better). `similarity_search_with_score` still
+  returns the raw distance (FAISS/Chroma convention), now documented as such.
+
 ### Clustering and hierarchy fixes
 
 Internal correctness and performance work on the clustering and hierarchy
