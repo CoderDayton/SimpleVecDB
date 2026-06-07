@@ -5,17 +5,17 @@
 [![License: MIT](https://img.shields.io/github/license/coderdayton/simplevecdb)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/coderdayton/simplevecdb?style=social)](https://github.com/coderdayton/simplevecdb)
 
-**The dead-simple, local-first vector database.**
+**A local-first, embedded vector database backed by SQLite and usearch.**
 
-SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built on **usearch HNSW** (v2.0+), it offers 10-100x faster vector search, quantization, and zero infrastructure headaches. Perfect for local RAG, offline agents, and indie hackers who need production-grade vector search without the operational overhead.
+SimpleVecDB pairs **Chroma-like ergonomics** with a **file-based** store — a SQLite database for metadata and text alongside a `usearch` HNSW index per collection. It provides high-performance vector search, quantization, and hybrid retrieval with no separate services to run. It fits local RAG pipelines, offline agents, and any application that needs production-grade vector search without the operational overhead of a hosted database.
 
 ## Why SimpleVecDB?
 
-- **Zero Infrastructure** — Just a `.db` file. No Docker, no Redis, no cloud bills.
-- **Blazing Fast** — 10-100x faster with HNSW indexing, sub-millisecond queries on 100k+ vectors.
-- **Truly Portable** — Runs anywhere Python runs: Linux, macOS, Windows.
-- **Async Ready** — Full async/await support for web servers and concurrent workloads.
-- **Batteries Included** — Optional FastAPI embeddings server + LangChain/LlamaIndex integrations.
+- **Zero Infrastructure** — Local files on disk: a SQLite database plus a `usearch` index. No Docker, no Redis, no external services.
+- **High Performance** — usearch HNSW indexing with adaptive search: brute-force under 10k vectors (perfect recall), HNSW above that.
+- **Portable** — Runs anywhere SQLite runs: Linux, macOS, Windows, and WASM.
+- **Async Support** — A complete async/await surface with optional executor injection for thread-safe ONNX/usearch sharing.
+- **Integrations Included** — Optional FastAPI embeddings server and LangChain/LlamaIndex adapters via the `[integrations]` extra.
 - **Production Ready** — Hybrid search (BM25 + vector), metadata filtering, multi-collection support, and automatic hardware acceleration.
 
 ### When to Choose SimpleVecDB
@@ -179,7 +179,7 @@ See **[Examples](examples.md)** for complete RAG workflows with Ollama.
 
 ### Multi-Collection Support
 
-Organize vectors by domain within a single database file:
+Organize vectors by domain within a single database:
 
 ```python
 from simplevecdb import VectorDB, Quantization
@@ -272,7 +272,7 @@ See [Clustering Guide](guides/clustering.md) for algorithms, metrics, and use ca
 
 | Feature                   | Status | Description                                                |
 | :------------------------ | :----- | :--------------------------------------------------------- |
-| **Single-File Storage**   | ✅     | SQLite `.db` file + `.usearch` index files                 |
+| **File-Based Storage**   | ✅     | SQLite `.db` file + `.usearch` index files                 |
 | **Multi-Collection**      | ✅     | Isolated namespaces per database                           |
 | **HNSW Indexing**         | ✅     | 10-100x faster approximate nearest neighbor (usearch)      |
 | **Vector Search**         | ✅     | Cosine, Euclidean, Inner Product metrics                   |

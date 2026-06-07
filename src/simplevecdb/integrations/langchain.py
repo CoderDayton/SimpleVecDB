@@ -1,4 +1,4 @@
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 try:
@@ -141,7 +141,12 @@ class SimpleVecDBVectorStore(VectorStore):
         **kwargs: Any,
     ) -> list[tuple[LangChainDocument, float]]:
         """
-        Return with scores (distances).
+        Return docs with their raw distance (lower = more similar).
+
+        This matches the LangChain FAISS/Chroma convention. For a [0, 1]
+        relevance score (higher = better) — used by
+        ``as_retriever(search_type="similarity_score_threshold")`` — use
+        ``similarity_search_with_relevance_scores`` instead.
 
         Args:
             query: Text query string.
@@ -149,7 +154,7 @@ class SimpleVecDBVectorStore(VectorStore):
             **kwargs: Additional arguments (e.g., filter).
 
         Returns:
-            List of (Document, score) tuples.
+            List of (Document, distance) tuples.
         """
         if self.embedding:
             query_vec = self.embedding.embed_query(query)
@@ -167,6 +172,22 @@ class SimpleVecDBVectorStore(VectorStore):
             )
             for doc, score in results
         ]
+
+    def _select_relevance_score_fn(self) -> Callable[[float], float]:
+        """Map this collection's distance to a [0, 1] relevance (higher = better).
+
+        Powers ``similarity_search_with_relevance_scores`` and
+        ``as_retriever(search_type="similarity_score_threshold")``;
+        ``similarity_search_with_score`` returns the raw distance, this inverts it.
+        """
+        from simplevecdb.types import DistanceStrategy  # noqa: PLC0415
+
+        if self._collection.distance_strategy == DistanceStrategy.L2:
+            # usearch returns squared L2 in [0, inf): bounded and decreasing.
+            return lambda distance: 1.0 / (1.0 + max(distance, 0.0) ** 0.5)
+        # Cosine distance in [0, 2] -> relevance in [0, 1]; clamp against any
+        # floating overshoot so LangChain doesn't flag out-of-range scores.
+        return lambda distance: max(0.0, min(1.0, 1.0 - distance / 2.0))
 
     def delete(self, ids: list[str] | None = None, **kwargs: Any) -> None:
         """
@@ -272,6 +293,14 @@ class SimpleVecDBVectorStore(VectorStore):
         import asyncio
 
         return await asyncio.to_thread(self.similarity_search, *args, **kwargs)
+
+    async def asimilarity_search_with_score(self, *args, **kwargs):
+        import asyncio
+
+        # Base class would call the sync version on the event loop; offload it.
+        return await asyncio.to_thread(
+            self.similarity_search_with_score, *args, **kwargs
+        )
 
     async def amax_marginal_relevance_search(
         self,

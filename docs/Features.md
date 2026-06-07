@@ -6,8 +6,9 @@ release-by-release detail, see the [Changelog](CHANGELOG.md).
 
 ## Storage & schema
 
-- **Single-file SQLite** — one `.db` file (or `:memory:`) holds everything:
-  documents, vectors, FTS5 index, edges, events, TTL, clusters.
+- **File-based storage** — a `.db` file (or `:memory:`) holds documents, the
+  FTS5 index, edges, events, TTL, and clusters; vectors live in a per-collection
+  `.usearch` HNSW index file alongside it.
 - **Multi-collection** — isolated namespaces per database via
   `db.collection("name")`. Each collection has its own quantization,
   distance metric, and (optional) embedding storage.

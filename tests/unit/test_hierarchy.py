@@ -391,6 +391,34 @@ class TestHierarchicalRelationships:
 
         db.close()
 
+    def test_set_parent_cycle_detection_deep_chain(self, db_path: Path, dim: int):
+        """Cycle check walks multiple ancestor levels without false positives."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        # Chain: a -> b -> c -> d
+        a = collection.add_texts(["a"], embeddings=[self.make_embedding(dim)])[0]
+        b = collection.add_texts(
+            ["b"], embeddings=[self.make_embedding(dim)], parent_ids=[a]
+        )[0]
+        c = collection.add_texts(
+            ["c"], embeddings=[self.make_embedding(dim)], parent_ids=[b]
+        )[0]
+        d = collection.add_texts(
+            ["d"], embeddings=[self.make_embedding(dim)], parent_ids=[c]
+        )[0]
+
+        # Re-parenting d directly under a (its existing ancestor) is NOT a cycle.
+        assert collection.set_parent(d, a) is True
+
+        # Rebuild the deep chain and reject a multi-level cycle: a -> d would
+        # make a a child of its own descendant.
+        collection.set_parent(d, c)
+        with pytest.raises(ValueError, match="descendant"):
+            collection.set_parent(a, d)
+
+        db.close()
+
 
 class TestHierarchyMigration:
     """Test that existing databases get parent_id column added."""

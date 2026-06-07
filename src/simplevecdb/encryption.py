@@ -120,8 +120,11 @@ def _normalize_key(key: str | bytes, salt: bytes | None = None) -> bytes:
 
     salt_to_use = salt if salt is not None else _NORMALIZE_KEY_SALT
 
-    # Cache key includes both the raw passphrase bytes and the salt so the
-    # same passphrase yields different cache entries for different DBs.
+    # Cache key = (raw passphrase bytes, salt) so the same passphrase yields
+    # distinct entries per salt/DB. We deliberately do NOT hash the passphrase
+    # here: a fast hash (sha256) trips weak-password-hash scanners, and a slow
+    # KDF would defeat this cache, whose sole purpose is to AVOID re-running the
+    # 600k-iter PBKDF2. The cache is process-local and LRU-bounded.
     key_bytes = key.encode("utf-8") if isinstance(key, str) else bytes(key)
     cache_key = (key_bytes, salt_to_use)
 
@@ -186,7 +189,15 @@ def _resolve_salt(
         return _NORMALIZE_KEY_SALT
 
     if not create_if_missing:
-        # Legacy resource — created before per-DB salts existed.
+        # Legacy resource — created before per-DB salts existed, or a sidecar
+        # that was removed. Either way per-DB salt protection is not active;
+        # surface it (instead of silently using the shared fixed salt) so
+        # operators can migrate, or notice a deleted sidecar.
+        _logger.warning(
+            "No salt sidecar for %s; using the legacy shared salt. Per-DB salt "
+            "protection is not active for this resource.",
+            resource_path,
+        )
         return _NORMALIZE_KEY_SALT
 
     salt = secrets.token_bytes(SALT_SIZE)
@@ -322,6 +333,11 @@ def create_encrypted_connection(
             # database (sidecar present). Normalize every key shape to a
             # 32-byte derived value and feed it as ``x'hex'`` so we never
             # interpolate raw passphrase characters into SQL.
+            #
+            # At-rest key strength comes from the application-layer PBKDF2
+            # (PBKDF2_ITERATIONS = 600k) used to derive this 32-byte key. The
+            # ``x'hex'`` form is a raw key, so SQLCipher runs no internal KDF
+            # and its build-dependent ``kdf_iter`` default does not apply here.
             salt = _resolve_salt(db_path_obj, create_if_missing=is_new_db)
             normalized_key = _normalize_key(key, salt=salt)
             conn.execute(f"PRAGMA key = \"x'{normalized_key.hex()}'\"")

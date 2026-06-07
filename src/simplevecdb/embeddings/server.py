@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hmac
 import logging
+import os
 import signal
 import time
 from collections import defaultdict
@@ -23,6 +24,89 @@ _logger = logging.getLogger("simplevecdb.embeddings.server")
 
 # Maximum length (chars) for a single input text to prevent OOM in the encoder.
 _MAX_TEXT_LENGTH = 100_000
+
+
+def _default_max_body_bytes() -> int:
+    """Body cap derived from the server's own accept limits (items × text len)."""
+    try:
+        items = int(config.EMBEDDING_SERVER_MAX_REQUEST_ITEMS)
+    except Exception:
+        items = 2048
+    return max(items * (_MAX_TEXT_LENGTH + 16) + 65536, 1 << 20)
+
+
+# Cap the raw request body BEFORE Pydantic buffers it: the per-item count is
+# only enforced after the whole body is parsed, so without this an
+# unauthenticated client could exhaust memory with one giant body. Override via
+# EMBEDDING_SERVER_MAX_BODY_BYTES.
+try:
+    _MAX_BODY_BYTES = int(
+        os.getenv("EMBEDDING_SERVER_MAX_BODY_BYTES") or _default_max_body_bytes()
+    )
+except ValueError:
+    _logger.warning(
+        "Invalid EMBEDDING_SERVER_MAX_BODY_BYTES=%r; using the derived default.",
+        os.getenv("EMBEDDING_SERVER_MAX_BODY_BYTES"),
+    )
+    _MAX_BODY_BYTES = _default_max_body_bytes()
+# Never let an override drop the cap to ~0 (which would reject every request).
+_MAX_BODY_BYTES = max(_MAX_BODY_BYTES, 1 << 20)
+
+
+class _MaxBodySizeMiddleware:
+    """ASGI middleware that rejects request bodies larger than ``max_bytes``."""
+
+    def __init__(self, app: Any, max_bytes: int) -> None:
+        self._app = app
+        self._max_bytes = max_bytes
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        # Fast path: reject on a declared Content-Length over the cap.
+        for name, value in scope.get("headers", []):
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    break
+                if declared > self._max_bytes:
+                    await self._reject(send)
+                    return
+                break
+
+        # Slow path: count bytes for chunked/unknown-length bodies.
+        received = 0
+
+        async def limited_receive() -> Any:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self._max_bytes:
+                    return {"type": "http.disconnect"}
+            return message
+
+        await self._app(scope, limited_receive, send)
+
+    async def _reject(self, send: Any) -> None:
+        body = (
+            b'{"error":{"message":"Request body too large",'
+            b'"type":"payload_too_large","code":413}}'
+        )
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
 
 
 def _validate_request_item_cap() -> None:
@@ -128,6 +212,9 @@ app = FastAPI(
     openapi_url="/openapi.json",
     docs_url="/docs",
 )
+
+# Reject oversized request bodies before they are buffered/parsed.
+app.add_middleware(_MaxBodySizeMiddleware, max_bytes=_MAX_BODY_BYTES)
 
 # (#4) CORS middleware — configurable via EMBEDDING_SERVER_CORS_ORIGINS env var.
 # Default is no CORS (no allow_origins, no credentials) so the server is safe

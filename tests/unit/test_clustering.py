@@ -121,6 +121,19 @@ class TestClustering:
 
         db.close()
 
+    def test_sample_size_with_hdbscan_raises(self, db_path: Path, dim: int):
+        """sample_size + hdbscan raises instead of silently dropping docs."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        texts, embeddings = self.make_clustered_embeddings(10, 3, dim)
+        collection.add_texts(texts, embeddings=embeddings.tolist())
+
+        with pytest.raises(ValueError, match="sample_size is not supported"):
+            collection.cluster(algorithm="hdbscan", sample_size=9)
+
+        db.close()
+
     def test_cluster_result_summary(self, db_path: Path, dim: int):
         """ClusterResult.summary() returns cluster counts."""
         db = VectorDB(db_path)
@@ -574,6 +587,104 @@ class TestClusterPersistence:
 
         db.close()
 
+    def test_save_load_cluster_with_empty_clusters(self, db_path: Path, dim: int):
+        """load_cluster survives k-means runs that leave a requested cluster empty.
+
+        With only 2 distinct vectors but n_clusters=4, k-means yields 4 centroid
+        rows but fewer non-empty labels, so the stored n_clusters is < centroid
+        rows. The reshape must derive the row count from the buffer, not the
+        stored n_clusters (which previously raised ValueError on load).
+        """
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        a = np.zeros(dim, dtype=np.float32)
+        b = np.zeros(dim, dtype=np.float32)
+        b[0] = 10.0
+        embeddings = np.array([a, a, a, b, b, b], dtype=np.float32)
+        collection.add_texts(
+            [f"doc_{i}" for i in range(6)], embeddings=embeddings.tolist()
+        )
+
+        result = collection.cluster(n_clusters=4, algorithm="kmeans", random_state=42)
+        assert result.centroids is not None
+        assert result.centroids.shape[0] == 4
+        # Fewer distinct clusters than requested -> stored n_clusters < rows.
+        assert result.n_clusters < result.centroids.shape[0]
+
+        collection.save_cluster("degenerate", result)
+        loaded = collection.load_cluster("degenerate")
+
+        assert loaded is not None
+        loaded_result, _ = loaded
+        assert loaded_result.centroids is not None
+        assert loaded_result.centroids.shape == result.centroids.shape
+
+        db.close()
+
+    def test_assign_to_cluster_only_assigns_unassigned(self, db_path: Path, dim: int):
+        """assign_to_cluster(doc_ids=None) targets only docs lacking the key."""
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        np.random.seed(42)
+        embeddings = np.random.randn(10, dim).astype(np.float32)
+        embeddings[:5, 0] += 10.0
+        embeddings[5:, 1] += 10.0
+        collection.add_texts(
+            [f"doc_{i}" for i in range(10)], embeddings=embeddings.tolist()
+        )
+
+        result = collection.cluster(n_clusters=2, random_state=42)
+        collection.assign_cluster_metadata(result)  # all 10 now have "cluster"
+        collection.save_cluster("saved", result)
+
+        new_embs = np.random.randn(3, dim).astype(np.float32)
+        new_embs[:, 0] += 10.0
+        collection.add_texts(["new_a", "new_b", "new_c"], embeddings=new_embs.tolist())
+
+        # Only the 3 new (unassigned) docs should be touched.
+        assigned = collection.assign_to_cluster("saved")
+        assert assigned == 3
+
+        db.close()
+
+    def test_assign_to_cluster_handles_dotted_metadata_key(
+        self, db_path: Path, dim: int
+    ):
+        """A metadata_key with '.' is matched as a literal key, not a JSON path.
+
+        The unassigned-id lookup must test literal top-level key existence. A
+        ``$.cluster.v2`` JSON path would read the dotted key as nested access,
+        find nothing, and re-assign every already-assigned doc.
+        """
+        db = VectorDB(db_path)
+        collection = db.collection("test")
+
+        np.random.seed(0)
+        embeddings = np.random.randn(8, dim).astype(np.float32)
+        embeddings[:4, 0] += 10.0
+        embeddings[4:, 1] += 10.0
+        collection.add_texts(
+            [f"doc_{i}" for i in range(8)], embeddings=embeddings.tolist()
+        )
+
+        key = "cluster.v2"
+        result = collection.cluster(n_clusters=2, random_state=0)
+        collection.assign_cluster_metadata(result, metadata_key=key)
+        collection.save_cluster("saved", result)
+
+        new_embs = np.random.randn(2, dim).astype(np.float32)
+        new_embs[:, 0] += 10.0
+        collection.add_texts(["new_a", "new_b"], embeddings=new_embs.tolist())
+
+        # The 8 existing docs already carry the dotted key -> only the 2 new
+        # docs are unassigned.
+        assigned = collection.assign_to_cluster("saved", metadata_key=key)
+        assert assigned == 2
+
+        db.close()
+
     def test_assign_to_cluster_raises_for_unknown(self, db_path: Path):
         """assign_to_cluster raises ValueError for unknown cluster."""
         db = VectorDB(db_path)
@@ -704,3 +815,19 @@ class TestClusterEngineDirectly:
         vectors = np.array([[1, 1], [9, 9], [0.5, 0.5]], dtype=np.float32)
         labels = engine.assign_to_nearest_centroid(vectors, centroids)
         assert list(labels) == [0, 1, 0]
+
+    def test_assign_to_nearest_centroid_matches_bruteforce(self):
+        """Optimised assignment equals the explicit pairwise-distance argmin."""
+        from simplevecdb.engine.clustering import ClusterEngine
+
+        rng = np.random.default_rng(7)
+        vectors = rng.standard_normal((200, 16)).astype(np.float32)
+        centroids = rng.standard_normal((12, 16)).astype(np.float32)
+
+        engine = ClusterEngine()
+        got = engine.assign_to_nearest_centroid(vectors, centroids)
+
+        expected = np.argmin(
+            np.linalg.norm(vectors[:, np.newaxis] - centroids, axis=2), axis=1
+        ).astype(np.int32)
+        assert np.array_equal(got, expected)

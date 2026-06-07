@@ -7,17 +7,17 @@
 
 <a href='https://ko-fi.com/U7U01WTJF9' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
-**The dead-simple, local-first vector database.**
+**A local-first, embedded vector database backed by SQLite and usearch.**
 
-SimpleVecDB brings **Chroma-like simplicity** to a single **SQLite file**. Built on `usearch` HNSW indexing, it offers high-performance vector search, quantization, and zero infrastructure headaches. Perfect for local RAG, offline agents, and indie hackers who need production-grade vector search without the operational overhead.
+SimpleVecDB pairs **Chroma-like ergonomics** with a **file-based** store — a SQLite database for metadata and text alongside a `usearch` HNSW index per collection. It provides high-performance vector search, quantization, and hybrid retrieval with no separate services to run. It fits local RAG pipelines, offline agents, and any application that needs production-grade vector search without the operational overhead of a hosted database.
 
 ## Why SimpleVecDB?
 
-- **Zero Infrastructure** — Just a `.db` file. No Docker, no Redis, no cloud bills.
-- **Blazing Fast** — 10-100x faster search via usearch HNSW. Adaptive: brute-force for <10k vectors (perfect recall), HNSW for larger collections.
-- **Truly Portable** — Runs anywhere SQLite runs: Linux, macOS, Windows, even WASM.
-- **Async Ready** — Full async/await support with optional executor injection for thread-safe ONNX/usearch sharing.
-- **Batteries Included** — Optional FastAPI embeddings server + LangChain/LlamaIndex integrations via `[integrations]` extra.
+- **Zero Infrastructure** — Local files on disk: a SQLite database plus a `usearch` index. No Docker, no Redis, no external services.
+- **High Performance** — usearch HNSW indexing with adaptive search: brute-force under 10k vectors (perfect recall), HNSW above that.
+- **Portable** — Runs anywhere SQLite runs: Linux, macOS, Windows, and WASM.
+- **Async Support** — A complete async/await surface with optional executor injection for thread-safe ONNX/usearch sharing.
+- **Integrations Included** — Optional FastAPI embeddings server and LangChain/LlamaIndex adapters via the `[integrations]` extra.
 - **Production Ready** — Hybrid search (BM25 + vector), metadata filtering, multi-collection support, and automatic hardware acceleration.
 
 ### When to Choose SimpleVecDB
@@ -67,7 +67,7 @@ pip install "simplevecdb[server]"
 **Verify Installation:**
 
 ```bash
-python -c "from simplevecdb import VectorDB; print('SimpleVecDB installed successfully!')"
+python -c "import simplevecdb; print(simplevecdb.__version__)"
 ```
 
 ## Quickstart
@@ -157,8 +157,8 @@ in the [Setup Guide](ENV_SETUP.md).
 
 ### Option 3: LangChain or LlamaIndex
 
-Already wired into one of the big RAG frameworks? Drop SimpleVecDB in
-as the vector store:
+Already using one of the major RAG frameworks? Use SimpleVecDB as the
+vector store:
 
 ```bash
 pip install "simplevecdb[integrations]"
@@ -208,7 +208,7 @@ A few of the things SimpleVecDB does well — see
 - **Quantization** — `FLOAT32`, `FLOAT16`, `INT8`, `BIT` for 1×–32×
   compression.
 - **Multi-collection + cross-collection search** — isolated namespaces in
-  one `.db` file, with merged ranked search across them.
+  one database, with merged ranked search across them.
 - **Mongo-style filters** — `$eq $ne $gt $gte $lt $lte $in $nin $exists
   $between` on metadata, edges, and events.
 - **Memory primitives (v2.6.1)** — pending-vector buffer with atomic
@@ -300,7 +300,7 @@ ideas in [GitHub Discussions](https://github.com/coderdayton/simplevecdb/discuss
 
 ## Contributing
 
-Contributions are welcome! Whether you're fixing bugs, improving documentation, or proposing new features:
+Contributions are welcome — bug fixes, documentation improvements, and new feature proposals alike:
 
 1. Read [CONTRIBUTING.md](CONTRIBUTING.md) for development setup
 2. Check existing [Issues](https://github.com/coderdayton/simplevecdb/issues) and [Discussions](https://github.com/coderdayton/simplevecdb/discussions)
@@ -318,12 +318,12 @@ Contributions are welcome! Whether you're fixing bugs, improving documentation, 
 - [GitHub Releases](https://github.com/coderdayton/simplevecdb/releases) — Changelog and updates
 - [Examples Gallery](https://coderdayton.github.io/SimpleVecDB/examples/) — Community-contributed notebooks
 
-## Other Ways to Support
+## Support the Project
 
-- ☕ **[Buy me a coffee](https://ko-fi.com/xbbvii)** - One-time donation
-- ⭐ **Star the repo** - Helps with visibility
-- 🐛 **Report bugs** - Improve the project for everyone
-- 📝 **Contribute** - See [CONTRIBUTING.md](CONTRIBUTING.md)
+- **[Sponsor on Ko-fi](https://ko-fi.com/xbbvii)** — one-time donations
+- **Star the repository** — helps with visibility
+- **[Report issues](https://github.com/coderdayton/simplevecdb/issues)** — bug reports and feedback
+- **[Contribute](CONTRIBUTING.md)** — development setup and guidelines
 
 ## License
 

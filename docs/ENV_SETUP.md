@@ -53,6 +53,7 @@ Configuration for `simplevecdb-server`.
 | `SERVER_HOST`                        | Host to bind the server to.                                                    | `0.0.0.0`                                 |
 | `SERVER_PORT`                        | Port to bind the server to.                                                    | `53287` (Code default) / `8000` (Example) |
 | `EMBEDDING_SERVER_MAX_REQUEST_ITEMS` | Max number of prompts allowed per `/v1/embeddings` request (protects latency). | `max(32, EMBEDDING_BATCH_SIZE)`           |
+| `EMBEDDING_SERVER_MAX_BODY_BYTES`    | Max raw request body size in bytes; larger bodies are rejected (413) before being buffered/parsed, preventing memory exhaustion. | _Derived from the request-item and text-length limits (min 1 MiB)_ |
 | `EMBEDDING_SERVER_API_KEYS`          | Comma-separated API keys to require `Authorization: Bearer`/`X-API-Key`.       | _Disabled (unauthenticated)_              |
 
 When `EMBEDDING_SERVER_API_KEYS` is set, SimpleVecDB also tracks request counts and token usage per key. Call `GET /v1/usage` with the same key to retrieve your stats.

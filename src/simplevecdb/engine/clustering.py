@@ -56,6 +56,16 @@ class ClusterEngine:
                 algorithm=algorithm,
             )
 
+        if (
+            algorithm in ("kmeans", "minibatch_kmeans")
+            and n_clusters is not None
+            and n_clusters > len(vectors)
+        ):
+            raise ValueError(
+                f"n_clusters ({n_clusters}) cannot exceed the number of vectors "
+                f"({len(vectors)})"
+            )
+
         if algorithm == "hdbscan":
             labels, centroids, inertia = self._hdbscan(vectors, min_cluster_size)
         elif algorithm == "minibatch_kmeans":
@@ -255,5 +265,12 @@ class ClusterEngine:
         centroids: np.ndarray,
     ) -> np.ndarray:
         """Assign vectors to nearest centroid (for out-of-sample assignment)."""
-        distances = np.linalg.norm(vectors[:, np.newaxis] - centroids, axis=2)
-        return np.argmin(distances, axis=1).astype(np.int32)
+        # ||x - c||^2 = ||x||^2 - 2 x·c + ||c||^2. The ||x||^2 term is constant
+        # across centroids for a given row, so it does not change the argmin and
+        # is dropped. This avoids the (n_vectors, n_centroids, dim) broadcast
+        # temporary that ``vectors[:, None] - centroids`` would materialise
+        # (tens of GB — and an OOM — on large collections) and replaces the
+        # Python-level broadcast with a single BLAS-backed matmul.
+        centroid_sq = np.einsum("ij,ij->i", centroids, centroids)
+        distances_sq = centroid_sq[np.newaxis, :] - 2.0 * (vectors @ centroids.T)
+        return np.argmin(distances_sq, axis=1).astype(np.int32)

@@ -400,6 +400,11 @@ def validate_filter(filter_dict: dict[str, Any] | None) -> None:
             raise ValueError(
                 f"Filter keys must be strings, got {type(key).__name__}: {key!r}"
             )
+        if '"' in key:
+            raise ValueError(
+                f"Filter keys must not contain a double-quote character: {key!r} "
+                "(such keys cannot be represented as a JSON path)."
+            )
         # Normalize tuple shorthand for validation; the actual SQL builder
         # also normalizes, so this is just for the error path here.
         value = _normalize_filter_value(key, raw_value)

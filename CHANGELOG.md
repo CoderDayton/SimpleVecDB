@@ -5,6 +5,112 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2026-06-06
+
+### Correctness and contract fixes
+
+Hardening of the index-rebuild, search, clustering, and integration layers
+surfaced by a code review. Two intentional behavior changes are noted under
+“Changed”.
+
+#### Fixed
+
+- **`rebuild_index` no longer bricks a collection on failure** — if building or
+  swapping the new HNSW index raises after the live index is closed, the
+  collection re-opens the intact on-disk index instead of holding a closed one.
+- **Catalog write lock released on connection error** — a raising
+  `connection.__enter__` no longer leaks the catalog lock (which could deadlock
+  the database).
+- **Max-Marginal-Relevance respects the distance metric** — MMR on `l2`
+  collections used a cosine-specific relevance formula that swamped the
+  diversity term; it now uses a bounded, metric-appropriate relevance.
+- **`similarity_search_batch` fills `k` under filters and accepts text queries**
+  — large filtered batches no longer silently under-deliver, and a text query in
+  a large batch behaves the same as in a small one.
+- **Clustering handles impossible `n_clusters`** — `ClusterEngine.cluster_vectors`
+  raises a clear error when `n_clusters` exceeds the number of vectors;
+  `Collection.cluster()` caps `n_clusters` to the number of vectors actually
+  clustered (the sample when `sample_size` is set, fixing a latent error when
+  `n_clusters > sample_size`).
+- **Metadata filter keys match literally** — a filter key containing a dot
+  (e.g. `{"a.b": x}`) now matches the literal top-level key `a.b` instead of the
+  nested JSON path `a → b`, consistent with the Python filter path. Keys
+  containing a double-quote are rejected.
+- **BIT-quantized vector retrieval unpacks correctly** — `UsearchIndex.get()`
+  (used by the MMR fallback) returned packed bytes for BIT indexes instead of
+  the unpacked ±1 float vectors; it now unpacks them.
+- **`rebuild_index` no longer blocks the database during the HNSW build** — the
+  expensive build runs without the shared lock (held only to snapshot and swap);
+  writes that land during the build are folded into the new index before the
+  swap.
+- **Embedding server caps request body size** — an ASGI middleware rejects
+  request bodies larger than the server's own accept limits before they are
+  buffered/parsed, closing an unauthenticated memory-exhaustion vector (only
+  relevant with the `[server]` extra exposed on a network). A missing
+  encryption salt sidecar now logs a warning instead of silently falling back
+  to the shared legacy salt.
+- **Robustness pass** — malformed FTS5 keyword queries raise `ValueError` instead
+  of a raw SQLite error; the cluster-state table is created eagerly so a
+  rolled-back first `save_cluster` cannot desync it; a non-integer
+  `EMBEDDING_BATCH_SIZE`/`EMBEDDING_SERVER_MAX_REQUEST_ITEMS` env value warns and
+  falls back instead of crashing import; `vacuum()` holds the DB lock; a failed
+  index add after the catalog commit is logged (divergence visibility); hybrid
+  search applies the Python metadata filter on the keyword side too (SQL/Python
+  parity); `logging.configure_logging` swaps handlers atomically.
+- **LangChain `asimilarity_search_with_score`** offloads to a thread instead of
+  blocking the event loop.
+
+#### Changed
+
+- **`AsyncVectorCollection.increment_metadata` now returns `int`** (1 if the row
+  existed and was updated, 0 otherwise), matching the synchronous API; it
+  previously discarded the value and returned `None`.
+- **LlamaIndex metadata filters fail loudly on unsupported shapes** — the
+  `SimpleVecDBLlamaStore` adapter now maps comparison operators
+  (`$gt/$gte/$lt/$lte/$ne/$in/$nin`) instead of silently treating them as
+  equality, and raises `NotImplementedError` for `OR`/`NOT` conditions and
+  unsupported operators rather than returning wrong results.
+- **LangChain relevance scoring now works** — `SimpleVecDBVectorStore` implements
+  `_select_relevance_score_fn`, so `similarity_search_with_relevance_scores` and
+  `as_retriever(search_type="similarity_score_threshold")` return metric-aware
+  `[0, 1]` relevance (higher = better). `similarity_search_with_score` still
+  returns the raw distance (FAISS/Chroma convention), now documented as such.
+
+### Clustering and hierarchy fixes
+
+Internal correctness and performance work on the clustering and hierarchy
+layers. No public API changes; existing databases are unaffected.
+
+#### Fixed
+
+- **`load_cluster` survives empty k-means clusters** — when k-means leaves a
+  requested cluster empty (common with duplicate vectors or `n_clusters` near
+  the number of distinct points), the stored `n_clusters` is smaller than the
+  number of centroid rows. The centroid reshape now derives its row count from
+  the stored buffer rather than `n_clusters`, which previously raised
+  `ValueError` on load.
+- **`assign_to_cluster` matches metadata keys literally** — a `metadata_key`
+  containing `.` or `[` is now matched as a literal top-level key (via
+  `json_each`) instead of being misread as a nested JSON path, which had caused
+  every already-assigned document to be re-assigned on each call.
+- **`cluster(algorithm="hdbscan", sample_size=…)` raises instead of silently
+  dropping documents** — HDBSCAN produces no centroids, so out-of-sample
+  documents cannot be assigned. The combination now raises a clear `ValueError`
+  rather than clustering only the sample.
+
+#### Performance
+
+- **BLAS-backed out-of-sample centroid assignment** — nearest-centroid
+  assignment uses the `‖c‖² − 2·x·c` expansion (a single matmul) instead of
+  materialising the dense `(n_vectors, n_centroids, dim)` broadcast temporary
+  that could exhaust memory on large collections.
+- **Unassigned-id lookup pushed into SQLite** — `assign_to_cluster(doc_ids=None)`
+  finds documents lacking the cluster key with one `json_each` query instead of
+  loading and JSON-parsing every row's text and metadata.
+- **Bounded ancestor-walk for cycle detection** — `set_parent` detects
+  parent/child cycles by walking the ancestor chain with a depth-bounded
+  recursive CTE instead of materialising the entire descendant subtree.
+
 ## [2.6.1] - 2026-05-10
 
 ### Storage, mutation, and eventing improvements

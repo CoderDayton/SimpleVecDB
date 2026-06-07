@@ -224,6 +224,12 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
         if internal_id is not None:
             self._collection.delete_by_ids([internal_id])
             self._id_map.pop(internal_id, None)
+        else:
+            _logger.warning(
+                "delete(ref_doc_id=%r): no matching document found; nothing "
+                "was deleted.",
+                ref_doc_id,
+            )
 
     def delete_nodes(
         self,
@@ -257,13 +263,47 @@ class SimpleVecDBLlamaStore(BasePydanticVectorStore):
     ) -> dict[str, Any] | None:
         if filters is None:
             return None
+
+        from llama_index.core.vector_stores.types import (  # noqa: PLC0415
+            FilterCondition,
+            FilterOperator,
+        )
+
+        # The underlying engine ANDs all conditions; any non-AND condition
+        # (OR, NOT) is not representable, so fail loudly instead of silently
+        # returning AND semantics.
+        if getattr(filters, "condition", None) not in (None, FilterCondition.AND):
+            raise NotImplementedError(
+                "Only AND metadata filter conditions are supported; got "
+                f"{getattr(filters, 'condition', None)}."
+            )
+
+        # Map LlamaIndex operators onto the engine's Mongo-style grammar.
+        op_map = {
+            FilterOperator.GT: "$gt",
+            FilterOperator.GTE: "$gte",
+            FilterOperator.LT: "$lt",
+            FilterOperator.LTE: "$lte",
+            FilterOperator.NE: "$ne",
+            FilterOperator.IN: "$in",
+            FilterOperator.NIN: "$nin",
+        }
+
         result: dict[str, Any] = {}
-        if hasattr(filters, "filters"):
-            for filter_item in filters.filters:  # type: ignore[attr-defined]
-                if hasattr(filter_item, "key") and hasattr(filter_item, "value"):
-                    key = getattr(filter_item, "key")
-                    value = getattr(filter_item, "value")
-                    result[key] = value
+        for filter_item in getattr(filters, "filters", None) or []:
+            if not (hasattr(filter_item, "key") and hasattr(filter_item, "value")):
+                continue
+            key = filter_item.key
+            value = filter_item.value
+            operator = getattr(filter_item, "operator", None)
+            if operator is None or operator == FilterOperator.EQ:
+                result[key] = value
+            elif operator in op_map:
+                result[key] = {op_map[operator]: value}
+            else:
+                raise NotImplementedError(
+                    f"Unsupported metadata filter operator: {operator}"
+                )
         return result or None
 
     def _build_query_result(
