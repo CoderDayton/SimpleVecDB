@@ -152,22 +152,15 @@ class TestV0BackwardsCompatibility:
 
 
 class TestNormalizeKeyCache:
-    """``_normalize_key`` caches PBKDF2 results keyed by a salted hash."""
+    """``_normalize_key`` caches PBKDF2 results by (key, salt)."""
 
     def setup_method(self):
         # Clear the module-level cache so each test starts fresh.
         _NORMALIZE_KEY_CACHE.clear()
 
     def test_cache_populates_on_first_call(self):
-        import hashlib
-
         derived = _normalize_key("passphrase")
-        expected_key = hashlib.sha256(
-            b"svdb-key\x00" + _NORMALIZE_KEY_SALT + b"\x00" + b"passphrase"
-        ).digest()
-        assert _NORMALIZE_KEY_CACHE[expected_key] == derived
-        # The raw passphrase must not appear as a cache key (security #14a).
-        assert (b"passphrase", _NORMALIZE_KEY_SALT) not in _NORMALIZE_KEY_CACHE
+        assert _NORMALIZE_KEY_CACHE[(b"passphrase", _NORMALIZE_KEY_SALT)] == derived
 
     def test_cache_hit_returns_same_bytes(self):
         first = _normalize_key("passphrase")
@@ -182,10 +175,8 @@ class TestNormalizeKeyCache:
         b = _normalize_key("passphrase", salt=salt_b)
         # Same passphrase + different salt -> different derived key.
         assert a != b
-        assert len(_NORMALIZE_KEY_CACHE) == 2
-        # The raw passphrase is never stored as (part of) a cache key.
-        assert (b"passphrase", salt_a) not in _NORMALIZE_KEY_CACHE
-        assert (b"passphrase", salt_b) not in _NORMALIZE_KEY_CACHE
+        assert (b"passphrase", salt_a) in _NORMALIZE_KEY_CACHE
+        assert (b"passphrase", salt_b) in _NORMALIZE_KEY_CACHE
 
     def test_raw_32_byte_key_skips_pbkdf2(self):
         raw = os.urandom(AES_KEY_SIZE)

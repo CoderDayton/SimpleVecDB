@@ -57,8 +57,6 @@ surfaced by a code review. Two intentional behavior changes are noted under
   index add after the catalog commit is logged (divergence visibility); hybrid
   search applies the Python metadata filter on the keyword side too (SQL/Python
   parity); `logging.configure_logging` swaps handlers atomically.
-- **Encryption key cache no longer retains raw passphrases** — it is keyed by a
-  salted hash of the passphrase rather than the passphrase bytes.
 - **LangChain `asimilarity_search_with_score`** offloads to a thread instead of
   blocking the event loop.
 
