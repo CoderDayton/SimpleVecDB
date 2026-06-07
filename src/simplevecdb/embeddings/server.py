@@ -39,9 +39,18 @@ def _default_max_body_bytes() -> int:
 # only enforced after the whole body is parsed, so without this an
 # unauthenticated client could exhaust memory with one giant body. Override via
 # EMBEDDING_SERVER_MAX_BODY_BYTES.
-_MAX_BODY_BYTES = int(
-    os.getenv("EMBEDDING_SERVER_MAX_BODY_BYTES") or _default_max_body_bytes()
-)
+try:
+    _MAX_BODY_BYTES = int(
+        os.getenv("EMBEDDING_SERVER_MAX_BODY_BYTES") or _default_max_body_bytes()
+    )
+except ValueError:
+    _logger.warning(
+        "Invalid EMBEDDING_SERVER_MAX_BODY_BYTES=%r; using the derived default.",
+        os.getenv("EMBEDDING_SERVER_MAX_BODY_BYTES"),
+    )
+    _MAX_BODY_BYTES = _default_max_body_bytes()
+# Never let an override drop the cap to ~0 (which would reject every request).
+_MAX_BODY_BYTES = max(_MAX_BODY_BYTES, 1 << 20)
 
 
 class _MaxBodySizeMiddleware:

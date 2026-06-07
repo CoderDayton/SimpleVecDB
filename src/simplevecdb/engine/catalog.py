@@ -960,9 +960,10 @@ class CatalogManager:
             # quotes, a bare operator, ...). Surface a clear caller-facing error
             # instead of the raw SQLite message; re-raise unrelated op errors.
             msg = str(exc).lower()
-            if any(
-                s in msg for s in ("fts5", "syntax error", "unterminated", "malformed")
-            ):
+            # Match only FTS5-query failure shapes; do NOT match a bare
+            # "syntax error", which can come from an unrelated SQL bug and must
+            # not be mislabeled as the user's query.
+            if any(s in msg for s in ("fts5", "unterminated", "malformed")):
                 raise ValueError(
                     f"Invalid full-text search query {query!r}: {exc}"
                 ) from exc

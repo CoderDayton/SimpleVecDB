@@ -43,3 +43,23 @@ class TestServerBodyCap:
         scope = {"type": "http", "headers": [(b"content-length", b"2")]}
         asyncio.run(mw(scope, receive, send))
         assert captured[0]["status"] == 200
+
+
+class TestBodyCapEnvGuard:
+    def test_bad_or_zero_env_does_not_crash_and_is_floored(self, monkeypatch) -> None:
+        """A malformed or zero EMBEDDING_SERVER_MAX_BODY_BYTES must not crash the
+        server import and must never drop the cap below the 1 MiB floor."""
+        import importlib
+
+        server = pytest.importorskip("simplevecdb.embeddings.server")
+        try:
+            monkeypatch.setenv("EMBEDDING_SERVER_MAX_BODY_BYTES", "not-an-int")
+            importlib.reload(server)
+            assert server._MAX_BODY_BYTES >= (1 << 20)
+
+            monkeypatch.setenv("EMBEDDING_SERVER_MAX_BODY_BYTES", "0")
+            importlib.reload(server)
+            assert server._MAX_BODY_BYTES >= (1 << 20)
+        finally:
+            monkeypatch.delenv("EMBEDDING_SERVER_MAX_BODY_BYTES", raising=False)
+            importlib.reload(server)

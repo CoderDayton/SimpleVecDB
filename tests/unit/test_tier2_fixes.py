@@ -87,3 +87,31 @@ class TestLangChainRelevanceScoreFn:
         fn = store._select_relevance_score_fn()
         assert fn(0.0) == 1.0
         assert 0.0 < fn(100.0) < fn(1.0) <= 1.0
+
+
+class TestLangChainRelevanceEndToEnd:
+    def test_relevance_scores_in_range_from_real_search(self) -> None:
+        """End-to-end: similarity_search_with_relevance_scores returns [0,1]
+        scores (higher=closer) using real backend distances, not just the lambda."""
+        import pytest
+
+        pytest.importorskip("langchain_core")
+        from langchain_core.embeddings import Embeddings
+
+        from simplevecdb.integrations.langchain import SimpleVecDBVectorStore
+
+        class _FakeEmb(Embeddings):
+            _M = {"near": [1.0, 0.0, 0.0, 0.0], "far": [0.0, 1.0, 0.0, 0.0]}
+
+            def embed_documents(self, texts):  # noqa: ANN001, ANN201
+                return [self._M[t] for t in texts]
+
+            def embed_query(self, text):  # noqa: ANN001, ANN201
+                return [1.0, 0.0, 0.0, 0.0]
+
+        store = SimpleVecDBVectorStore(embedding=_FakeEmb())
+        store.add_texts(["near", "far"])
+        scored = store.similarity_search_with_relevance_scores("q", k=2)
+        by_text = {doc.page_content: score for doc, score in scored}
+        assert all(0.0 <= s <= 1.0 for s in by_text.values()), by_text
+        assert by_text["near"] > by_text["far"], by_text

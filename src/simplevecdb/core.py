@@ -952,9 +952,18 @@ class VectorCollection:
         added = current_ids - snap_ids
         removed = snap_ids - current_ids
 
+        add_pairs: list[tuple[int, Any]] = []
         if added:
             emap = self._catalog.get_embeddings_by_ids(list(added))
             add_pairs = [(i, emb) for i in added if (emb := emap.get(i)) is not None]
+            if len(add_pairs) < len(added):
+                _logger.warning(
+                    "rebuild_index: %d of %d docs added during the build have no "
+                    "stored embeddings and were not indexed; catalog and index "
+                    "will diverge for them (store_embeddings disabled?).",
+                    len(added) - len(add_pairs),
+                    len(added),
+                )
             if add_pairs:
                 new_index.add(
                     np.array([i for i, _ in add_pairs], dtype=np.uint64),
@@ -963,7 +972,9 @@ class VectorCollection:
         if removed:
             new_index.remove(np.array(sorted(removed), dtype=np.uint64))
 
-        total = len(snap_ids) + len(added) - len(removed)
+        # Count what was actually indexed, not what merely appeared in the
+        # catalog (added docs without stored embeddings are skipped above).
+        total = len(snap_ids) + len(add_pairs) - len(removed)
 
         # Atomic swap: the old index file stays canonical until os.replace().
         self._index.close()
