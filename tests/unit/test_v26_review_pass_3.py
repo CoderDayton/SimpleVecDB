@@ -184,8 +184,8 @@ class TestHybridSearchRRFSymmetry:
             col.add_texts(texts, metadatas=metas, embeddings=embs)
 
             # Hybrid search with a filter that drops the top 9 vector hits.
-            # If rank symmetry is broken, the surviving "drop" → wait,
-            # all dropped — so we use a more nuanced setup: keep just one.
+            # Exactly one document survives the filter, so a broken rank
+            # symmetry shows up as an empty or misordered result.
             results = col.hybrid_search(
                 query="doc number 0",
                 query_vector=[0.1, 9.9, 0.0, 0.0],

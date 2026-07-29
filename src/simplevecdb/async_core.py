@@ -44,11 +44,8 @@ class _AsyncNamespace:
     """Awaitable mirror of a sync sub-namespace (`collection.edges`, …).
 
     Every public callable on the wrapped namespace is re-exposed as a
-    coroutine that runs the sync call in the executor. Async code therefore
-    reads exactly like sync code with `await` in front —
-    `await coll.edges.upsert(...)` against `coll.edges.upsert(...)` — and a
-    method added to a sync namespace is reachable from async immediately,
-    with no wrapper to write and no way for the two surfaces to drift.
+    coroutine that runs the sync call in the executor, so a method added to a
+    sync namespace is reachable from async with no wrapper to write.
 
     Non-callable attributes pass through unchanged.
     """
@@ -150,8 +147,8 @@ class AsyncVectorCollection:
     def conn(self) -> Any:
         """This thread's SQLite connection on the underlying collection.
 
-        A handle, not an operation, so it is not awaitable. Note that reads
-        issued directly on it bypass the collection API entirely.
+        A handle, not an operation, so it is not awaitable. Reads issued
+        directly on it bypass the collection API.
         """
         return self._collection.conn
 
@@ -241,25 +238,24 @@ class AsyncVectorCollection:
                 await coll.delete_by_ids([1])
                 await coll.add_texts(["replacement"], embeddings=[vec])
 
-        A transaction holds a `threading.RLock` for its lifetime, so its
-        enter and exit must happen on one thread. The shared pool cannot
-        promise that — two executor tasks may land on different workers, and
-        releasing an RLock from a thread that never acquired it raises
-        `RuntimeError: cannot release un-acquired lock`. So the transaction
-        gets a private single-worker executor: one thread, every step on it.
+        A transaction holds a `threading.RLock` for its lifetime, so its enter
+        and exit must happen on one thread; two tasks on the shared pool may
+        land on different workers, and releasing an RLock from a thread that
+        never acquired it raises `RuntimeError: cannot release un-acquired
+        lock`. Each transaction therefore gets a private single-worker
+        executor.
 
         **Operate through the yielded handle.** It is bound to the pinned
-        thread; the outer collection is not. Awaiting work on the outer
-        handle inside the block sends it to the shared pool, where it blocks
-        on the DB lock this transaction holds — and that lock is only
-        released when the block exits, which cannot happen while it is
-        awaiting. Use `atomic()` if you want that mistake to be
-        unrepresentable: its body is synchronous and cannot await at all.
+        thread; the outer collection is not. Awaiting work on the outer handle
+        inside the block sends it to the shared pool, where it blocks on the DB
+        lock this transaction holds until the block exits — which it cannot do
+        while it is awaiting. `atomic()` takes a synchronous callback and so
+        cannot express that.
         """
         loop = asyncio.get_running_loop()
-        # A nested tx must run on the thread that already holds the lock: the
-        # RLock is reentrant per thread, so pinning a second thread here
-        # would block forever waiting on the outer transaction.
+        # A nested tx must run on the thread that already holds the lock. The
+        # RLock is reentrant per thread, so a second pinned thread would block
+        # forever on the outer transaction.
         reuse = self._tx_pinned
         pinned = (
             self._executor
@@ -279,13 +275,11 @@ class AsyncVectorCollection:
             try:
                 yield scoped
             except (GeneratorExit, asyncio.CancelledError) as exc:
-                # Teardown paths where awaiting is unsafe. Suspending while a
+                # Teardown paths where awaiting is unsafe: suspending while a
                 # GeneratorExit is in flight raises "async generator ignored
                 # GeneratorExit", and a cancelled task's next await can be
-                # cancelled again — either way the savepoint would stay open
-                # and the DB lock would never be released, wedging every other
-                # writer. Drive the exit on the pinned thread without
-                # suspending.
+                # cancelled again. Either leaves the savepoint open and the DB
+                # lock held, so drive the exit without suspending.
                 pinned.submit(
                     manager.__exit__, type(exc), exc, exc.__traceback__
                 ).result()
@@ -296,10 +290,9 @@ class AsyncVectorCollection:
             await _on_pinned(manager.__exit__, None, None, None)
         finally:
             if not reuse:
-                # Non-blocking: the transaction is over, so waiting here would
-                # only stall the event loop on work the body queued and never
-                # awaited — work that must not run now that the savepoint has
-                # closed. cancel_futures drops exactly that.
+                # Non-blocking: the transaction is over, so anything still
+                # queued is work the body never awaited and must not run now
+                # that the savepoint has closed. cancel_futures drops it.
                 pinned.shutdown(wait=False, cancel_futures=True)
 
     async def atomic(self, fn: Callable[[VectorCollection], T]) -> T:
@@ -309,22 +302,15 @@ class AsyncVectorCollection:
         `VectorCollection`; everything it does — catalog writes and vector
         writes alike — commits or rolls back as one unit.
 
-            async def swap(coll):
+            def swap(coll):
                 coll.delete_by_ids([1])
                 coll.add_texts(["replacement"], embeddings=[vec])
 
             await collection.atomic(swap)
 
-        This is a callback rather than `async with collection.tx()` on
-        purpose. The transaction holds a `threading.RLock` for its whole
-        lifetime, and an `async with` would enter and exit in two separate
-        executor tasks: the pool is free to run them on different threads,
-        and releasing an RLock from a thread that did not acquire it raises
-        `RuntimeError: cannot release un-acquired lock`. Landing on the same
-        thread by luck would be no better — every other call on this
-        collection would sit on that lock across each `await` in the body,
-        which starves a pool this small. Running the whole body in one
-        executor task keeps acquire and release paired on one thread.
+        Running the whole body in one executor task keeps the transaction's
+        `threading.RLock` acquired and released on one thread, and holds it
+        across no `await`. `tx()` is the context-manager form.
 
         Because `fn` runs off the event loop, it must not await; use the
         sync collection API inside it.

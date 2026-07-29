@@ -398,8 +398,6 @@ class UsearchIndex:
             return 0
 
         with self._write_lock:
-            # Mapped read-only indexes must be reloaded writable first, or the
-            # remove below segfaults rather than raising.
             self._ensure_writable("remove")
 
             # Re-read after taking the lock: close() also takes it, so the

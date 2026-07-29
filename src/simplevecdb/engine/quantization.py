@@ -110,9 +110,8 @@ class QuantizationStrategy:
         """
         if self.quantization == Quantization.FLOAT:
             # np.frombuffer aliases the blob and is read-only. Every other
-            # branch below returns a fresh writable array (astype/where copy),
-            # so copy here too rather than hand back a vector whose
-            # mutability depends on the quantization mode.
+            # branch returns a fresh writable array (astype/where copy), so
+            # copy here too and keep the return type consistent.
             return np.frombuffer(blob, dtype=np.float32).copy()
 
         elif self.quantization == Quantization.INT8:

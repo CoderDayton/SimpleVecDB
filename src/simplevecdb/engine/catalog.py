@@ -82,23 +82,21 @@ def _check_finite_edge_field(value: Any, field: str) -> None:
 
 
 class _TxState:
-    """Shared per-VectorDB transaction state (gap 2).
+    """Shared per-VectorDB transaction state.
 
     Used by VectorDB.transaction() to mark all collections/catalogs as
     operating inside an outer SAVEPOINT. Catalog write helpers consult
     `depth` to decide whether to commit on exit.
 
-    `index_ops` buffers HNSW mutations deferred by the collections taking
-    part in the transaction. SQLite SAVEPOINTs cannot roll back the
-    usearch index, so vector writes are held here and applied only when
-    the outermost transaction is about to release; a rollback truncates
-    the buffer instead, leaving the two stores in step.
+    `index_ops` buffers HNSW mutations deferred by the collections taking part
+    in the transaction. SQLite SAVEPOINTs cannot roll back the usearch index,
+    so vector writes are held here and applied only when the outermost
+    transaction is about to release; a rollback truncates the buffer.
 
-    The object is shared by every catalog in a database, but everything it
-    stores is per thread: each thread owns a separate SQLite connection and
-    therefore a separate transaction. That also means a writer on another
-    thread reads `depth == 0` and applies its vectors immediately, rather
-    than buffering them into a transaction that may roll back and drop them.
+    The object is shared by every catalog in a database, but its contents are
+    per thread: each thread owns a separate connection and so a separate
+    transaction. A writer on another thread therefore reads `depth == 0` and
+    applies its vectors immediately.
     """
 
     __slots__ = ("_local",)
@@ -159,12 +157,11 @@ class _CatalogWritable:
                 self._conn.__enter__()
                 self._owns_conn = True
                 if not self._conn.in_transaction:
-                    # Start as a writer. sqlite3 would otherwise open a
-                    # *deferred* transaction, and a block that reads before it
-                    # writes (add_documents checks for colliding ids first)
-                    # then has to upgrade — which fails with
-                    # SQLITE_BUSY_SNAPSHOT if another connection committed in
-                    # between, and no busy_timeout waits that out.
+                    # Start as a writer. sqlite3 opens a deferred transaction,
+                    # so a block that reads before it writes (add_documents
+                    # checks for colliding ids first) has to upgrade, which
+                    # fails with SQLITE_BUSY_SNAPSHOT if another connection
+                    # committed in between; busy_timeout does not wait it out.
                     self._conn.execute("BEGIN IMMEDIATE")
         except BaseException:
             # __exit__ is not called if __enter__ raises; release the lock
@@ -312,12 +309,11 @@ class CatalogManager:
         self._cluster_table_ready = False
         # Serializes Python-level access to the shared sqlite3.Connection. The
         # connection is opened with check_same_thread=False; SQLite itself is
-        # safe under WAL, but Python's `with conn:` transaction context is not
-        # — two threads entering it simultaneously interleave their writes
-        # under one implicit transaction. The lock prevents that.
-        # A ConnectionLock when the owning VectorDB supplied one: it engages
-        # only while threads share a connection, which is the only case this
-        # interleaving can happen in.
+        # safe under WAL, but Python's `with conn:` transaction context is not:
+        # two threads entering it simultaneously interleave their writes under
+        # one implicit transaction. The VectorDB supplies a ConnectionLock,
+        # which engages only while threads share a connection — the only case
+        # that interleaving can happen in.
         self._lock: "threading.RLock | ConnectionLock" = (
             lock if lock is not None else threading.RLock()
         )
@@ -342,9 +338,8 @@ class CatalogManager:
     def conn(self) -> "sqlite3.Connection":
         """This thread's SQLite connection.
 
-        A property rather than a stored handle: each thread owns a separate
-        connection, which is what keeps one thread's open transaction
-        invisible to another's reads.
+        A property rather than a stored handle, because each thread owns a
+        separate connection.
         """
         return self._source.conn
 
@@ -695,9 +690,8 @@ class CatalogManager:
         real_ids: list[int] = [-1] * len(ids_list)
 
         if explicit_rows:
-            # A repeat inside one call is always an error: the two rows would
-            # race for the same id whatever the policy, and under "replace"
-            # the loser would be silently discarded.
+            # A repeat inside one call is an error under any policy: the two
+            # rows target the same id, and "replace" would discard one of them.
             explicit_ids = [int(r[0]) for r in explicit_rows]
             duplicates = find_duplicates(explicit_ids)
             if duplicates:
@@ -802,14 +796,13 @@ class CatalogManager:
     def reserve_ids(self, count: int) -> list[int]:
         """Reserve `count` document ids without inserting any rows.
 
-        Advances the table's AUTOINCREMENT high-water mark so the returned
-        ids can never be handed out again by a later auto-id insert. This
-        lets a caller stamp ids into metadata (self-referential rows, a
-        shared group key) and then write the whole group in one
-        `add_texts` call, instead of inserting and patching afterwards.
+        Advances the table's AUTOINCREMENT high-water mark so the returned ids
+        can never be handed out again by a later auto-id insert. Lets a caller
+        stamp ids into metadata (self-referential rows, a shared group key) and
+        write the whole group in one `add_texts` call.
 
         Reserved ids are not rows: nothing is stored until they are passed
-        back as `ids=`. Ids that are never used simply stay unallocated.
+        back as `ids=`. Ids that are never used stay unallocated.
 
         Args:
             count: How many ids to reserve. Must be positive.

@@ -199,7 +199,7 @@ End-to-end notebooks (including a fully local Ollama RAG) live in the
 ## Feature Highlights
 
 A few of the things SimpleVecDB does well — see
-[`docs/Features.md`](docs/Features.md) for the comprehensive list.
+[`docs/Features.md`](docs/Features.md) for the full list.
 
 - **Vector + keyword + hybrid search** — cosine / L2 similarity, BM25
   via SQLite FTS5, and Reciprocal Rank Fusion in one collection.
@@ -247,7 +247,7 @@ or the [API reference](https://coderdayton.github.io/SimpleVecDB/api/core).
 
 ## Documentation
 
-- **[Features](docs/Features.md)** — Comprehensive list of every capability, grouped by area
+- **[Features](docs/Features.md)** — Every capability, grouped by area
 - **[Setup Guide](https://coderdayton.github.io/SimpleVecDB/ENV_SETUP)** — Environment variables, server configuration, authentication
 - **[API Reference](https://coderdayton.github.io/SimpleVecDB/api/core)** — Complete class/method documentation with type signatures
 - **[Benchmarks](https://coderdayton.github.io/SimpleVecDB/benchmarks)** — Quantization strategies, batch sizes, hardware optimization

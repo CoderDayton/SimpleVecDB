@@ -21,11 +21,8 @@ import pytest
 from simplevecdb.async_core import AsyncVectorCollection, AsyncVectorDB
 from simplevecdb.core import VectorCollection, VectorDB
 
-# Nothing is sync-only any more. `tx()` used to be: a transaction holds a
-# threading.RLock for its lifetime, and on the shared pool an `async with`
-# could enter and exit on different workers, releasing a lock the thread
-# never acquired. Giving each transaction a private single-worker executor
-# removes that, so the async surface now mirrors sync completely.
+# Nothing is sync-only: every public sync method has an async counterpart.
+# Add a name here only with the reason it cannot be mirrored.
 INTENTIONALLY_SYNC_ONLY: set[str] = set()
 
 NAMESPACES = ("edges", "events", "ttl", "pending", "maintenance", "counters")

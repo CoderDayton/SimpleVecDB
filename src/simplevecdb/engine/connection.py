@@ -1,15 +1,10 @@
 """Per-thread SQLite connections for SimpleVecDB.
 
-SQLite gives no isolation between operations on a *single* connection: a
-reader sharing one connection with a writer sees that writer's uncommitted
-rows, and can act on data that later rolls back. Isolation is a property of
-having separate connections — with them, "the reader is only able to see
-complete committed transactions from the writer... regardless of whether the
-two database connections are in the same thread, in different threads of the
-same process, or in different processes."
-
-So each thread gets its own connection to the same database. In WAL mode that
-also buys snapshot isolation and lets readers run while a writer commits.
+SQLite gives no isolation between operations on a single connection: a reader
+sharing one connection with a writer sees that writer's uncommitted rows.
+Separate connections are isolated from each other, so each thread gets its own
+connection to the same database. In WAL mode readers also run concurrently
+with a writer.
 """
 
 from __future__ import annotations
@@ -35,12 +30,7 @@ class ConnectionSource(Protocol):
 
     @property
     def shared(self) -> bool:
-        """Whether threads share one connection.
-
-        Decides whether the Python-level connection lock has anything to
-        protect: a shared connection has one transaction context that all
-        threads would trample, a pooled one does not.
-        """
+        """Whether threads share one connection, and so one transaction context."""
         ...
 
     def close_all(self) -> None:
@@ -51,16 +41,10 @@ class ConnectionSource(Protocol):
 class ConnectionLock:
     """RLock that engages only when threads share one connection.
 
-    With a connection per thread there is nothing left for it to guard:
-    each thread has its own transaction context, and SQLite serializes
-    writers itself (blocking in C for `busy_timeout` rather than failing).
-    Holding a process-wide lock across every write — and for the whole
-    lifetime of every transaction — would serialize threads that the
-    database is perfectly happy to run concurrently.
-
-    It stays a real lock for a shared connection, where the transaction
-    context genuinely is shared: in-memory databases, and any caller that
-    injected its own connection.
+    A shared connection has one transaction context for every thread, so the
+    lock is real for in-memory databases and injected connections. With a
+    connection per thread there is no shared context to guard and SQLite
+    serializes writers itself, so acquire and release become no-ops.
     """
 
     __slots__ = ("_lock", "engaged")
@@ -97,14 +81,10 @@ def is_in_memory(path: str) -> bool:
 def shared_memory_dsn() -> str:
     """A named shared-cache DSN for an in-memory database.
 
-    Not used by default, and the reason is worth recording. Pooling an
-    in-memory database requires this form — *"opening two database
-    connections each with the filename ':memory:' will create two
-    independent in-memory databases"* — but shared cache takes **table-level**
-    write locks, and a reader on another connection then fails with
-    ``SQLITE_LOCKED`` ("database table is locked"), which `busy_timeout` does
-    not wait out. That trades a harmless stale read for a hard error, so
-    in-memory databases keep a single shared connection instead.
+    Two connections opened on `":memory:"` get two independent databases, so
+    pooling one requires this form. Unused by default: shared cache takes
+    table-level write locks, and a reader on another connection then fails
+    with ``SQLITE_LOCKED``, which `busy_timeout` does not wait out.
     """
     return f"file:simplevecdb_{uuid.uuid4().hex}?mode=memory&cache=shared"
 
@@ -112,10 +92,9 @@ def shared_memory_dsn() -> str:
 def apply_pragmas(conn: sqlite3.Connection) -> None:
     """Configure a freshly opened connection.
 
-    Every one of these is connection-scoped, not database-scoped, so a pool
-    must apply them per connection — `foreign_keys` silently defaults back to
-    off otherwise. (`journal_mode=WAL` is the exception, persisting in the
-    file, but setting it again is harmless and keeps this in one place.)
+    These are connection-scoped rather than database-scoped, so a pool must
+    apply them per connection; `foreign_keys` silently defaults back to off
+    otherwise. `journal_mode=WAL` is the exception and persists in the file.
     """
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -128,9 +107,8 @@ def apply_pragmas(conn: sqlite3.Connection) -> None:
 class SingleConnection:
     """Adapter presenting one already-open connection as a connection source.
 
-    Used when a caller supplies its own `sqlite3.Connection` directly instead
-    of a path, so those call sites keep working unchanged. It cannot provide
-    cross-thread isolation — that is the point of `ConnectionPool`.
+    Used when a caller supplies its own `sqlite3.Connection` instead of a
+    path. It provides no cross-thread isolation.
     """
 
     __slots__ = ("_conn",)
@@ -154,10 +132,9 @@ class SingleConnection:
 class ConnectionPool:
     """One SQLite connection per thread, all against the same database.
 
-    The first connection is opened eagerly and kept for the pool's lifetime:
-    a shared-cache in-memory database is reclaimed when its *last* connection
-    closes, so without an anchor the data would vanish whenever a worker
-    thread's connection happened to be the last one out.
+    The constructing thread's connection is opened eagerly, so an unusable
+    path or key fails at construction rather than on first use, and is held
+    for the pool's lifetime.
     """
 
     __slots__ = (
@@ -236,10 +213,9 @@ class ConnectionPool:
     def close_all(self) -> None:
         """Close every connection this pool opened, from any thread.
 
-        Connections belonging to other threads are closed here too. That is
-        safe because they were opened with `check_same_thread=False`, and it
-        is necessary because a worker thread may never run again to close its
-        own.
+        Other threads' connections are closed here too; they were opened with
+        `check_same_thread=False`, and a worker thread may never run again to
+        close its own.
         """
         self._closed = True
         with self._all_lock:
@@ -263,13 +239,11 @@ def open_source(
 ) -> ConnectionSource:
     """Open the right kind of connection source for `path`.
 
-    File-backed databases get one connection per thread, which is what makes
-    a transaction on one thread invisible to reads on another. In-memory
-    databases get a single shared connection: pooling one requires shared
-    cache, whose table-level locks turn concurrent readers into
-    ``SQLITE_LOCKED`` errors (see `shared_memory_dsn`). They therefore keep
-    the old behaviour, cross-thread dirty reads included — acceptable for a
-    database that cannot outlive the process.
+    File-backed databases get one connection per thread, so a transaction on
+    one thread is invisible to reads on another. In-memory databases get a
+    single shared connection and so keep cross-thread dirty reads: pooling one
+    requires shared cache, whose table-level locks turn concurrent readers
+    into ``SQLITE_LOCKED`` errors (see `shared_memory_dsn`).
     """
     if is_in_memory(path):
         conn = sqlite3.connect(path, check_same_thread=False, timeout=timeout)
@@ -281,9 +255,9 @@ def open_source(
 def as_source(conn_or_source: Any) -> ConnectionSource:
     """Accept either a raw connection or something already pool-shaped.
 
-    Tested by identity rather than by `isinstance(..., sqlite3.Connection)`:
-    sqlcipher connections and test doubles are connection-like without being
-    instances of it, and wrapping those is exactly the intent.
+    Anything that is not already a source is treated as a raw connection.
+    Checked this way round because sqlcipher connections and test doubles are
+    connection-like without being `sqlite3.Connection` instances.
     """
     if isinstance(conn_or_source, (ConnectionPool, SingleConnection)):
         return conn_or_source

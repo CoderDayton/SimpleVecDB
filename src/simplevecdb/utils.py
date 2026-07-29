@@ -37,8 +37,7 @@ def _batched(iterable: Iterable[Any], n: int) -> Iterable[Sequence[Any]]:
 def find_duplicates(values: Sequence[int]) -> list[int]:
     """Return the values appearing more than once, in ascending order.
 
-    Single pass over the input — callers hand this whole batches of
-    caller-supplied document ids, so a quadratic scan is not an option.
+    Single pass; callers pass whole batches of document ids.
     """
     seen: set[int] = set()
     repeated: set[int] = set()
@@ -113,12 +112,11 @@ def retry_on_lock(
     def decorator(func: F) -> F:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Never retry inside the caller's transaction. There, the write
-            # helper suppresses the per-call commit, so a statement that
-            # failed halfway through leaves its earlier statements applied
-            # and un-rolled-back; re-running the body would insert the
-            # auto-id rows a second time. The transaction owns atomicity, so
-            # let the error reach it and be rolled back as a unit.
+            # Never retry inside the caller's transaction: the write helper
+            # suppresses the per-call commit there, so a body that failed
+            # partway leaves its earlier statements applied, and re-running it
+            # would insert the auto-id rows twice. The transaction owns
+            # atomicity, so let the error reach it.
             tx_state = getattr(args[0], "_tx_state", None) if args else None
             if tx_state is not None and tx_state.owned_by_current_thread():
                 return func(*args, **kwargs)
