@@ -39,11 +39,11 @@ from .utils import _import_optional, find_duplicates
 from .engine.quantization import QuantizationStrategy
 from .engine.search import SearchEngine
 from .engine.catalog import CatalogManager, _TxState
+from .engine.connection import ConnectionSource, as_source, open_source
 from .engine.usearch_index import UsearchIndex
 from .engine.clustering import ClusterEngine, ClusterAlgorithm
 from . import constants
 from .encryption import (
-    create_encrypted_connection,
     encrypt_index_file,
     decrypt_index_file,
     get_encrypted_index_path,
@@ -177,7 +177,7 @@ class VectorCollection:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: "sqlite3.Connection | ConnectionSource",
         db_path: str,
         name: str,
         distance_strategy: DistanceStrategy,
@@ -187,7 +187,7 @@ class VectorCollection:
         lock: threading.RLock | None = None,
         tx_state: _TxState | None = None,
     ):
-        self.conn = conn
+        self._source = as_source(conn)
         self._db_path = db_path
         self.name = name
         self.distance_strategy = distance_strategy
@@ -231,7 +231,7 @@ class VectorCollection:
         # The optional _tx_state is also shared with the parent VectorDB
         # so db.transaction() can suspend per-call commits everywhere.
         self._catalog = CatalogManager(
-            conn=self.conn,
+            conn=self._source,
             table_name=self._table_name,
             fts_table_name=self._fts_table_name,
             lock=self._lock,
@@ -1771,6 +1771,16 @@ class VectorCollection:
         return ns
 
     @property
+    def conn(self) -> sqlite3.Connection:
+        """This thread's SQLite connection."""
+        return self._source.conn
+
+    @conn.setter
+    def conn(self, value: Any) -> None:
+        """Replace the connection source (tests and connection injection)."""
+        self._source = as_source(value)
+
+    @property
     def dim(self) -> int | None:
         """Vector dimension (None if no vectors added yet)."""
         return self._index.ndim
@@ -2277,7 +2287,6 @@ class _DBTransaction:
             depth = self._db._tx_state.depth
             name = f"simplevecdb_tx_{depth + 1}"
             self._db.conn.execute(f"SAVEPOINT {name}")
-            self._db._tx_state.owner = threading.get_ident()
             self._db._tx_state.depth = depth + 1
             self._savepoint_name = name
             self._entered = True
@@ -2339,8 +2348,6 @@ class _DBTransaction:
                     self._db.conn.execute(f"RELEASE SAVEPOINT {name}")
             finally:
                 self._db._tx_state.depth = max(0, self._db._tx_state.depth - 1)
-                if self._db._tx_state.depth == 0:
-                    self._db._tx_state.owner = None
                 # Outermost commit: if depth fell to 0, finalize the
                 # implicit Python sqlite3 transaction so changes flush.
                 if self._db._tx_state.depth == 0 and exc_type is None:
@@ -2378,12 +2385,17 @@ class _CollectionTransaction(_DBTransaction):
 class _CollectionTxShim:
     """Minimal proxy emulating the VectorDB attributes _DBTransaction reads."""
 
-    __slots__ = ("_lock", "_tx_state", "conn")
+    __slots__ = ("_lock", "_tx_state", "_collection")
 
     def __init__(self, collection: "VectorCollection") -> None:
         self._lock = collection._lock
         self._tx_state = collection._tx_state
-        self.conn = collection.conn
+        self._collection = collection
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """Resolved per access: the connection is per-thread."""
+        return self._collection.conn
 
 
 class _EdgesNamespace:
@@ -2608,44 +2620,42 @@ class VectorDB:
         # so all catalogs in this DB suspend per-call commits.
         self._tx_state: _TxState = _TxState()
 
-        # Create connection (encrypted or plain)
-        if encryption_key is not None:
-            if self.path == ":memory:":
-                raise ValueError(
-                    "In-memory databases cannot be encrypted. "
-                    "Use a file path for encrypted databases."
-                )
-            self.conn = create_encrypted_connection(
-                self.path,
-                encryption_key,
-                check_same_thread=False,
-                timeout=30.0,
+        # One connection per thread, all against this database. A single
+        # shared connection cannot isolate transactions — SQLite provides no
+        # isolation between operations on one connection, so a reader would
+        # see another thread's uncommitted rows.
+        if encryption_key is not None and self.path == ":memory:":
+            raise ValueError(
+                "In-memory databases cannot be encrypted. "
+                "Use a file path for encrypted databases."
             )
-            self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA synchronous=NORMAL")
-            # Native lock-wait window so SQLite blocks the caller in C
-            # rather than surfacing 'database is locked' immediately
-            # under multi-writer load (gap 10).
-            self.conn.execute(f"PRAGMA busy_timeout={constants.SQLITE_BUSY_TIMEOUT_MS}")
-            self.conn.execute("PRAGMA foreign_keys=ON")
-            self._encrypted = True
+        self._source: Any = open_source(self.path, encryption_key=encryption_key)
+        self._encrypted = encryption_key is not None
+        if self._encrypted:
             _logger.info("Opened encrypted database: %s", self.path)
-        else:
-            self.conn = sqlite3.connect(
-                self.path, check_same_thread=False, timeout=30.0
-            )
-            self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA synchronous=NORMAL")
-            self.conn.execute(f"PRAGMA busy_timeout={constants.SQLITE_BUSY_TIMEOUT_MS}")
-            self.conn.execute("PRAGMA foreign_keys=ON")
-            self._encrypted = False
 
         # Verify connection is healthy
         try:
             self.conn.execute("SELECT 1")
         except sqlite3.DatabaseError as e:
-            self.conn.close()
+            self._source.close_all()
             raise RuntimeError(f"Database health check failed: {e}") from e
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """This thread's SQLite connection, opened on first use.
+
+        Each thread gets its own, so one thread's open transaction is
+        invisible to another's reads — a single shared connection cannot
+        provide that, because SQLite has no isolation between operations on
+        one connection.
+        """
+        return self._source.conn
+
+    @conn.setter
+    def conn(self, value: Any) -> None:
+        """Replace the connection source (tests and connection injection)."""
+        self._source = as_source(value)
 
     def transaction(self) -> "_DBTransaction":
         """Atomic write context spanning all collections (gap 2).
@@ -3003,7 +3013,7 @@ class VectorDB:
         with self._lock:
             if cache_key not in self._collections:
                 self._collections[cache_key] = VectorCollection(
-                    conn=self.conn,
+                    conn=self._source,
                     db_path=self.path,
                     name=name,
                     distance_strategy=distance_strategy or self.distance_strategy,
@@ -3088,7 +3098,7 @@ class VectorDB:
         except Exception:
             _logger.warning("Failed to save indexes during close", exc_info=True)
         finally:
-            self.conn.close()
+            self._source.close_all()
             # Clean up ephemeral usearch index files created for in-memory DBs.
             for col in self._collections.values():
                 ephemeral = getattr(col, "_ephemeral_index_path", None)

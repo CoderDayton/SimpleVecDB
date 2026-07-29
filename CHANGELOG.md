@@ -55,6 +55,31 @@ or if a namespace signature drifts.
   savepoint open and the DB lock held for the life of the process. Teardown
   is now driven without suspending.
 
+### One connection per thread
+
+A single shared `sqlite3.Connection` served every collection and every
+thread. SQLite provides no isolation between operations on one connection,
+so a read on one thread could observe another thread's uncommitted rows and
+act on data that was about to roll back.
+
+File-backed databases now open one connection per thread. In WAL mode that
+gives snapshot isolation, and readers no longer wait behind a writer.
+
+In-memory databases keep a single shared connection, and keep the stale-read
+behaviour with it. Pooling one requires a shared-cache URI — a plain
+`":memory:"` gives every connection its own separate database — and shared
+cache takes table-level write locks, so a concurrent reader fails outright
+with `SQLITE_LOCKED` ("database table is locked"), which `busy_timeout` does
+not wait out. A hard error is worse than a stale read for a database that
+cannot outlive the process.
+
+Connection PRAGMAs (`foreign_keys`, `busy_timeout`, `synchronous`) are now
+applied per connection, as they are connection-scoped rather than stored in
+the database file.
+
+`db.conn` and `collection.conn` resolve to the calling thread's connection.
+Both remain assignable for injecting a connection.
+
 ### Crash and concurrency fixes
 
 - **Deleting from a memory-mapped index segfaulted the process.** `add()`

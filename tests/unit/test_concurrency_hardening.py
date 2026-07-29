@@ -232,6 +232,78 @@ class TestAsyncSearchIsolation:
         await db.close()
 
 
+class TestCrossThreadIsolation:
+    """A reader thread must not see another thread's uncommitted rows.
+
+    SQLite gives no isolation between operations on one connection, so while
+    every collection shared a single connection, a raw read could observe a
+    transaction that later rolled back. File-backed databases now open one
+    connection per thread, which is what buys the isolation.
+    """
+
+    def test_file_backed_reader_cannot_see_an_open_transaction(self, tmp_path):
+        db = VectorDB(str(tmp_path / "v.db"))
+        coll = db.collection("docs")
+        coll.add_texts(["committed"], embeddings=[[1.0, 0.0]])
+
+        started, released = threading.Event(), threading.Event()
+        seen: dict[str, int] = {}
+
+        def reader():
+            assert started.wait(5)
+            # Raw read, bypassing the collection API entirely.
+            seen["count"] = db.conn.execute(
+                f"SELECT COUNT(*) FROM {coll._table_name}"
+            ).fetchone()[0]
+            released.set()
+
+        thread = threading.Thread(target=reader)
+        thread.start()
+        try:
+            with coll.tx() as tx:
+                tx.add_texts(["doomed"], embeddings=[[0.0, 1.0]])
+                started.set()
+                assert released.wait(5)
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+        thread.join(5)
+
+        assert seen["count"] == 1
+        assert coll.count() == 1
+        db.close()
+
+    def test_each_thread_gets_its_own_connection(self, tmp_path):
+        db = VectorDB(str(tmp_path / "v.db"))
+        seen: dict[str, int] = {}
+
+        def other():
+            seen["id"] = id(db.conn)
+
+        thread = threading.Thread(target=other)
+        thread.start()
+        thread.join(5)
+
+        assert seen["id"] != id(db.conn)
+        db.close()
+
+    def test_in_memory_keeps_one_shared_connection(self):
+        """Documented carve-out: pooling :memory: needs shared cache, whose
+        table-level locks turn concurrent readers into SQLITE_LOCKED errors."""
+        db = VectorDB(":memory:")
+        seen: dict[str, int] = {}
+
+        def other():
+            seen["id"] = id(db.conn)
+
+        thread = threading.Thread(target=other)
+        thread.start()
+        thread.join(5)
+
+        assert seen["id"] == id(db.conn)
+        db.close()
+
+
 class TestRetryInsideTransaction:
     """`@retry_on_lock` must not re-run a body inside a caller's transaction.
 
@@ -265,7 +337,6 @@ class TestRetryInsideTransaction:
 
     def test_does_not_retry_inside_the_owning_thread_transaction(self):
         fake, calls = self._locking_op()
-        fake._tx_state.owner = threading.get_ident()
         fake._tx_state.depth = 1
 
         # The raw error must surface so the transaction rolls back as a unit.
@@ -275,12 +346,23 @@ class TestRetryInsideTransaction:
         assert len(calls) == 1
 
     def test_still_retries_for_a_thread_outside_the_transaction(self):
+        """Transaction state is per-thread, so another thread's depth is 0."""
         fake, calls = self._locking_op()
-        # Another thread owns the transaction; this caller is not in it.
-        fake._tx_state.owner = threading.get_ident() + 1
-        fake._tx_state.depth = 1
+        fake._tx_state.depth = 1  # this thread is in a transaction
 
-        with pytest.raises(DatabaseLockedError):
-            fake.op()
+        outcome: dict[str, object] = {}
 
+        def other_thread():
+            # Owns no transaction of its own: must still retry.
+            assert fake._tx_state.depth == 0
+            try:
+                fake.op()
+            except BaseException as exc:  # noqa: BLE001 - recorded below
+                outcome["error"] = exc
+
+        thread = threading.Thread(target=other_thread)
+        thread.start()
+        thread.join(30)
+
+        assert isinstance(outcome.get("error"), DatabaseLockedError)
         assert len(calls) == 4

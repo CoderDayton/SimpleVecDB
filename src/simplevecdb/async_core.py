@@ -146,6 +146,15 @@ class AsyncVectorCollection:
         """Collection name."""
         return self._collection.name
 
+    @property
+    def conn(self) -> Any:
+        """This thread's SQLite connection on the underlying collection.
+
+        A handle, not an operation, so it is not awaitable. Note that reads
+        issued directly on it bypass the collection API entirely.
+        """
+        return self._collection.conn
+
     def __repr__(self) -> str:
         return f"AsyncVectorCollection(name={self._collection.name!r})"
 
@@ -1080,6 +1089,14 @@ class AsyncVectorDB:
         Synchronous by design: LlamaIndex drives its own async surface.
         """
         return self._db.as_llama_index(collection_name)
+
+    @property
+    def conn(self) -> Any:
+        """This thread's SQLite connection on the underlying database.
+
+        A handle, not an operation, so it is not awaitable.
+        """
+        return self._db.conn
 
     def list_collections(self) -> list[str]:
         """Return names of all persisted collections in the database."""

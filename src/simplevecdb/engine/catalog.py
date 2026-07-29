@@ -17,6 +17,7 @@ from collections.abc import Iterable, Sequence
 
 from ..constants import SQLITE_MAX_BOUND_PARAMS
 from ..types import ON_CONFLICT_POLICIES, OnConflict
+from .connection import ConnectionSource, as_source
 from ..utils import _batched
 
 from ..utils import validate_filter, retry_on_lock, normalize_filter, find_duplicates
@@ -93,24 +94,37 @@ class _TxState:
     the outermost transaction is about to release; a rollback truncates
     the buffer instead, leaving the two stores in step.
 
-    `owner` is the thread id holding the transaction. A writer that is not
-    the owner is by definition not inside the transaction — its rows are
-    already committed — so it must apply its vectors immediately rather
-    than buffer them into a transaction that may roll back and discard
-    them. Vector writes happen outside the DB lock, so identity is what
-    decides this, not `depth` alone.
+    The object is shared by every catalog in a database, but everything it
+    stores is per thread: each thread owns a separate SQLite connection and
+    therefore a separate transaction. That also means a writer on another
+    thread reads `depth == 0` and applies its vectors immediately, rather
+    than buffering them into a transaction that may roll back and drop them.
     """
 
-    __slots__ = ("depth", "index_ops", "owner")
+    __slots__ = ("_local",)
 
     def __init__(self) -> None:
-        self.depth: int = 0
-        self.index_ops: list[Callable[[], None]] = []
-        self.owner: int | None = None
+        self._local = threading.local()
+
+    @property
+    def depth(self) -> int:
+        return getattr(self._local, "depth", 0)
+
+    @depth.setter
+    def depth(self, value: int) -> None:
+        self._local.depth = value
+
+    @property
+    def index_ops(self) -> list[Callable[[], None]]:
+        ops = getattr(self._local, "index_ops", None)
+        if ops is None:
+            ops = []
+            self._local.index_ops = ops
+        return ops
 
     def owned_by_current_thread(self) -> bool:
-        """True when the calling thread is inside this transaction."""
-        return self.depth > 0 and self.owner == threading.get_ident()
+        """True when the calling thread is inside a transaction."""
+        return self.depth > 0
 
 
 class _CatalogWritable:
@@ -268,7 +282,7 @@ class CatalogManager:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: "sqlite3.Connection | ConnectionSource",
         table_name: str,
         fts_table_name: str,
         lock: threading.RLock | None = None,
@@ -282,7 +296,7 @@ class CatalogManager:
         _validate_table_name(table_name)
         _validate_table_name(fts_table_name)
 
-        self.conn = conn
+        self._source = as_source(conn)
         self._table_name = table_name
         self._fts_table_name = fts_table_name
         self._fts_enabled = False
@@ -310,6 +324,21 @@ class CatalogManager:
         opened by the transaction owns atomicity.
         """
         return _CatalogWritable(self._lock, self.conn, self._tx_state)
+
+    @property
+    def conn(self) -> "sqlite3.Connection":
+        """This thread's SQLite connection.
+
+        A property rather than a stored handle: each thread owns a separate
+        connection, which is what keeps one thread's open transaction
+        invisible to another's reads.
+        """
+        return self._source.conn
+
+    @conn.setter
+    def conn(self, value: Any) -> None:
+        """Replace the connection source (tests and connection injection)."""
+        self._source = as_source(value)
 
     def create_tables(self) -> None:
         """Create metadata and FTS tables if they don't exist."""
