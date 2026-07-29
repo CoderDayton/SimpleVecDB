@@ -80,6 +80,33 @@ the database file.
 `db.conn` and `collection.conn` resolve to the calling thread's connection.
 Both remain assignable for injecting a connection.
 
+**The database-wide lock now stands down when connections are pooled.** It
+was held for the entire lifetime of every transaction, which was necessary
+only because all threads shared one connection's transaction context. With a
+connection per thread there is nothing left for it to guard, and SQLite
+serializes writers itself — blocking in C for `busy_timeout` rather than
+failing. A read on another thread no longer waits out a transaction: in a
+timing check it returned in 1 ms against a transaction held open for 400 ms,
+and still saw the committed state rather than the open transaction's rows.
+
+It remains a real lock where the context genuinely is shared — in-memory
+databases and injected connections — and the structural lock guarding the
+collections cache and the `rebuild_index` swap is untouched, since neither
+has anything to do with how connections are opened.
+
+A rolled-back transaction now ends its enclosing transaction as well as its
+savepoint. Releasing a savepoint does not end the transaction it sits inside,
+so an explicit `BEGIN IMMEDIATE` left open on the rollback path would pin
+SQLite's write lock for the life of that connection and make every other
+connection fail with "database is locked".
+
+**Transactions begin with `BEGIN IMMEDIATE`.** Across connections, a
+transaction that reads before it writes can find another connection has
+committed in between; SQLite will not fork history, so the upgrade fails
+with `SQLITE_BUSY_SNAPSHOT`, which no `busy_timeout` waits out. Starting as
+a writer takes the write lock up front, after which no operation in the
+transaction fails with `SQLITE_BUSY`.
+
 ### Crash and concurrency fixes
 
 - **Deleting from a memory-mapped index segfaulted the process.** `add()`

@@ -304,6 +304,125 @@ class TestCrossThreadIsolation:
         db.close()
 
 
+class TestTransactionConcurrency:
+    """Transactions must not serialize the whole database.
+
+    The DB-wide lock used to be held for a transaction's entire lifetime,
+    because every thread shared one connection. With a connection per thread
+    it stands down, and SQLite serializes writers itself — so a reader runs
+    straight through, and concurrent write transactions queue in C rather
+    than behind a Python lock.
+    """
+
+    def test_a_reader_is_not_blocked_by_an_open_transaction(self, tmp_path):
+        db = VectorDB(str(tmp_path / "v.db"))
+        coll = db.collection("docs")
+        coll.add_texts(["committed"], embeddings=[[1.0, 0.0]])
+
+        started = threading.Event()
+        seen: dict[str, object] = {}
+        hold = 0.4
+
+        def reader():
+            assert started.wait(5)
+            begun = time.perf_counter()
+            seen["count"] = coll.count()
+            seen["waited"] = time.perf_counter() - begun
+
+        thread = threading.Thread(target=reader)
+        thread.start()
+        with coll.tx() as tx:
+            tx.add_texts(["in-tx"], embeddings=[[0.0, 1.0]])
+            started.set()
+            time.sleep(hold)
+        thread.join(10)
+
+        # Generous margin: the point is "did not wait for the transaction",
+        # not a precise timing assertion.
+        assert seen["waited"] < hold / 2
+        # And it still saw the committed state, not the open transaction's row.
+        assert seen["count"] == 1
+        db.close()
+
+    def test_concurrent_write_transactions_do_not_raise(self, tmp_path):
+        """BEGIN IMMEDIATE takes the write lock up front.
+
+        Without it, a transaction that reads before it writes can find
+        another connection committed in between and fail the upgrade with
+        SQLITE_BUSY_SNAPSHOT, which no busy_timeout waits out.
+        """
+        db = VectorDB(str(tmp_path / "v.db"))
+        coll = db.collection("docs")
+        errors: list[str] = []
+        per_thread = 10
+        threads = 6
+
+        def writer(n: int):
+            try:
+                for i in range(per_thread):
+                    with coll.tx() as tx:
+                        tx.add_texts([f"w{n}-{i}"], embeddings=[[0.5, 0.5]])
+            except Exception as exc:  # noqa: BLE001 - recorded for the assert
+                errors.append(repr(exc))
+
+        workers = [threading.Thread(target=writer, args=(n,)) for n in range(threads)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(120)
+
+        assert not errors
+        assert coll.count() == threads * per_thread
+        assert coll._index.size == threads * per_thread
+        db.close()
+
+    def test_rolled_back_transactions_do_not_hold_the_write_lock(self, tmp_path):
+        """A rolled-back transaction must end its enclosing BEGIN IMMEDIATE.
+
+        Releasing the savepoint does not end the transaction the savepoint
+        sits inside. Leaving it open pins SQLite's write lock for the life of
+        that connection, and every other connection then fails with
+        "database is locked" — which only shows up once transactions actually
+        roll back, not on the happy path.
+        """
+        db = VectorDB(str(tmp_path / "v.db"))
+        coll = db.collection("docs")
+        errors: list[str] = []
+
+        def worker(n: int):
+            try:
+                for i in range(10):
+                    try:
+                        with coll.tx() as tx:
+                            tx.add_texts([f"w{n}-{i}"], embeddings=[[0.5, 0.5]])
+                            if i % 3 == 0:
+                                raise RuntimeError("rollback")
+                    except RuntimeError:
+                        pass
+            except Exception as exc:  # noqa: BLE001 - recorded for the assert
+                errors.append(repr(exc))
+
+        workers = [threading.Thread(target=worker, args=(n,)) for n in range(6)]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join(120)
+
+        assert not errors
+        assert coll.count() == coll._index.size
+        db.close()
+
+    def test_connection_lock_engages_only_for_a_shared_connection(self, tmp_path):
+        file_db = VectorDB(str(tmp_path / "v.db"))
+        memory_db = VectorDB(":memory:")
+        try:
+            assert not file_db._conn_lock.engaged  # pooled
+            assert memory_db._conn_lock.engaged  # shared
+        finally:
+            file_db.close()
+            memory_db.close()
+
+
 class TestRetryInsideTransaction:
     """`@retry_on_lock` must not re-run a body inside a caller's transaction.
 

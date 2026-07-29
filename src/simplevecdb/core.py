@@ -39,7 +39,12 @@ from .utils import _import_optional, find_duplicates
 from .engine.quantization import QuantizationStrategy
 from .engine.search import SearchEngine
 from .engine.catalog import CatalogManager, _TxState
-from .engine.connection import ConnectionSource, as_source, open_source
+from .engine.connection import (
+    ConnectionLock,
+    ConnectionSource,
+    as_source,
+    open_source,
+)
 from .engine.usearch_index import UsearchIndex
 from .engine.clustering import ClusterEngine, ClusterAlgorithm
 from . import constants
@@ -186,6 +191,7 @@ class VectorCollection:
         store_embeddings: bool = False,
         lock: threading.RLock | None = None,
         tx_state: _TxState | None = None,
+        conn_lock: "ConnectionLock | None" = None,
     ):
         self._source = as_source(conn)
         self._db_path = db_path
@@ -198,7 +204,14 @@ class VectorCollection:
         # Connection-level lock shared with the parent VectorDB so all
         # collections sharing the same sqlite3.Connection serialize their
         # transactional access from Python.
+        # Structural lock: guards the in-memory index swap in rebuild_index,
+        # which is shared across threads no matter how connections are opened.
         self._lock: threading.RLock = lock if lock is not None else threading.RLock()
+        # Connection lock: guards the Python-level transaction context, and so
+        # engages only when threads share one connection.
+        self._conn_lock: Any = (
+            conn_lock if conn_lock is not None else ConnectionLock(self._source.shared)
+        )
         # Serializes rebuild_index() calls against each other WITHOUT holding the
         # shared DB lock during the (slow) HNSW build. Distinct from self._lock.
         self._rebuild_lock = threading.Lock()
@@ -234,7 +247,7 @@ class VectorCollection:
             conn=self._source,
             table_name=self._table_name,
             fts_table_name=self._fts_table_name,
-            lock=self._lock,
+            lock=self._conn_lock,
             tx_state=getattr(self, "_tx_state", None),
         )
         self._catalog.create_tables()
@@ -2282,11 +2295,22 @@ class _DBTransaction:
         self._index_mark = 0
 
     def __enter__(self) -> "_DBTransaction":
-        self._db._lock.acquire()
+        self._db._conn_lock.acquire()
         try:
             depth = self._db._tx_state.depth
+            conn = self._db.conn
+            if depth == 0 and not conn.in_transaction:
+                # Take the write lock up front. With a connection per thread,
+                # a transaction that reads and only later writes can find
+                # another connection has committed in between, and SQLite
+                # refuses to fork history: the upgrade fails with
+                # SQLITE_BUSY_SNAPSHOT. Starting as a writer means "no
+                # subsequent operations in that transaction will ever fail
+                # with an SQLITE_BUSY error", and busy_timeout covers the
+                # wait for the lock itself.
+                conn.execute("BEGIN IMMEDIATE")
             name = f"simplevecdb_tx_{depth + 1}"
-            self._db.conn.execute(f"SAVEPOINT {name}")
+            conn.execute(f"SAVEPOINT {name}")
             self._db._tx_state.depth = depth + 1
             self._savepoint_name = name
             self._entered = True
@@ -2294,7 +2318,7 @@ class _DBTransaction:
             # is dropped if it rolls back.
             self._index_mark = len(self._db._tx_state.index_ops)
         except Exception:
-            self._db._lock.release()
+            self._db._conn_lock.release()
             raise
         return self
 
@@ -2350,14 +2374,26 @@ class _DBTransaction:
                 self._db._tx_state.depth = max(0, self._db._tx_state.depth - 1)
                 # Outermost commit: if depth fell to 0, finalize the
                 # implicit Python sqlite3 transaction so changes flush.
-                if self._db._tx_state.depth == 0 and exc_type is None:
+                if self._db._tx_state.depth == 0:
+                    # Terminate the explicit BEGIN IMMEDIATE, on both paths.
+                    # Releasing the savepoint does not end the enclosing
+                    # transaction: leaving it open would hold SQLite's write
+                    # lock for the life of the connection, and every other
+                    # connection would fail with "database is locked".
                     try:
-                        self._db.conn.commit()
+                        if exc_type is None:
+                            self._db.conn.commit()
+                        else:
+                            self._db.conn.rollback()
                     except Exception:
-                        _logger.error("outer transaction commit failed", exc_info=True)
+                        _logger.error(
+                            "outer transaction %s failed",
+                            "commit" if exc_type is None else "rollback",
+                            exc_info=True,
+                        )
                         raise
         finally:
-            self._db._lock.release()
+            self._db._conn_lock.release()
 
     def __getitem__(self, name: str) -> "VectorCollection":
         return self._db.collection(name)
@@ -2385,10 +2421,10 @@ class _CollectionTransaction(_DBTransaction):
 class _CollectionTxShim:
     """Minimal proxy emulating the VectorDB attributes _DBTransaction reads."""
 
-    __slots__ = ("_lock", "_tx_state", "_collection")
+    __slots__ = ("_conn_lock", "_tx_state", "_collection")
 
     def __init__(self, collection: "VectorCollection") -> None:
-        self._lock = collection._lock
+        self._conn_lock = collection._conn_lock
         self._tx_state = collection._tx_state
         self._collection = collection
 
@@ -2615,6 +2651,9 @@ class VectorDB:
         # check-then-insert TOCTOU) and the shared sqlite3.Connection's
         # Python-level transaction context. Shared with every VectorCollection
         # and CatalogManager constructed by this VectorDB.
+        # Structural lock: the _collections cache and delete_collection's
+        # check-then-drop. Always real — nothing about connection pooling
+        # makes those safe.
         self._lock = threading.RLock()
         # Shared transaction-depth counter. Bumped by VectorDB.transaction()
         # so all catalogs in this DB suspend per-call commits.
@@ -2630,6 +2669,12 @@ class VectorDB:
                 "Use a file path for encrypted databases."
             )
         self._source: Any = open_source(self.path, encryption_key=encryption_key)
+        # Engages only for a shared connection. With one per thread there is
+        # no shared transaction context to guard, and SQLite serializes
+        # writers itself — blocking in C for busy_timeout rather than
+        # failing, provided every transaction is actually terminated (see
+        # _DBTransaction.__exit__).
+        self._conn_lock = ConnectionLock(self._source.shared)
         self._encrypted = encryption_key is not None
         if self._encrypted:
             _logger.info("Opened encrypted database: %s", self.path)
@@ -3014,6 +3059,7 @@ class VectorDB:
             if cache_key not in self._collections:
                 self._collections[cache_key] = VectorCollection(
                     conn=self._source,
+                    conn_lock=self._conn_lock,
                     db_path=self.path,
                     name=name,
                     distance_strategy=distance_strategy or self.distance_strategy,

@@ -33,9 +33,60 @@ class ConnectionSource(Protocol):
         """The connection this thread should use."""
         ...
 
+    @property
+    def shared(self) -> bool:
+        """Whether threads share one connection.
+
+        Decides whether the Python-level connection lock has anything to
+        protect: a shared connection has one transaction context that all
+        threads would trample, a pooled one does not.
+        """
+        ...
+
     def close_all(self) -> None:
         """Close every connection handed out."""
         ...
+
+
+class ConnectionLock:
+    """RLock that engages only when threads share one connection.
+
+    With a connection per thread there is nothing left for it to guard:
+    each thread has its own transaction context, and SQLite serializes
+    writers itself (blocking in C for `busy_timeout` rather than failing).
+    Holding a process-wide lock across every write — and for the whole
+    lifetime of every transaction — would serialize threads that the
+    database is perfectly happy to run concurrently.
+
+    It stays a real lock for a shared connection, where the transaction
+    context genuinely is shared: in-memory databases, and any caller that
+    injected its own connection.
+    """
+
+    __slots__ = ("_lock", "engaged")
+
+    def __init__(self, engaged: bool) -> None:
+        self._lock = threading.RLock()
+        self.engaged = engaged
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if not self.engaged:
+            return True
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self) -> None:
+        if self.engaged:
+            self._lock.release()
+
+    def __enter__(self) -> "ConnectionLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.release()
+
+    def __repr__(self) -> str:
+        return f"ConnectionLock(engaged={self.engaged})"
 
 
 def is_in_memory(path: str) -> bool:
@@ -90,6 +141,11 @@ class SingleConnection:
     @property
     def conn(self) -> sqlite3.Connection:
         return self._conn
+
+    @property
+    def shared(self) -> bool:
+        """One connection for every thread, so the lock must engage."""
+        return True
 
     def close_all(self) -> None:
         self._conn.close()
@@ -160,6 +216,11 @@ class ConnectionPool:
         with self._all_lock:
             self._all.append(conn)
         return conn
+
+    @property
+    def shared(self) -> bool:
+        """Each thread has its own connection, so the lock can stand down."""
+        return False
 
     @property
     def conn(self) -> sqlite3.Connection:

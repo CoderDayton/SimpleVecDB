@@ -17,7 +17,7 @@ from collections.abc import Iterable, Sequence
 
 from ..constants import SQLITE_MAX_BOUND_PARAMS
 from ..types import ON_CONFLICT_POLICIES, OnConflict
-from .connection import ConnectionSource, as_source
+from .connection import ConnectionLock, ConnectionSource, as_source
 from ..utils import _batched
 
 from ..utils import validate_filter, retry_on_lock, normalize_filter, find_duplicates
@@ -158,6 +158,14 @@ class _CatalogWritable:
             if self._tx.depth == 0:
                 self._conn.__enter__()
                 self._owns_conn = True
+                if not self._conn.in_transaction:
+                    # Start as a writer. sqlite3 would otherwise open a
+                    # *deferred* transaction, and a block that reads before it
+                    # writes (add_documents checks for colliding ids first)
+                    # then has to upgrade — which fails with
+                    # SQLITE_BUSY_SNAPSHOT if another connection committed in
+                    # between, and no busy_timeout waits that out.
+                    self._conn.execute("BEGIN IMMEDIATE")
         except BaseException:
             # __exit__ is not called if __enter__ raises; release the lock
             # ourselves so a connection-level error cannot leak it.
@@ -285,7 +293,7 @@ class CatalogManager:
         conn: "sqlite3.Connection | ConnectionSource",
         table_name: str,
         fts_table_name: str,
-        lock: threading.RLock | None = None,
+        lock: "threading.RLock | ConnectionLock | None" = None,
         tx_state: "_TxState | None" = None,
     ):
         # Defense-in-depth: validate table names. After this point every
@@ -307,7 +315,12 @@ class CatalogManager:
         # safe under WAL, but Python's `with conn:` transaction context is not
         # — two threads entering it simultaneously interleave their writes
         # under one implicit transaction. The lock prevents that.
-        self._lock: threading.RLock = lock if lock is not None else threading.RLock()
+        # A ConnectionLock when the owning VectorDB supplied one: it engages
+        # only while threads share a connection, which is the only case this
+        # interleaving can happen in.
+        self._lock: "threading.RLock | ConnectionLock" = (
+            lock if lock is not None else threading.RLock()
+        )
         # Optional shared cross-collection transaction state. When the
         # state's depth > 0, _writable() suppresses inner conn commits so
         # the outer SAVEPOINT controls atomicity.
