@@ -80,10 +80,17 @@ release-by-release detail, see the [Changelog](CHANGELOG.md).
 - **Transactions (v2.6.1)** — `with db.transaction() as tx: …` and
   `with collection.tx(): …` wrap a SAVEPOINT around catalog writes
   (metadata, counters, edges, events, TTL, and `update_embedding`'s
-  pending overlay). A raised exception rolls all SQL writes back. Coarse
-  vector mutations (`add_texts`, `delete_by_ids`) are NOT rolled back —
-  use `update_embedding` + `pending.flush()` for vector changes that
-  must be commit-gated.
+  pending overlay). A raised exception rolls all SQL writes back.
+  Vector mutations (`add_texts`, `delete_by_ids`, `pending.flush()`,
+  `ttl.sweep()`) are buffered and applied on commit, so a rollback
+  leaves neither store changed; the tradeoff is that a search inside
+  the transaction cannot see its own vector writes. Async callers get the
+  same shape — `async with collection.tx() as coll:` — plus
+  `await collection.atomic(fn)` for a callback that cannot await.
+- **Reserved ids** — `collection.reserve_ids(n)` hands out ids before
+  the rows exist, so self-referential or grouped documents go in with a
+  single `add_texts` call. Reusing an existing id now raises instead of
+  silently overwriting; pass `on_conflict="replace"` for an upsert.
 
 ## Relationships
 

@@ -200,9 +200,13 @@ class UsearchIndex:
     @property
     def size(self) -> int:
         """Number of vectors in the index."""
-        if self._index is None:
+        # Snapshot the reference: close() clears `_index` without the write
+        # lock, so re-reading the attribute after the None check can hand a
+        # concurrent reader `len(None)`.
+        index = self._index
+        if index is None:
             return 0
-        return len(self._index)
+        return len(index)
 
     @property
     def is_memory_mapped(self) -> bool:
@@ -240,13 +244,7 @@ class UsearchIndex:
 
         # Lazy index creation on first add
         with self._write_lock:
-            # If currently in view mode, need to reload as writable
-            if self._is_view and self._index is not None:
-                _logger.debug("Upgrading from view to writable mode for add operation")
-                from usearch.index import Index
-
-                self._index = Index.restore(str(self._path), view=False)
-                self._is_view = False
+            self._ensure_writable("add")
 
             if self._index is None:
                 self._ndim = vectors.shape[1]
@@ -308,7 +306,11 @@ class UsearchIndex:
         """
         from .. import constants
 
-        if self._index is None or self.size == 0:
+        # Snapshot once: close() nulls `_index`, and search deliberately takes
+        # no lock, so re-reading the attribute later can hand this method None
+        # halfway through.
+        index = self._index
+        if index is None or len(index) == 0:
             # Return empty results for empty index
             empty_keys = np.array([], dtype=np.uint64)
             empty_dists = np.array([], dtype=np.float32)
@@ -332,26 +334,46 @@ class UsearchIndex:
                 query = query / np.maximum(norms, 1e-12)
 
         # Adaptive search: brute-force for small indexes, HNSW for large
+        size = len(index)
         if exact is None:
-            use_exact = self.size < constants.USEARCH_BRUTEFORCE_THRESHOLD
+            use_exact = size < constants.USEARCH_BRUTEFORCE_THRESHOLD
         else:
             use_exact = exact
 
         if use_exact:
             _logger.debug(
                 "Using brute-force search (index size %d < threshold %d)",
-                self.size,
+                size,
                 constants.USEARCH_BRUTEFORCE_THRESHOLD,
             )
 
         # usearch search is thread-safe for reads
-        matches = self._index.search(query, k, exact=use_exact, threads=threads)
+        matches = index.search(query, k, exact=use_exact, threads=threads)
 
         # Handle single query vs batch
         keys = np.asarray(matches.keys, dtype=np.uint64)
         distances = np.asarray(matches.distances, dtype=np.float32)
 
         return keys, distances
+
+    def _ensure_writable(self, operation: str) -> None:
+        """Reload a memory-mapped index as writable before mutating it.
+
+        A `view=True` index is mapped read-only; mutating one does not raise,
+        it segfaults the process inside usearch. Every mutating entry point
+        must pass through here first.
+
+        Caller must hold `_write_lock`.
+        """
+        if not self._is_view or self._index is None:
+            return
+        _logger.debug(
+            "Upgrading from view to writable mode for %s operation", operation
+        )
+        from usearch.index import Index
+
+        self._index = Index.restore(str(self._path), view=False)
+        self._is_view = False
 
     def remove(self, keys: NDArray[np.uint64] | list[int]) -> int:
         """
@@ -376,11 +398,20 @@ class UsearchIndex:
             return 0
 
         with self._write_lock:
+            self._ensure_writable("remove")
+
+            # Re-read after taking the lock: close() also takes it, so the
+            # None check above may be stale by now. _ensure_writable can
+            # rebind `_index` too, so this must come after it.
+            index = self._index
+            if index is None:
+                return 0
+
             # Filter to only keys that exist in the index
-            existing_mask = np.array([int(k) in self._index for k in keys], dtype=bool)
+            existing_mask = np.array([int(k) in index for k in keys], dtype=bool)
             existing_keys = keys[existing_mask]
             if len(existing_keys) > 0:
-                self._index.remove(existing_keys)
+                index.remove(existing_keys)
             removed = int(existing_mask.sum())
             self._dirty = True
             _logger.debug("Removed %d vectors from index", removed)
@@ -388,9 +419,10 @@ class UsearchIndex:
 
     def contains(self, key: int) -> bool:
         """Check if a key exists in the index."""
-        if self._index is None:
+        index = self._index  # see `size` for why this is snapshotted
+        if index is None:
             return False
-        return key in self._index
+        return key in index
 
     def save(self) -> None:
         """Save index to disk atomically if modified.
@@ -457,7 +489,10 @@ class UsearchIndex:
     def close(self) -> None:
         """Save and close the index."""
         self.save()
-        self._index = None
+        # Under the write lock so a mutation in flight finishes against a
+        # live index rather than losing it mid-operation.
+        with self._write_lock:
+            self._index = None
 
     def __len__(self) -> int:
         return self.size
@@ -467,18 +502,24 @@ class UsearchIndex:
 
     def keys(self) -> list[int]:
         """Return all keys in the index."""
-        if self._index is None:
+        index = self._index  # see `size` for why this is snapshotted
+        if index is None:
             return []
-        return [int(k) for k in self._index.keys]
+        return [int(k) for k in index.keys]
 
-    def _vectors_from_index(self, keys: NDArray[np.uint64]) -> NDArray[np.float32]:
+    def _vectors_from_index(
+        self, keys: NDArray[np.uint64], index: Any | None = None
+    ) -> NDArray[np.float32]:
         """Fetch stored vectors for keys, unpacking BIT-quantized bytes to ±1 floats.
 
         For BIT quantization usearch stores packed bytes (ndim/8 per vector); a
         plain float cast would yield the wrong shape and meaningless values, so
         the bits are unpacked back to the float dimension.
+
+        `index` lets a caller pass the snapshot it already validated, rather
+        than re-reading `_index` and racing close().
         """
-        raw = self._index[keys]
+        raw = (self._index if index is None else index)[keys]
         if self._quantization == Quantization.BIT:
             return _unpack_bits(np.asarray(raw, dtype=np.uint8), self._ndim or 1)
         return np.asarray(raw, dtype=np.float32)
@@ -493,14 +534,15 @@ class UsearchIndex:
         Returns:
             Array of vectors, shape (len(keys), ndim). Missing keys return zeros.
         """
-        if self._index is None or len(keys) == 0:
+        index = self._index  # snapshot; see `search` for why
+        if index is None or len(keys) == 0:
             return np.array([], dtype=np.float32).reshape(0, self._ndim or 1)
 
         keys = np.asarray(keys, dtype=np.uint64)
         ndim = self._ndim or 1
 
         # Filter to existing keys for batch retrieval
-        existing_mask = np.array([int(k) in self._index for k in keys], dtype=bool)
+        existing_mask = np.array([int(k) in index for k in keys], dtype=bool)
 
         if not existing_mask.any():
             _logger.warning(
@@ -511,7 +553,7 @@ class UsearchIndex:
 
         if existing_mask.all():
             # Fast path: all keys exist, batch retrieve
-            return self._vectors_from_index(keys)
+            return self._vectors_from_index(keys, index)
 
         # Mixed: some keys missing
         _logger.warning(
@@ -520,7 +562,7 @@ class UsearchIndex:
         )
         result = np.zeros((len(keys), ndim), dtype=np.float32)
         existing_keys = keys[existing_mask]
-        result[existing_mask] = self._vectors_from_index(existing_keys)
+        result[existing_mask] = self._vectors_from_index(existing_keys, index)
         return result
 
     def __del__(self) -> None:

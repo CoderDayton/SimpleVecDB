@@ -5,6 +5,182 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-07-29
+
+### The async API now mirrors the sync one
+
+The async surface was written wrapper by wrapper and had drifted: eight
+collection methods and four database methods had no async counterpart, and
+the sub-namespaces were flattened into names that no longer matched
+(`collection.ttl.sweep()` became `sweep_ttl()`).
+
+Async sub-namespaces are now generic proxies over the sync ones, so async
+code reads as sync code with `await` in front — and a method added to a sync
+namespace is reachable from async immediately, with no wrapper to write.
+
+```python
+await collection.edges.upsert(src, dst, kind="cites", weight=0.9)
+await collection.ttl.sweep()
+await collection.pending.flush()
+```
+
+#### Added
+
+- **`collection.edges`, `.events`, `.ttl`, `.pending`, `.maintenance`,
+  `.counters`** on `AsyncVectorCollection`, matching the sync namespaces name
+  for name and signature for signature.
+- **`async with collection.tx()`** — the async mirror of `collection.tx()`.
+  A transaction holds a `threading.RLock` for its lifetime, so entering and
+  exiting on two different pool workers would release a lock the thread never
+  acquired; each transaction therefore gets a private single-worker executor
+  and every step runs on that one thread. Operate through the yielded handle:
+  awaiting work on the outer collection inside the block sends it to the
+  shared pool, where it blocks on the lock the transaction holds.
+  `atomic(fn)` remains available and makes that mistake unrepresentable — its
+  body is synchronous and cannot await at all.
+- **`AsyncVectorDB.transaction(fn)`** — database-wide transactions spanning
+  collections, plus `save`, `as_langchain`, and `as_llama_index`.
+- **`AsyncVectorCollection.add_texts_streaming`**.
+- **`events.subscribe` is a real async generator**, polling with
+  `asyncio.sleep` instead of blocking the event loop.
+
+A parity test now fails if a public sync method gains no async counterpart,
+or if a namespace signature drifts.
+
+#### Fixed
+
+- **Cancelling an `async with` transaction no longer wedges the database.**
+  Teardown ran through an `await`, and suspending while a `GeneratorExit` is
+  in flight raises "async generator ignored GeneratorExit" — leaving the
+  savepoint open and the DB lock held for the life of the process. Teardown
+  is now driven without suspending.
+
+### One connection per thread
+
+A single shared `sqlite3.Connection` served every collection and every
+thread. SQLite provides no isolation between operations on one connection,
+so a read on one thread could observe another thread's uncommitted rows and
+act on data that was about to roll back.
+
+File-backed databases now open one connection per thread. In WAL mode that
+gives snapshot isolation, and readers no longer wait behind a writer.
+
+In-memory databases keep a single shared connection, and keep the stale-read
+behaviour with it. Pooling one requires a shared-cache URI — a plain
+`":memory:"` gives every connection its own separate database — and shared
+cache takes table-level write locks, so a concurrent reader fails outright
+with `SQLITE_LOCKED` ("database table is locked"), which `busy_timeout` does
+not wait out. A hard error is worse than a stale read for a database that
+cannot outlive the process.
+
+Connection PRAGMAs (`foreign_keys`, `busy_timeout`, `synchronous`) are now
+applied per connection, as they are connection-scoped rather than stored in
+the database file.
+
+`db.conn` and `collection.conn` resolve to the calling thread's connection.
+Both remain assignable for injecting a connection.
+
+**The database-wide lock now stands down when connections are pooled.** It
+was held for the entire lifetime of every transaction, which was necessary
+only because all threads shared one connection's transaction context. With a
+connection per thread there is nothing left for it to guard, and SQLite
+serializes writers itself — blocking in C for `busy_timeout` rather than
+failing. A read on another thread no longer waits out a transaction: in a
+timing check it returned in 1 ms against a transaction held open for 400 ms,
+and still saw the committed state rather than the open transaction's rows.
+
+It remains a real lock where the context genuinely is shared — in-memory
+databases and injected connections — and the structural lock guarding the
+collections cache and the `rebuild_index` swap is untouched, since neither
+has anything to do with how connections are opened.
+
+A rolled-back transaction now ends its enclosing transaction as well as its
+savepoint. Releasing a savepoint does not end the transaction it sits inside,
+so an explicit `BEGIN IMMEDIATE` left open on the rollback path would pin
+SQLite's write lock for the life of that connection and make every other
+connection fail with "database is locked".
+
+**Transactions begin with `BEGIN IMMEDIATE`.** Across connections, a
+transaction that reads before it writes can find another connection has
+committed in between; SQLite will not fork history, so the upgrade fails
+with `SQLITE_BUSY_SNAPSHOT`, which no `busy_timeout` waits out. Starting as
+a writer takes the write lock up front, after which no operation in the
+transaction fails with `SQLITE_BUSY`.
+
+### Crash and concurrency fixes
+
+- **Deleting from a memory-mapped index segfaulted the process.** `add()`
+  reloaded a `view=True` index as writable before mutating; `remove()` did
+  not, and usearch does not raise on a read-only mapping — it crashes. Any
+  database whose index file passed the 50 MB mmap threshold and then saw a
+  delete was exposed. Both paths now go through one guard.
+- **Index reads could dereference a closed index.** `search`, `get`,
+  `remove`, `size`, `contains`, and `keys` checked `_index is None` and then
+  re-read the attribute, so a concurrent `close()` produced `AttributeError`
+  or `TypeError`. They now snapshot the reference once.
+- **A locked write inside a transaction is no longer retried.** Outside a
+  transaction the write helper rolls a failed attempt back before retrying;
+  inside one it deliberately does not, so re-running the body re-executed
+  statements that had already applied, duplicating auto-id rows.
+- **`close()` and `delete_collection()` stop TTL sweepers.** Background
+  sweeper threads outlived both, waking on their interval to query a closed
+  database or dropped tables and logging a failure every cycle.
+- **`usearch>=2.24.0`** — earlier versions can underflow `Index::size()` to
+  ~1.8e19 under concurrent add/remove (unum-cloud/usearch#697), which drives
+  spurious full index rebuilds.
+
+### Transactions cover the vector index
+
+`tx()` and `db.transaction()` guarded only half the store: the SAVEPOINT
+rolled back the catalog rows while the vectors written to the HNSW index
+stayed put, leaving the index keyed to rows that no longer existed. Vector
+writes now take part in the transaction, and explicit document ids stop
+overwriting existing documents by accident.
+
+#### Breaking
+
+- **`add_texts(ids=…)` refuses an id that already exists.** It previously
+  upserted silently, so a stale or guessed id destroyed the stored document
+  with no error. Pass `on_conflict="replace"` for the old behaviour. The
+  check runs before anything is written, so a rejected call leaves the
+  collection untouched — including across internal batches. Repeating an id
+  within a single call is always an error.
+- The LangChain adapter keeps upserting: `SimpleVecDBVectorStore.add_texts`
+  defaults to `on_conflict="replace"` so LangChain's own contract holds.
+
+#### Added
+
+- **`collection.reserve_ids(n)`** — reserve ids without writing rows. Ids
+  come out of the auto-increment sequence and can never be handed out again,
+  so a document's own id (a self-reference, a shared group key) can be baked
+  into its metadata and the whole group written with one `add_texts` call
+  instead of an insert followed by a patch-up write.
+- **`AsyncVectorCollection.atomic(fn)`** — run a transaction from async code.
+  `fn` is a synchronous callable receiving the sync collection. This is a
+  callback rather than `async with` because a transaction holds a
+  `threading.RLock` for its lifetime: entering and exiting in two separate
+  executor tasks can release the lock from a thread that never acquired it
+  (`RuntimeError: cannot release un-acquired lock`), and holding it across
+  awaits starves the pool. Running the whole body in one executor task keeps
+  acquire and release paired.
+- **`AsyncVectorCollection.reserve_ids`** and `on_conflict` on the async
+  `add_texts`.
+
+#### Fixed
+
+- **Vector writes are transactional.** `add_texts`, `delete_by_ids`,
+  `pending.flush()` and `ttl.sweep()` buffer their HNSW mutations while a
+  transaction is open and apply them just before the outermost savepoint
+  releases, so a rollback undoes rows and vectors together. Applying ahead of
+  the release means a failing vector write can still roll the catalog back;
+  usearch has no undo, so a failure partway through the buffer is logged
+  loudly with a `rebuild_index()` recommendation rather than hidden.
+
+#### Changed
+
+- A search *inside* a transaction does not see that transaction's own vector
+  writes — they land at commit. Catalog reads are unaffected.
+
 ## [2.6.2] - 2026-06-06
 
 ### Correctness and contract fixes

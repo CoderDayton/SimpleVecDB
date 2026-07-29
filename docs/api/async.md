@@ -44,6 +44,7 @@ db = AsyncVectorDB("vectors.db", max_workers=8)
 | Sync Method                       | Async Method                                       |
 | --------------------------------- | -------------------------------------------------- |
 | `add_texts()`                     | `await collection.add_texts()`                     |
+| `reserve_ids()`                   | `await collection.reserve_ids()`                   |
 | `similarity_search()`             | `await collection.similarity_search()`             |
 | `similarity_search_batch()`       | `await collection.similarity_search_batch()`       |
 | `keyword_search()`                | `await collection.keyword_search()`                |
@@ -55,6 +56,56 @@ db = AsyncVectorDB("vectors.db", max_workers=8)
 Synchronous properties remain unchanged:
 
 - `collection.name` - Collection name
+
+## Sub-namespaces
+
+Every sync sub-namespace is mirrored on the async collection, name for name:
+
+```python
+await collection.edges.upsert(src, dst, kind="cites", weight=0.9)
+await collection.counters.increment(doc_id, {"hits": 1})
+await collection.ttl.sweep()
+await collection.pending.flush()
+
+async for event in collection.events.subscribe(since=0):
+    ...
+```
+
+## Transactions
+
+`async with collection.tx()` mirrors the sync context manager. Catalog writes
+and vector writes commit or roll back together:
+
+```python
+async with collection.tx() as coll:
+    await coll.delete_by_ids([1])
+    await coll.add_texts(["replacement"], embeddings=[[0.1] * 384])
+```
+
+A transaction holds a `threading.RLock` for its lifetime, so its enter and
+exit must happen on one thread — the shared pool cannot promise that, and
+releasing an RLock from a thread that never acquired it raises. Each
+transaction therefore gets a private single-worker executor.
+
+**Operate through the yielded handle.** It is bound to that pinned thread;
+the outer collection is not. Awaiting work on the outer handle inside the
+block sends it to the shared pool, where it blocks on the DB lock this
+transaction holds — and that lock is not released until the block exits,
+which cannot happen while it is awaiting.
+
+`atomic()` makes that mistake unrepresentable: the callback is synchronous
+and cannot await at all.
+
+```python
+def move(coll):
+    coll.delete_by_ids([1])
+    return coll.add_texts(["replacement"], embeddings=[[0.1] * 384])
+
+new_ids = await collection.atomic(move)
+```
+
+`AsyncVectorDB.transaction(fn)` is the database-wide equivalent, spanning
+collections via `tx["name"]`.
 
 ## Concurrent Operations
 

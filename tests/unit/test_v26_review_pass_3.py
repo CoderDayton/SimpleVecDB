@@ -87,16 +87,24 @@ class TestUsearchIndexFsync:
 
 class TestSharedRLock:
     def test_vectordb_lock_is_shared_with_catalog(self, tmp_path):
-        """The VectorDB-level RLock must be the same object as every
-        CatalogManager._lock so transactions on the shared connection do
-        not interleave between collections."""
+        """Every CatalogManager must hold the *same* connection lock object.
+
+        The lock guards the Python-level transaction context, so a per-catalog
+        lock would let collections interleave on a shared connection. It is
+        now `db._conn_lock` rather than `db._lock`: the latter guards
+        structural state (the collections cache, the rebuild_index swap) and
+        is always real, while this one stands down when each thread has its
+        own connection and there is no shared context to protect.
+        """
         db = VectorDB(str(tmp_path / "shared.db"))
         col_a = db.collection("alpha")
         col_b = db.collection("beta")
         try:
-            assert col_a._catalog._lock is db._lock
-            assert col_b._catalog._lock is db._lock
+            assert col_a._catalog._lock is db._conn_lock
+            assert col_b._catalog._lock is db._conn_lock
             assert col_a._catalog._lock is col_b._catalog._lock
+            # File-backed: pooled connections, so the lock stands down.
+            assert not db._conn_lock.engaged
         finally:
             db.close()
 
@@ -176,8 +184,8 @@ class TestHybridSearchRRFSymmetry:
             col.add_texts(texts, metadatas=metas, embeddings=embs)
 
             # Hybrid search with a filter that drops the top 9 vector hits.
-            # If rank symmetry is broken, the surviving "drop" → wait,
-            # all dropped — so we use a more nuanced setup: keep just one.
+            # Exactly one document survives the filter, so a broken rank
+            # symmetry shows up as an empty or misordered result.
             results = col.hybrid_search(
                 query="doc number 0",
                 query_vector=[0.1, 9.9, 0.0, 0.0],

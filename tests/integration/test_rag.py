@@ -4,6 +4,9 @@ import os
 import pytest
 from unittest.mock import Mock
 
+# Model the live RAG test drives. Override to exercise a different one.
+OLLAMA_MODEL = os.environ.get("SIMPLEVECDB_TEST_OLLAMA_MODEL", "qwen3.5:0.8b")
+
 # Stub Ollama if not installed
 _ollama_available = False
 try:
@@ -12,6 +15,25 @@ try:
     _ollama_available = True
 except ImportError:
     OllamaClient = Mock()  # type: ignore
+
+
+def _ollama_model_ready() -> bool:
+    """True only when a reachable daemon has OLLAMA_MODEL pulled.
+
+    Importing the client proves nothing: the package installs as a plain
+    dependency, so without this probe the test fails with a 404 on any
+    machine that has the library but not the model.
+    """
+    if not _ollama_available:
+        return False
+    try:
+        installed = OllamaClient().list().get("models", [])
+    except Exception:
+        return False
+    return any((m.get("model") or m.get("name")) == OLLAMA_MODEL for m in installed)
+
+
+_ollama_ready = _ollama_model_ready()
 
 from simplevecdb import VectorDB  # noqa: E402
 
@@ -52,7 +74,9 @@ def test_rag_end_to_end(populated_db: VectorDB, monkeypatch):
 # Real Ollama test — runs only when a local Ollama server has the
 # `qwen3.5:0.8b` model pulled. Skipped in CI (no Ollama daemon, no model)
 # and skipped locally when the daemon is unreachable.
-@pytest.mark.skipif(not _ollama_available, reason="Ollama not installed")
+@pytest.mark.skipif(
+    not _ollama_ready, reason=f"Ollama daemon or model {OLLAMA_MODEL!r} unavailable"
+)
 @pytest.mark.skipif(
     bool(os.environ.get("CI")),
     reason="CI environments do not run a local Ollama server",
@@ -80,7 +104,7 @@ def test_rag_with_ollama(populated_db):
         contexts = populated_db.collection("default").similarity_search(query_emb, k=2)
         context = "\n".join(d.page_content for d, _ in contexts)
         response = client.generate(
-            model="qwen3.5:0.8b",
+            model=OLLAMA_MODEL,
             prompt=f"Using context: {context}, answer: {query}",
         )
         assert "purple" in response["response"].lower()

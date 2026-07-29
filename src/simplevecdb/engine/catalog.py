@@ -15,9 +15,12 @@ import threading
 from typing import Any, TYPE_CHECKING, Callable
 from collections.abc import Iterable, Sequence
 
+from ..constants import SQLITE_MAX_BOUND_PARAMS
+from ..types import ON_CONFLICT_POLICIES, OnConflict
+from .connection import ConnectionLock, ConnectionSource, as_source
 from ..utils import _batched
 
-from ..utils import validate_filter, retry_on_lock, normalize_filter
+from ..utils import validate_filter, retry_on_lock, normalize_filter, find_duplicates
 
 if TYPE_CHECKING:
     import sqlite3
@@ -79,17 +82,47 @@ def _check_finite_edge_field(value: Any, field: str) -> None:
 
 
 class _TxState:
-    """Shared per-VectorDB transaction depth counter (gap 2).
+    """Shared per-VectorDB transaction state.
 
     Used by VectorDB.transaction() to mark all collections/catalogs as
     operating inside an outer SAVEPOINT. Catalog write helpers consult
-    this to decide whether to commit on exit.
+    `depth` to decide whether to commit on exit.
+
+    `index_ops` buffers HNSW mutations deferred by the collections taking part
+    in the transaction. SQLite SAVEPOINTs cannot roll back the usearch index,
+    so vector writes are held here and applied only when the outermost
+    transaction is about to release; a rollback truncates the buffer.
+
+    The object is shared by every catalog in a database, but its contents are
+    per thread: each thread owns a separate connection and so a separate
+    transaction. A writer on another thread therefore reads `depth == 0` and
+    applies its vectors immediately.
     """
 
-    __slots__ = ("depth",)
+    __slots__ = ("_local",)
 
     def __init__(self) -> None:
-        self.depth: int = 0
+        self._local = threading.local()
+
+    @property
+    def depth(self) -> int:
+        return getattr(self._local, "depth", 0)
+
+    @depth.setter
+    def depth(self, value: int) -> None:
+        self._local.depth = value
+
+    @property
+    def index_ops(self) -> list[Callable[[], None]]:
+        ops = getattr(self._local, "index_ops", None)
+        if ops is None:
+            ops = []
+            self._local.index_ops = ops
+        return ops
+
+    def owned_by_current_thread(self) -> bool:
+        """True when the calling thread is inside a transaction."""
+        return self.depth > 0
 
 
 class _CatalogWritable:
@@ -123,6 +156,13 @@ class _CatalogWritable:
             if self._tx.depth == 0:
                 self._conn.__enter__()
                 self._owns_conn = True
+                if not self._conn.in_transaction:
+                    # Start as a writer. sqlite3 opens a deferred transaction,
+                    # so a block that reads before it writes (add_documents
+                    # checks for colliding ids first) has to upgrade, which
+                    # fails with SQLITE_BUSY_SNAPSHOT if another connection
+                    # committed in between; busy_timeout does not wait it out.
+                    self._conn.execute("BEGIN IMMEDIATE")
         except BaseException:
             # __exit__ is not called if __enter__ raises; release the lock
             # ourselves so a connection-level error cannot leak it.
@@ -247,10 +287,10 @@ class CatalogManager:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: "sqlite3.Connection | ConnectionSource",
         table_name: str,
         fts_table_name: str,
-        lock: threading.RLock | None = None,
+        lock: "threading.RLock | ConnectionLock | None" = None,
         tx_state: "_TxState | None" = None,
     ):
         # Defense-in-depth: validate table names. After this point every
@@ -261,7 +301,7 @@ class CatalogManager:
         _validate_table_name(table_name)
         _validate_table_name(fts_table_name)
 
-        self.conn = conn
+        self._source = as_source(conn)
         self._table_name = table_name
         self._fts_table_name = fts_table_name
         self._fts_enabled = False
@@ -269,10 +309,14 @@ class CatalogManager:
         self._cluster_table_ready = False
         # Serializes Python-level access to the shared sqlite3.Connection. The
         # connection is opened with check_same_thread=False; SQLite itself is
-        # safe under WAL, but Python's `with conn:` transaction context is not
-        # — two threads entering it simultaneously interleave their writes
-        # under one implicit transaction. The lock prevents that.
-        self._lock: threading.RLock = lock if lock is not None else threading.RLock()
+        # safe under WAL, but Python's `with conn:` transaction context is not:
+        # two threads entering it simultaneously interleave their writes under
+        # one implicit transaction. The VectorDB supplies a ConnectionLock,
+        # which engages only while threads share a connection — the only case
+        # that interleaving can happen in.
+        self._lock: "threading.RLock | ConnectionLock" = (
+            lock if lock is not None else threading.RLock()
+        )
         # Optional shared cross-collection transaction state. When the
         # state's depth > 0, _writable() suppresses inner conn commits so
         # the outer SAVEPOINT controls atomicity.
@@ -289,6 +333,20 @@ class CatalogManager:
         opened by the transaction owns atomicity.
         """
         return _CatalogWritable(self._lock, self.conn, self._tx_state)
+
+    @property
+    def conn(self) -> "sqlite3.Connection":
+        """This thread's SQLite connection.
+
+        A property rather than a stored handle, because each thread owns a
+        separate connection.
+        """
+        return self._source.conn
+
+    @conn.setter
+    def conn(self, value: Any) -> None:
+        """Replace the connection source (tests and connection injection)."""
+        self._source = as_source(value)
 
     def create_tables(self) -> None:
         """Create metadata and FTS tables if they don't exist."""
@@ -548,20 +606,34 @@ class CatalogManager:
         ids: Sequence[int | None] | None = None,
         embeddings: Sequence[Sequence[float]] | None = None,
         parent_ids: Sequence[int | None] | None = None,
+        on_conflict: OnConflict = "error",
     ) -> list[int]:
         """
-        Insert or update document metadata.
+        Insert document metadata, optionally replacing rows on id collision.
 
         Args:
             texts: Document text content
             metadatas: Metadata dicts for each document
-            ids: Optional document IDs for upsert behavior
+            ids: Optional explicit document IDs
             embeddings: Optional embedding vectors to store
             parent_ids: Optional parent document IDs for hierarchical relationships
+            on_conflict: What an explicit id that already exists does —
+                ``"error"`` raises and writes nothing, ``"replace"`` overwrites
+                the stored row.
 
         Returns:
             List of document IDs (rowids)
+
+        Raises:
+            ValueError: If `on_conflict` is not a recognised policy, if `ids`
+                repeats an id within the call, or if `on_conflict="error"`
+                and an id already exists.
         """
+        if on_conflict not in ON_CONFLICT_POLICIES:
+            raise ValueError(
+                f"on_conflict must be one of {sorted(ON_CONFLICT_POLICIES)}, "
+                f"got {on_conflict!r}"
+            )
         if not texts:
             return []
 
@@ -617,20 +689,49 @@ class CatalogManager:
 
         real_ids: list[int] = [-1] * len(ids_list)
 
+        if explicit_rows:
+            # A repeat inside one call is an error under any policy: the two
+            # rows target the same id, and "replace" would discard one of them.
+            explicit_ids = [int(r[0]) for r in explicit_rows]
+            duplicates = find_duplicates(explicit_ids)
+            if duplicates:
+                raise ValueError(
+                    f"ids contains duplicate values within a single call: {duplicates}"
+                )
+
         with self._writable():
             if explicit_rows:
-                self.conn.executemany(
-                    f"""
-                    INSERT INTO {self._table_name}(id, text, metadata, embedding, parent_id)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        text=excluded.text,
-                        metadata=excluded.metadata,
-                        embedding=excluded.embedding,
-                        parent_id=excluded.parent_id
-                    """,
-                    explicit_rows,
-                )
+                if on_conflict == "error":
+                    # Checked inside _writable(), so no concurrent writer can
+                    # land a colliding row between the check and the INSERT.
+                    colliding = self.existing_ids(explicit_ids)
+                    if colliding:
+                        raise ValueError(
+                            f"add_documents: {len(colliding)} id(s) already exist: "
+                            f"{colliding[:10]}"
+                            f"{'...' if len(colliding) > 10 else ''}. "
+                            'Pass on_conflict="replace" to overwrite them.'
+                        )
+                    self.conn.executemany(
+                        f"""
+                        INSERT INTO {self._table_name}(id, text, metadata, embedding, parent_id)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        explicit_rows,
+                    )
+                else:
+                    self.conn.executemany(
+                        f"""
+                        INSERT INTO {self._table_name}(id, text, metadata, embedding, parent_id)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            text=excluded.text,
+                            metadata=excluded.metadata,
+                            embedding=excluded.embedding,
+                            parent_id=excluded.parent_id
+                        """,
+                        explicit_rows,
+                    )
 
             if auto_rows:
                 # Use a single multi-VALUES INSERT ... RETURNING id so we
@@ -674,6 +775,71 @@ class CatalogManager:
 
         _logger.debug("Added %d documents, ids=%s", len(real_ids), real_ids[:5])
         return real_ids
+
+    def existing_ids(self, ids: Sequence[int]) -> list[int]:
+        """Return the subset of `ids` already present, in ascending order.
+
+        Chunked because SQLite caps the number of bound parameters per
+        statement (`SQLITE_MAX_VARIABLE_NUMBER`).
+        """
+        found: list[int] = []
+        for start in range(0, len(ids), SQLITE_MAX_BOUND_PARAMS):
+            chunk = ids[start : start + SQLITE_MAX_BOUND_PARAMS]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.conn.execute(
+                f"SELECT id FROM {self._table_name} WHERE id IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            found.extend(int(r[0]) for r in rows)
+        return sorted(found)
+
+    def reserve_ids(self, count: int) -> list[int]:
+        """Reserve `count` document ids without inserting any rows.
+
+        Advances the table's AUTOINCREMENT high-water mark so the returned ids
+        can never be handed out again by a later auto-id insert. Lets a caller
+        stamp ids into metadata (self-referential rows, a shared group key) and
+        write the whole group in one `add_texts` call.
+
+        Reserved ids are not rows: nothing is stored until they are passed
+        back as `ids=`. Ids that are never used stay unallocated.
+
+        Args:
+            count: How many ids to reserve. Must be positive.
+
+        Returns:
+            `count` consecutive ids in ascending order.
+
+        Raises:
+            ValueError: If `count` is not positive.
+        """
+        if count <= 0:
+            raise ValueError(f"reserve_ids: count must be positive, got {count}")
+
+        with self._writable():
+            seq_row = self.conn.execute(
+                "SELECT seq FROM sqlite_sequence WHERE name = ?",
+                (self._table_name,),
+            ).fetchone()
+            max_row = self.conn.execute(
+                f"SELECT COALESCE(MAX(id), 0) FROM {self._table_name}"
+            ).fetchone()
+            # MAX(id) guards the case where explicit ids were inserted past
+            # the sequence mark; the reservation must clear both.
+            base = max(int(seq_row[0]) if seq_row is not None else 0, int(max_row[0]))
+            new_seq = base + count
+            if seq_row is None:
+                self.conn.execute(
+                    "INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)",
+                    (self._table_name, new_seq),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE sqlite_sequence SET seq = ? WHERE name = ?",
+                    (new_seq, self._table_name),
+                )
+
+        return list(range(base + 1, new_seq + 1))
 
     @retry_on_lock(max_retries=5, base_delay=0.1)
     def delete_by_ids(self, ids: Iterable[int]) -> list[int]:

@@ -75,7 +75,11 @@ def test_upsert(populated_db):
     collection = populated_db.collection("default")
     new_emb = [0.5, 0.5, 0.5, 0.5]
     collection.add_texts(
-        ["updated apple"], embeddings=[new_emb], ids=[1], metadatas=[{"color": "green"}]
+        ["updated apple"],
+        embeddings=[new_emb],
+        ids=[1],
+        metadatas=[{"color": "green"}],
+        on_conflict="replace",
     )
 
     updated = populated_db.conn.execute(

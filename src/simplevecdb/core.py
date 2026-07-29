@@ -26,6 +26,7 @@ import multiprocessing
 from .types import (
     Document,
     DistanceStrategy,
+    OnConflict,
     Quantization,
     Edge,
     Event,
@@ -34,15 +35,20 @@ from .types import (
     ClusterResult,
     ClusterTagCallback,
 )
-from .utils import _import_optional
+from .utils import _import_optional, find_duplicates
 from .engine.quantization import QuantizationStrategy
 from .engine.search import SearchEngine
 from .engine.catalog import CatalogManager, _TxState
+from .engine.connection import (
+    ConnectionLock,
+    ConnectionSource,
+    as_source,
+    open_source,
+)
 from .engine.usearch_index import UsearchIndex
 from .engine.clustering import ClusterEngine, ClusterAlgorithm
 from . import constants
 from .encryption import (
-    create_encrypted_connection,
     encrypt_index_file,
     decrypt_index_file,
     get_encrypted_index_path,
@@ -176,7 +182,7 @@ class VectorCollection:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: "sqlite3.Connection | ConnectionSource",
         db_path: str,
         name: str,
         distance_strategy: DistanceStrategy,
@@ -185,8 +191,9 @@ class VectorCollection:
         store_embeddings: bool = False,
         lock: threading.RLock | None = None,
         tx_state: _TxState | None = None,
+        conn_lock: "ConnectionLock | None" = None,
     ):
-        self.conn = conn
+        self._source = as_source(conn)
         self._db_path = db_path
         self.name = name
         self.distance_strategy = distance_strategy
@@ -194,10 +201,14 @@ class VectorCollection:
         self._quantizer = QuantizationStrategy(quantization)
         self._encryption_key = encryption_key
         self._store_embeddings = store_embeddings
-        # Connection-level lock shared with the parent VectorDB so all
-        # collections sharing the same sqlite3.Connection serialize their
-        # transactional access from Python.
+        # Structural lock: guards the in-memory index swap in rebuild_index,
+        # which is shared across threads however connections are opened.
         self._lock: threading.RLock = lock if lock is not None else threading.RLock()
+        # Connection lock: guards the transaction context, so it engages only
+        # when threads share one connection.
+        self._conn_lock: Any = (
+            conn_lock if conn_lock is not None else ConnectionLock(self._source.shared)
+        )
         # Serializes rebuild_index() calls against each other WITHOUT holding the
         # shared DB lock during the (slow) HNSW build. Distinct from self._lock.
         self._rebuild_lock = threading.Lock()
@@ -230,10 +241,10 @@ class VectorCollection:
         # The optional _tx_state is also shared with the parent VectorDB
         # so db.transaction() can suspend per-call commits everywhere.
         self._catalog = CatalogManager(
-            conn=self.conn,
+            conn=self._source,
             table_name=self._table_name,
             fts_table_name=self._fts_table_name,
-            lock=self._lock,
+            lock=self._conn_lock,
             tx_state=getattr(self, "_tx_state", None),
         )
         self._catalog.create_tables()
@@ -296,6 +307,78 @@ class VectorCollection:
 
         return self._index_path
 
+    def reserve_ids(self, count: int) -> list[int]:
+        """Reserve `count` document ids without writing any rows.
+
+        The ids are burned out of the auto-increment sequence, so no later
+        insert can be handed one of them. Use this when a document's own id has
+        to appear in its metadata (a self-reference, or a group key shared
+        across a batch) so the whole group goes in with one `add_texts` call.
+
+            ids = collection.reserve_ids(3)
+            group = {"group_id": ids[0]}
+            collection.add_texts(texts, [{**group, "id": i} for i in ids], ids=ids)
+
+        Reserving is not inserting: ids that are never passed back as `ids=`
+        stay unused, leaving a gap in the sequence.
+
+        Args:
+            count: How many ids to reserve. Must be positive.
+
+        Returns:
+            `count` consecutive ids in ascending order.
+
+        Raises:
+            ValueError: If `count` is not positive.
+        """
+        return self._catalog.reserve_ids(count)
+
+    def _index_add(
+        self,
+        keys: "np.ndarray",
+        vectors: "np.ndarray",
+        *,
+        threads: int = 0,
+    ) -> None:
+        """Add vectors to the HNSW index, deferring the write inside a tx.
+
+        A SQLite SAVEPOINT cannot roll back usearch, so when a transaction is
+        open the write is buffered and applied just before the outermost
+        savepoint releases; a rollback discards the buffer.
+
+        The buffered arrays are copied: they may alias caller-owned memory that
+        is free to change before the transaction commits.
+
+        Only the thread that owns the transaction defers. Another thread's rows
+        are already committed, so buffering its vectors would expose them to a
+        rollback that has nothing to do with them.
+        """
+        if self._tx_state.owned_by_current_thread():
+            keys_buf = np.array(keys, dtype=np.uint64, copy=True)
+            vecs_buf = np.array(vectors, dtype=np.float32, copy=True)
+
+            def _deferred_add() -> None:
+                self._index.add(keys_buf, vecs_buf, threads=threads)
+
+            self._tx_state.index_ops.append(_deferred_add)
+            return
+        self._index.add(keys, vectors, threads=threads)
+
+    def _index_remove(self, keys: list[int]) -> None:
+        """Remove keys from the HNSW index, deferring the write inside a tx.
+
+        Counterpart to `_index_add`; see there for why the write is held.
+        """
+        if self._tx_state.owned_by_current_thread():
+            keys_buf = [int(k) for k in keys]
+
+            def _deferred_remove() -> None:
+                self._index.remove(keys_buf)
+
+            self._tx_state.index_ops.append(_deferred_remove)
+            return
+        self._index.remove(keys)
+
     def add_texts(
         self,
         texts: Sequence[str],
@@ -305,29 +388,36 @@ class VectorCollection:
         *,
         parent_ids: Sequence[int | None] | None = None,
         threads: int = 0,
+        on_conflict: OnConflict = "error",
     ) -> list[int]:
         """
         Add texts with optional embeddings and metadata to the collection.
 
-        Automatically infers vector dimension from first batch. Supports upsert
-        (update on conflict) when providing existing IDs. For COSINE distance,
-        vectors are L2-normalized automatically by usearch.
+        Automatically infers vector dimension from first batch. For COSINE
+        distance, vectors are L2-normalized automatically by usearch.
+
+        Supplying `ids` that already exist is an error by default; pass
+        `on_conflict="replace"` to get upsert behaviour.
 
         Args:
             texts: Document text content to store.
             metadatas: Optional metadata dicts (one per text).
             embeddings: Optional pre-computed embeddings (one per text).
                 If None, attempts to use local embedding model.
-            ids: Optional document IDs for upsert behavior.
+            ids: Optional explicit document IDs — see `reserve_ids`.
             parent_ids: Optional parent document IDs for hierarchical relationships.
             threads: Number of threads for parallel insertion (0=auto).
+            on_conflict: What an explicit id that already exists does —
+                ``"error"`` (default) raises before anything is written,
+                ``"replace"`` overwrites the existing document.
 
         Returns:
             List of inserted/updated document IDs.
 
         Raises:
-            ValueError: If embedding dimensions don't match, or if no embeddings
-                provided and local embedder not available.
+            ValueError: If embedding dimensions don't match, if no embeddings
+                provided and local embedder not available, or if `ids` collide
+                with existing documents under ``on_conflict="error"``.
         """
         if not texts:
             return []
@@ -348,6 +438,26 @@ class VectorCollection:
             raise ValueError(
                 f"parent_ids length ({len(parent_ids)}) must match texts length ({len(texts)})"
             )
+
+        # Check explicit ids once for the whole call: the catalog re-checks per
+        # batch, but by then an earlier batch may already have committed. Runs
+        # before embedding resolution so a rejected call pays for nothing.
+        explicit_ids = [i for i in ids if i is not None] if ids is not None else []
+        if explicit_ids:
+            duplicates = find_duplicates(explicit_ids)
+            if duplicates:
+                raise ValueError(
+                    f"ids contains duplicate values within a single call: {duplicates}"
+                )
+            if on_conflict == "error":
+                colliding = self._catalog.existing_ids(explicit_ids)
+                if colliding:
+                    raise ValueError(
+                        f"add_texts: {len(colliding)} id(s) already exist: "
+                        f"{colliding[:10]}{'...' if len(colliding) > 10 else ''}. "
+                        'Pass on_conflict="replace" to overwrite them, or use '
+                        "reserve_ids() to get ids that cannot collide."
+                    )
 
         # Resolve embeddings
         if embeddings is None:
@@ -396,14 +506,16 @@ class VectorCollection:
                 batch_ids,
                 embeddings=batch_embeds if self._store_embeddings else None,
                 parent_ids=batch_parent_ids,
+                on_conflict=on_conflict,
             )
 
-            # Add to usearch index. The catalog rows above are already
-            # committed, so if this fails the two stores diverge (rows present,
-            # vectors missing). Log it so the divergence is visible instead of
-            # silent; recovery is rebuild_index() (needs store_embeddings=True).
+            # Add to usearch index. Inside a transaction this is buffered and
+            # applied on commit, so a rollback drops both stores. Outside one
+            # the catalog rows are already committed, so a failure here leaves
+            # rows without vectors; rebuild_index() recovers that when
+            # store_embeddings=True.
             try:
-                self._index.add(
+                self._index_add(
                     np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads
                 )
             except Exception:
@@ -594,7 +706,7 @@ class VectorCollection:
         doc_ids = self._catalog.add_documents(
             texts, metas, None, embeddings=embeds_resolved
         )
-        self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
+        self._index_add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
 
         return doc_ids
 
@@ -775,8 +887,9 @@ class VectorCollection:
         self._catalog.delete_by_ids(ids_list)
 
         # Then remove from usearch (if this fails, catalog is clean and
-        # rebuild_index() can recover the index from stored data)
-        self._index.remove(ids_list)
+        # rebuild_index() can recover the index from stored data). Inside a
+        # transaction the removal is buffered until commit.
+        self._index_remove(ids_list)
 
     def remove_texts(
         self,
@@ -1662,6 +1775,16 @@ class VectorCollection:
         return ns
 
     @property
+    def conn(self) -> sqlite3.Connection:
+        """This thread's SQLite connection."""
+        return self._source.conn
+
+    @conn.setter
+    def conn(self, value: Any) -> None:
+        """Replace the connection source (tests and connection injection)."""
+        self._source = as_source(value)
+
+    @property
     def dim(self) -> int | None:
         """Vector dimension (None if no vectors added yet)."""
         return self._index.ndim
@@ -1813,7 +1936,7 @@ class _PendingNamespace:
             .copy()
         )
         # add() takes the write lock and does remove+add per existing key.
-        idx.add(ids, mat)
+        self._collection._index_add(ids, mat)
         cat.delete_pending_vectors([int(i) for i in ids])
         # Track flush count for the rebuild scheduler.
         try:
@@ -1897,7 +2020,7 @@ class _TTLNamespace:
         )
         if deleted:
             try:
-                self._collection._index.remove(deleted)
+                self._collection._index_remove(deleted)
             except Exception:
                 # Catalog rows are already gone; index drift means
                 # subsequent searches may surface phantom hits until a
@@ -2143,53 +2266,116 @@ class _DBTransaction:
     owns skips its per-call commit. On success the SAVEPOINT is
     released; on exception it's rolled back and the depth is reset.
 
+    Vector writes are held too: collections buffer their HNSW mutations on
+    the transaction state (see `VectorCollection._index_add`) and the
+    outermost transaction applies them just before releasing, so a rollback
+    leaves neither store changed. A search inside the transaction does not
+    see the transaction's own vector writes.
+
     Yields a mapping-like object so callers can do
     `tx["collection_name"]` to operate on individual collections.
     """
 
-    __slots__ = ("_db", "_savepoint_name", "_entered")
+    __slots__ = ("_db", "_savepoint_name", "_entered", "_index_mark")
 
     def __init__(self, db: "VectorDB") -> None:
         self._db = db
         self._savepoint_name: str | None = None
         self._entered = False
+        self._index_mark = 0
 
     def __enter__(self) -> "_DBTransaction":
-        self._db._lock.acquire()
+        self._db._conn_lock.acquire()
         try:
             depth = self._db._tx_state.depth
+            conn = self._db.conn
+            if depth == 0 and not conn.in_transaction:
+                # Start as a writer. A transaction that reads and only later
+                # writes can find another connection committed in between, and
+                # the upgrade then fails with SQLITE_BUSY_SNAPSHOT. busy_timeout
+                # covers the wait for the write lock itself.
+                conn.execute("BEGIN IMMEDIATE")
             name = f"simplevecdb_tx_{depth + 1}"
-            self._db.conn.execute(f"SAVEPOINT {name}")
+            conn.execute(f"SAVEPOINT {name}")
             self._db._tx_state.depth = depth + 1
             self._savepoint_name = name
             self._entered = True
+            # Everything buffered from here on belongs to this savepoint and
+            # is dropped if it rolls back.
+            self._index_mark = len(self._db._tx_state.index_ops)
         except Exception:
-            self._db._lock.release()
+            self._db._conn_lock.release()
             raise
         return self
+
+    def _apply_index_ops(self, savepoint: str) -> None:
+        """Flush buffered HNSW writes before the outermost savepoint releases.
+
+        Running ahead of the RELEASE leaves the catalog side still rollable
+        when a vector write raises. usearch has no undo, so a failure partway
+        through the buffer leaves the already-applied vectors in place for rows
+        that are about to disappear; that is logged as an error.
+        """
+        ops = self._db._tx_state.index_ops
+        if not ops:
+            return
+        applied = 0
+        try:
+            for op in ops:
+                op()
+                applied += 1
+        except Exception:
+            self._db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self._db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            _logger.error(
+                "transaction: %d of %d buffered index operations applied before "
+                "failure; catalog rolled back but the index may retain vectors "
+                "for rows that no longer exist — run rebuild_index() to resync.",
+                applied,
+                len(ops),
+                exc_info=True,
+            )
+            raise
+        finally:
+            ops.clear()
 
     def __exit__(self, exc_type, exc, tb) -> None:
         try:
             name = self._savepoint_name
             assert name is not None
+            state = self._db._tx_state
             try:
                 if exc_type is None:
+                    if state.depth == 1:
+                        self._apply_index_ops(name)
                     self._db.conn.execute(f"RELEASE SAVEPOINT {name}")
                 else:
+                    # Drop vector writes buffered inside this savepoint; an
+                    # outer transaction keeps everything it buffered earlier.
+                    del state.index_ops[self._index_mark :]
                     self._db.conn.execute(f"ROLLBACK TO SAVEPOINT {name}")
                     self._db.conn.execute(f"RELEASE SAVEPOINT {name}")
             finally:
                 self._db._tx_state.depth = max(0, self._db._tx_state.depth - 1)
-                # Outermost commit: if depth fell to 0, finalize the
-                # implicit Python sqlite3 transaction so changes flush.
-                if self._db._tx_state.depth == 0 and exc_type is None:
+                if self._db._tx_state.depth == 0:
+                    # Terminate the explicit BEGIN IMMEDIATE on both paths.
+                    # Releasing the savepoint does not end the enclosing
+                    # transaction, and leaving it open holds SQLite's write
+                    # lock for the life of the connection.
                     try:
-                        self._db.conn.commit()
+                        if exc_type is None:
+                            self._db.conn.commit()
+                        else:
+                            self._db.conn.rollback()
                     except Exception:
-                        _logger.error("outer transaction commit failed", exc_info=True)
+                        _logger.error(
+                            "outer transaction %s failed",
+                            "commit" if exc_type is None else "rollback",
+                            exc_info=True,
+                        )
                         raise
         finally:
-            self._db._lock.release()
+            self._db._conn_lock.release()
 
     def __getitem__(self, name: str) -> "VectorCollection":
         return self._db.collection(name)
@@ -2217,12 +2403,17 @@ class _CollectionTransaction(_DBTransaction):
 class _CollectionTxShim:
     """Minimal proxy emulating the VectorDB attributes _DBTransaction reads."""
 
-    __slots__ = ("_lock", "_tx_state", "conn")
+    __slots__ = ("_conn_lock", "_tx_state", "_collection")
 
     def __init__(self, collection: "VectorCollection") -> None:
-        self._lock = collection._lock
+        self._conn_lock = collection._conn_lock
         self._tx_state = collection._tx_state
-        self.conn = collection.conn
+        self._collection = collection
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """Resolved per access: the connection is per-thread."""
+        return self._collection.conn
 
 
 class _EdgesNamespace:
@@ -2438,56 +2629,55 @@ class VectorDB:
         self.quantization = quantization
         self._encryption_key = encryption_key
         self._collections: dict[tuple, VectorCollection] = {}
-        # Single RLock serializing both the _collections cache (avoid
-        # check-then-insert TOCTOU) and the shared sqlite3.Connection's
-        # Python-level transaction context. Shared with every VectorCollection
-        # and CatalogManager constructed by this VectorDB.
+        # Structural lock: the _collections cache (check-then-insert TOCTOU)
+        # and delete_collection's check-then-drop. Shared with every
+        # VectorCollection and CatalogManager constructed by this VectorDB.
         self._lock = threading.RLock()
         # Shared transaction-depth counter. Bumped by VectorDB.transaction()
         # so all catalogs in this DB suspend per-call commits.
         self._tx_state: _TxState = _TxState()
 
-        # Create connection (encrypted or plain)
-        if encryption_key is not None:
-            if self.path == ":memory:":
-                raise ValueError(
-                    "In-memory databases cannot be encrypted. "
-                    "Use a file path for encrypted databases."
-                )
-            self.conn = create_encrypted_connection(
-                self.path,
-                encryption_key,
-                check_same_thread=False,
-                timeout=30.0,
+        # One connection per thread, all against this database: SQLite gives no
+        # isolation between operations on one connection, so a reader sharing
+        # one sees another thread's uncommitted rows.
+        if encryption_key is not None and self.path == ":memory:":
+            raise ValueError(
+                "In-memory databases cannot be encrypted. "
+                "Use a file path for encrypted databases."
             )
-            self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA synchronous=NORMAL")
-            # Native lock-wait window so SQLite blocks the caller in C
-            # rather than surfacing 'database is locked' immediately
-            # under multi-writer load (gap 10).
-            self.conn.execute(f"PRAGMA busy_timeout={constants.SQLITE_BUSY_TIMEOUT_MS}")
-            self.conn.execute("PRAGMA foreign_keys=ON")
-            self._encrypted = True
+        self._source: Any = open_source(self.path, encryption_key=encryption_key)
+        # Engages only for a shared connection. With one per thread there is no
+        # shared transaction context to guard, and SQLite serializes writers
+        # itself provided every transaction is terminated (_DBTransaction).
+        self._conn_lock = ConnectionLock(self._source.shared)
+        self._encrypted = encryption_key is not None
+        if self._encrypted:
             _logger.info("Opened encrypted database: %s", self.path)
-        else:
-            self.conn = sqlite3.connect(
-                self.path, check_same_thread=False, timeout=30.0
-            )
-            self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA synchronous=NORMAL")
-            self.conn.execute(f"PRAGMA busy_timeout={constants.SQLITE_BUSY_TIMEOUT_MS}")
-            self.conn.execute("PRAGMA foreign_keys=ON")
-            self._encrypted = False
 
         # Verify connection is healthy
         try:
             self.conn.execute("SELECT 1")
         except sqlite3.DatabaseError as e:
-            self.conn.close()
+            self._source.close_all()
             raise RuntimeError(f"Database health check failed: {e}") from e
 
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """This thread's SQLite connection, opened on first use.
+
+        Each thread gets its own, so one thread's open transaction is invisible
+        to another's reads. In-memory databases share a single connection and
+        do not get that isolation.
+        """
+        return self._source.conn
+
+    @conn.setter
+    def conn(self, value: Any) -> None:
+        """Replace the connection source (tests and connection injection)."""
+        self._source = as_source(value)
+
     def transaction(self) -> "_DBTransaction":
-        """Atomic write context spanning all collections (gap 2).
+        """Atomic write context spanning all collections.
 
         Wraps the work in a single SQLite SAVEPOINT and bumps the shared
         transaction-depth counter so every catalog method skips its
@@ -2616,6 +2806,20 @@ class VectorDB:
             # Close any cached collection's open index before removing the file
             for cached_key, cached_col in list(self._collections.items()):
                 if cached_key[0] == name:
+                    # Stop the TTL sweeper first: left running it queries the
+                    # tables this method is about to drop, logging a failure
+                    # every interval.
+                    ttl_ns = cached_col.__dict__.get("_ttl_ns")
+                    if ttl_ns is not None:
+                        try:
+                            ttl_ns.stop_background()
+                        except Exception:
+                            _logger.warning(
+                                "Failed to stop TTL sweeper for collection %r "
+                                "during delete",
+                                name,
+                                exc_info=True,
+                            )
                     try:
                         cached_col._index.close()
                     except Exception:
@@ -2828,7 +3032,8 @@ class VectorDB:
         with self._lock:
             if cache_key not in self._collections:
                 self._collections[cache_key] = VectorCollection(
-                    conn=self.conn,
+                    conn=self._source,
+                    conn_lock=self._conn_lock,
                     db_path=self.path,
                     name=name,
                     distance_strategy=distance_strategy or self.distance_strategy,
@@ -2892,12 +3097,26 @@ class VectorDB:
         if getattr(self, "_closed", False):
             return
         self._closed = True
+        # Stop opt-in TTL sweepers first: they are daemon threads that would
+        # otherwise wake against a closed database every interval, and a sweep
+        # in flight can race the conn.close() below.
+        for col in self._collections.values():
+            ttl_ns = col.__dict__.get("_ttl_ns")
+            if ttl_ns is not None:
+                try:
+                    ttl_ns.stop_background()
+                except Exception:
+                    _logger.warning(
+                        "Failed to stop TTL sweeper for collection %s during close",
+                        col.name,
+                        exc_info=True,
+                    )
         try:
             self.save()
         except Exception:
             _logger.warning("Failed to save indexes during close", exc_info=True)
         finally:
-            self.conn.close()
+            self._source.close_all()
             # Clean up ephemeral usearch index files created for in-memory DBs.
             for col in self._collections.values():
                 ephemeral = getattr(col, "_ephemeral_index_path", None)
