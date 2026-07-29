@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.7.0] - 2026-07-29
 
+### The async API now mirrors the sync one
+
+The async surface was written wrapper by wrapper and had drifted: eight
+collection methods and four database methods had no async counterpart, and
+the sub-namespaces were flattened into names that no longer matched
+(`collection.ttl.sweep()` became `sweep_ttl()`).
+
+Async sub-namespaces are now generic proxies over the sync ones, so async
+code reads as sync code with `await` in front — and a method added to a sync
+namespace is reachable from async immediately, with no wrapper to write.
+
+```python
+await collection.edges.upsert(src, dst, kind="cites", weight=0.9)
+await collection.ttl.sweep()
+await collection.pending.flush()
+```
+
+#### Added
+
+- **`collection.edges`, `.events`, `.ttl`, `.pending`, `.maintenance`,
+  `.counters`** on `AsyncVectorCollection`, matching the sync namespaces name
+  for name and signature for signature.
+- **`async with collection.tx()`** — the async mirror of `collection.tx()`.
+  A transaction holds a `threading.RLock` for its lifetime, so entering and
+  exiting on two different pool workers would release a lock the thread never
+  acquired; each transaction therefore gets a private single-worker executor
+  and every step runs on that one thread. Operate through the yielded handle:
+  awaiting work on the outer collection inside the block sends it to the
+  shared pool, where it blocks on the lock the transaction holds.
+  `atomic(fn)` remains available and makes that mistake unrepresentable — its
+  body is synchronous and cannot await at all.
+- **`AsyncVectorDB.transaction(fn)`** — database-wide transactions spanning
+  collections, plus `save`, `as_langchain`, and `as_llama_index`.
+- **`AsyncVectorCollection.add_texts_streaming`**.
+- **`events.subscribe` is a real async generator**, polling with
+  `asyncio.sleep` instead of blocking the event loop.
+
+A parity test now fails if a public sync method gains no async counterpart,
+or if a namespace signature drifts.
+
+#### Fixed
+
+- **Cancelling an `async with` transaction no longer wedges the database.**
+  Teardown ran through an `await`, and suspending while a `GeneratorExit` is
+  in flight raises "async generator ignored GeneratorExit" — leaving the
+  savepoint open and the DB lock held for the life of the process. Teardown
+  is now driven without suspending.
+
+### Crash and concurrency fixes
+
+- **Deleting from a memory-mapped index segfaulted the process.** `add()`
+  reloaded a `view=True` index as writable before mutating; `remove()` did
+  not, and usearch does not raise on a read-only mapping — it crashes. Any
+  database whose index file passed the 50 MB mmap threshold and then saw a
+  delete was exposed. Both paths now go through one guard.
+- **Index reads could dereference a closed index.** `search`, `get`,
+  `remove`, `size`, `contains`, and `keys` checked `_index is None` and then
+  re-read the attribute, so a concurrent `close()` produced `AttributeError`
+  or `TypeError`. They now snapshot the reference once.
+- **A locked write inside a transaction is no longer retried.** Outside a
+  transaction the write helper rolls a failed attempt back before retrying;
+  inside one it deliberately does not, so re-running the body re-executed
+  statements that had already applied, duplicating auto-id rows.
+- **`close()` and `delete_collection()` stop TTL sweepers.** Background
+  sweeper threads outlived both, waking on their interval to query a closed
+  database or dropped tables and logging a failure every cycle.
+- **`usearch>=2.24.0`** — earlier versions can underflow `Index::size()` to
+  ~1.8e19 under concurrent add/remove (unum-cloud/usearch#697), which drives
+  spurious full index rebuilds.
+
 ### Transactions cover the vector index
 
 `tx()` and `db.transaction()` guarded only half the store: the SAVEPOINT

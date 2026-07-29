@@ -340,8 +340,13 @@ class VectorCollection:
 
         The buffered arrays are copied: they may alias caller-owned memory
         that is free to change before the transaction commits.
+
+        Only the thread that owns the transaction defers. Another thread's
+        write is not part of it — its rows are already committed — so
+        buffering would hand its vectors to a transaction that can roll
+        back and drop them.
         """
-        if self._tx_state.depth > 0:
+        if self._tx_state.owned_by_current_thread():
             keys_buf = np.array(keys, dtype=np.uint64, copy=True)
             vecs_buf = np.array(vectors, dtype=np.float32, copy=True)
 
@@ -357,7 +362,7 @@ class VectorCollection:
 
         Counterpart to `_index_add`; see there for why the write is held.
         """
-        if self._tx_state.depth > 0:
+        if self._tx_state.owned_by_current_thread():
             keys_buf = [int(k) for k in keys]
 
             def _deferred_remove() -> None:
@@ -2272,6 +2277,7 @@ class _DBTransaction:
             depth = self._db._tx_state.depth
             name = f"simplevecdb_tx_{depth + 1}"
             self._db.conn.execute(f"SAVEPOINT {name}")
+            self._db._tx_state.owner = threading.get_ident()
             self._db._tx_state.depth = depth + 1
             self._savepoint_name = name
             self._entered = True
@@ -2333,6 +2339,8 @@ class _DBTransaction:
                     self._db.conn.execute(f"RELEASE SAVEPOINT {name}")
             finally:
                 self._db._tx_state.depth = max(0, self._db._tx_state.depth - 1)
+                if self._db._tx_state.depth == 0:
+                    self._db._tx_state.owner = None
                 # Outermost commit: if depth fell to 0, finalize the
                 # implicit Python sqlite3 transaction so changes flush.
                 if self._db._tx_state.depth == 0 and exc_type is None:
@@ -2769,6 +2777,20 @@ class VectorDB:
             # Close any cached collection's open index before removing the file
             for cached_key, cached_col in list(self._collections.items()):
                 if cached_key[0] == name:
+                    # Stop the TTL sweeper first: left running it keeps
+                    # querying tables this method is about to drop, logging a
+                    # failure every interval for the life of the process.
+                    ttl_ns = cached_col.__dict__.get("_ttl_ns")
+                    if ttl_ns is not None:
+                        try:
+                            ttl_ns.stop_background()
+                        except Exception:
+                            _logger.warning(
+                                "Failed to stop TTL sweeper for collection %r "
+                                "during delete",
+                                name,
+                                exc_info=True,
+                            )
                     try:
                         cached_col._index.close()
                     except Exception:
@@ -3045,6 +3067,22 @@ class VectorDB:
         if getattr(self, "_closed", False):
             return
         self._closed = True
+        # Stop opt-in TTL sweepers first. They are daemon threads holding a
+        # reference to this connection: left running, they wake on their
+        # interval and fail against a closed database, logging a warning
+        # every cycle until the process exits — and a sweep in flight can
+        # race the conn.close() below.
+        for col in self._collections.values():
+            ttl_ns = col.__dict__.get("_ttl_ns")
+            if ttl_ns is not None:
+                try:
+                    ttl_ns.stop_background()
+                except Exception:
+                    _logger.warning(
+                        "Failed to stop TTL sweeper for collection %s during close",
+                        col.name,
+                        exc_info=True,
+                    )
         try:
             self.save()
         except Exception:

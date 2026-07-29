@@ -84,8 +84,9 @@ release-by-release detail, see the [Changelog](CHANGELOG.md).
   Vector mutations (`add_texts`, `delete_by_ids`, `pending.flush()`,
   `ttl.sweep()`) are buffered and applied on commit, so a rollback
   leaves neither store changed; the tradeoff is that a search inside
-  the transaction cannot see its own vector writes. Async callers use
-  `await collection.atomic(fn)` instead of `async with`.
+  the transaction cannot see its own vector writes. Async callers get the
+  same shape — `async with collection.tx() as coll:` — plus
+  `await collection.atomic(fn)` for a callback that cannot await.
 - **Reserved ids** — `collection.reserve_ids(n)` hands out ids before
   the rows exist, so self-referential or grouped documents go in with a
   single `add_texts` call. Reusing an existing id now raises instead of

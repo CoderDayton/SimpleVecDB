@@ -27,16 +27,94 @@ from __future__ import annotations
 import asyncio
 import functools
 from concurrent.futures import ThreadPoolExecutor
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
+from contextlib import asynccontextmanager
 from threading import Lock
 from typing import Any, TypeVar
 
 import logging
 
-from .core import VectorDB, VectorCollection
+from .core import VectorDB, VectorCollection, _DBTransaction
 from .types import Document, DistanceStrategy, OnConflict, Quantization
 
 T = TypeVar("T")
+
+
+class _AsyncNamespace:
+    """Awaitable mirror of a sync sub-namespace (`collection.edges`, …).
+
+    Every public callable on the wrapped namespace is re-exposed as a
+    coroutine that runs the sync call in the executor. Async code therefore
+    reads exactly like sync code with `await` in front —
+    `await coll.edges.upsert(...)` against `coll.edges.upsert(...)` — and a
+    method added to a sync namespace is reachable from async immediately,
+    with no wrapper to write and no way for the two surfaces to drift.
+
+    Non-callable attributes pass through unchanged.
+    """
+
+    __slots__ = ("_namespace", "_run")
+
+    def __init__(self, namespace: Any, run: Callable[..., Any]) -> None:
+        self._namespace = namespace
+        self._run = run
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        attr = getattr(self._namespace, name)
+        if not callable(attr):
+            return attr
+
+        @functools.wraps(attr)
+        async def _in_executor(*args: Any, **kwargs: Any) -> Any:
+            return await self._run(attr, *args, **kwargs)
+
+        return _in_executor
+
+    def __dir__(self) -> list[str]:
+        return sorted(set(dir(self._namespace)) | set(object.__dir__(self)))
+
+    def __repr__(self) -> str:
+        return f"Async{type(self._namespace).__name__.lstrip('_')}"
+
+
+class _AsyncEventsNamespace(_AsyncNamespace):
+    """Events namespace with a real async `subscribe`.
+
+    The sync `subscribe` is a blocking generator that sleeps between polls;
+    driving it from async would stall the event loop, so the loop is
+    reimplemented here over the async `read` with `asyncio.sleep`.
+    """
+
+    async def subscribe(
+        self,
+        *,
+        since: int = 0,
+        kind: str | None = None,
+        poll_interval: float | None = None,
+        batch: int = 500,
+    ) -> "AsyncIterator[Any]":
+        """Async generator yielding events as they appear. Caller controls exit."""
+        from . import constants
+
+        interval = (
+            constants.EVENTS_POLL_INTERVAL_S if poll_interval is None else poll_interval
+        )
+        last = int(since)
+        while True:
+            events = await self._run(
+                self._namespace.read, since=last, kind=kind, limit=batch
+            )
+            if events:
+                for event in events:
+                    yield event
+                last = events[-1].seq
+                if len(events) == batch:
+                    # Drained a full batch; go again without sleeping.
+                    continue
+            await asyncio.sleep(interval)
+
 
 _logger = logging.getLogger(__name__)
 
@@ -53,9 +131,15 @@ class AsyncVectorCollection:
         self,
         sync_collection: VectorCollection,
         executor: ThreadPoolExecutor,
+        *,
+        tx_pinned: bool = False,
     ):
         self._collection = sync_collection
         self._executor = executor
+        # True when `executor` is a transaction's private single-worker pool,
+        # so a nested tx() reuses that thread instead of pinning a new one.
+        self._tx_pinned = tx_pinned
+        self._namespaces: dict[str, _AsyncNamespace] = {}
 
     @property
     def name(self) -> str:
@@ -70,6 +154,144 @@ class AsyncVectorCollection:
         return await loop.run_in_executor(
             self._executor, functools.partial(fn, *args, **kwargs)
         )
+
+    def _namespace(self, name: str) -> _AsyncNamespace:
+        """Awaitable mirror of the sync namespace `name`, created once."""
+        proxy = self._namespaces.get(name)
+        if proxy is None:
+            cls = _AsyncEventsNamespace if name == "events" else _AsyncNamespace
+            proxy = cls(getattr(self._collection, name), self._run)
+            self._namespaces[name] = proxy
+        return proxy
+
+    @property
+    def edges(self) -> _AsyncNamespace:
+        """Awaitable mirror of `VectorCollection.edges`."""
+        return self._namespace("edges")
+
+    @property
+    def events(self) -> _AsyncNamespace:
+        """Awaitable mirror of `VectorCollection.events`."""
+        return self._namespace("events")
+
+    @property
+    def ttl(self) -> _AsyncNamespace:
+        """Awaitable mirror of `VectorCollection.ttl`."""
+        return self._namespace("ttl")
+
+    @property
+    def pending(self) -> _AsyncNamespace:
+        """Awaitable mirror of `VectorCollection.pending`."""
+        return self._namespace("pending")
+
+    @property
+    def maintenance(self) -> _AsyncNamespace:
+        """Awaitable mirror of `VectorCollection.maintenance`."""
+        return self._namespace("maintenance")
+
+    @property
+    def counters(self) -> _AsyncNamespace:
+        """Awaitable mirror of `VectorCollection.counters`."""
+        return self._namespace("counters")
+
+    async def add_texts_streaming(
+        self,
+        items: Iterable[tuple[str, dict | None, Sequence[float] | None]],
+        *,
+        batch_size: int | None = None,
+        threads: int = 0,
+        on_progress: Any = None,
+    ) -> list[int]:
+        """Stream documents in batches, returning every inserted id.
+
+        The sync method is a generator yielding per-batch progress; the whole
+        drain runs in one executor task here, so `on_progress` fires from
+        that thread rather than the event loop.
+
+        See VectorCollection.add_texts_streaming for full documentation.
+        """
+
+        def _drain(coll: VectorCollection) -> list[int]:
+            ids: list[int] = []
+            for progress in coll.add_texts_streaming(
+                items,
+                batch_size=batch_size,
+                threads=threads,
+                on_progress=on_progress,
+            ):
+                ids.extend(progress["batch_ids"])
+            return ids
+
+        return await self._run(_drain, self._collection)
+
+    @asynccontextmanager
+    async def tx(self) -> AsyncIterator["AsyncVectorCollection"]:
+        """Async mirror of `VectorCollection.tx()`.
+
+            async with collection.tx() as coll:
+                await coll.delete_by_ids([1])
+                await coll.add_texts(["replacement"], embeddings=[vec])
+
+        A transaction holds a `threading.RLock` for its lifetime, so its
+        enter and exit must happen on one thread. The shared pool cannot
+        promise that — two executor tasks may land on different workers, and
+        releasing an RLock from a thread that never acquired it raises
+        `RuntimeError: cannot release un-acquired lock`. So the transaction
+        gets a private single-worker executor: one thread, every step on it.
+
+        **Operate through the yielded handle.** It is bound to the pinned
+        thread; the outer collection is not. Awaiting work on the outer
+        handle inside the block sends it to the shared pool, where it blocks
+        on the DB lock this transaction holds — and that lock is only
+        released when the block exits, which cannot happen while it is
+        awaiting. Use `atomic()` if you want that mistake to be
+        unrepresentable: its body is synchronous and cannot await at all.
+        """
+        loop = asyncio.get_running_loop()
+        # A nested tx must run on the thread that already holds the lock: the
+        # RLock is reentrant per thread, so pinning a second thread here
+        # would block forever waiting on the outer transaction.
+        reuse = self._tx_pinned
+        pinned = (
+            self._executor
+            if reuse
+            else ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix=f"simplevecdb-tx-{self.name}"
+            )
+        )
+
+        def _on_pinned(fn: Callable[..., Any], *args: Any) -> Any:
+            return loop.run_in_executor(pinned, functools.partial(fn, *args))
+
+        try:
+            manager = self._collection.tx()
+            scoped_sync = await _on_pinned(manager.__enter__)
+            scoped = AsyncVectorCollection(scoped_sync, pinned, tx_pinned=True)
+            try:
+                yield scoped
+            except (GeneratorExit, asyncio.CancelledError) as exc:
+                # Teardown paths where awaiting is unsafe. Suspending while a
+                # GeneratorExit is in flight raises "async generator ignored
+                # GeneratorExit", and a cancelled task's next await can be
+                # cancelled again — either way the savepoint would stay open
+                # and the DB lock would never be released, wedging every other
+                # writer. Drive the exit on the pinned thread without
+                # suspending.
+                pinned.submit(
+                    manager.__exit__, type(exc), exc, exc.__traceback__
+                ).result()
+                raise
+            except BaseException as exc:
+                await _on_pinned(manager.__exit__, type(exc), exc, exc.__traceback__)
+                raise
+            await _on_pinned(manager.__exit__, None, None, None)
+        finally:
+            if not reuse:
+                # Non-blocking: the transaction is over, so waiting here would
+                # only stall the event loop on work the body queued and never
+                # awaited — work that must not run now that the savepoint has
+                # closed. cancel_futures drops exactly that.
+                pinned.shutdown(wait=False, cancel_futures=True)
 
     async def atomic(self, fn: Callable[[VectorCollection], T]) -> T:
         """Run `fn` inside a transaction on this collection.
@@ -812,6 +1034,52 @@ class AsyncVectorDB:
         return await loop.run_in_executor(
             self._executor, functools.partial(fn, *args, **kwargs)
         )
+
+    async def save(self) -> None:
+        """Persist every collection's index to disk.
+
+        See VectorDB.save for full documentation.
+        """
+        await self._run(self._db.save)
+
+    async def transaction(self, fn: Callable[["_DBTransaction"], T]) -> T:
+        """Run `fn` inside a database-wide transaction.
+
+        The DB-level counterpart to `AsyncVectorCollection.atomic`: `fn` is a
+        synchronous callable receiving the transaction handle, so it can span
+        collections via `tx["name"]`. Everything it does — catalog and vector
+        writes across every collection — commits or rolls back together.
+
+            def move(tx):
+                tx["archive"].add_texts(texts, embeddings=vecs)
+                tx["inbox"].delete_by_ids(ids)
+
+            await db.transaction(move)
+
+        A callback rather than `async with` for the same reason as `atomic`:
+        the transaction holds a `threading.RLock` across its lifetime and
+        must acquire and release it on one thread. `fn` must not await.
+        """
+
+        def _in_tx() -> T:
+            with self._db.transaction() as tx:
+                return fn(tx)
+
+        return await self._run(_in_tx)
+
+    def as_langchain(self, embeddings: Any = None, collection_name: str = "default"):
+        """Return a LangChain-compatible vector store over the sync database.
+
+        Synchronous by design: LangChain drives its own async surface.
+        """
+        return self._db.as_langchain(embeddings, collection_name)
+
+    def as_llama_index(self, collection_name: str = "default"):
+        """Return a LlamaIndex-compatible vector store over the sync database.
+
+        Synchronous by design: LlamaIndex drives its own async surface.
+        """
+        return self._db.as_llama_index(collection_name)
 
     def list_collections(self) -> list[str]:
         """Return names of all persisted collections in the database."""

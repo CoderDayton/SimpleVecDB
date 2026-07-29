@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import threading
 
 import pytest
 
@@ -179,6 +180,39 @@ class TestTransactionCoversTheIndex:
                     raise RuntimeError("boom")
 
         assert collection.count() == 2
+        assert collection._index.size == 2
+
+    def test_another_thread_is_not_captured_by_an_open_transaction(self, collection):
+        """A writer outside the transaction must not have its vectors buffered.
+
+        Its rows are already committed, so buffering them into someone else's
+        transaction means a rollback silently drops the vectors and leaves the
+        index short — the exact divergence the buffering exists to prevent.
+        """
+        import numpy as np
+
+        started, release = threading.Event(), threading.Event()
+
+        def owner():
+            with contextlib.suppress(RuntimeError):
+                with collection.tx():
+                    started.set()
+                    release.wait(5)
+                    raise RuntimeError("boom")
+
+        thread = threading.Thread(target=owner)
+        thread.start()
+        assert started.wait(5)
+
+        # Stands in for a non-transactional writer past its catalog commit.
+        collection._index_add(
+            np.array([99], dtype=np.uint64),
+            np.array([VEC_B], dtype=np.float32),
+        )
+
+        release.set()
+        thread.join(5)
+
         assert collection._index.size == 2
 
     def test_buffer_does_not_leak_between_transactions(self, collection):

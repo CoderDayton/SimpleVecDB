@@ -57,13 +57,44 @@ Synchronous properties remain unchanged:
 
 - `collection.name` - Collection name
 
+## Sub-namespaces
+
+Every sync sub-namespace is mirrored on the async collection, name for name:
+
+```python
+await collection.edges.upsert(src, dst, kind="cites", weight=0.9)
+await collection.counters.increment(doc_id, {"hits": 1})
+await collection.ttl.sweep()
+await collection.pending.flush()
+
+async for event in collection.events.subscribe(since=0):
+    ...
+```
+
 ## Transactions
 
-`collection.tx()` has no `async with` equivalent — the transaction holds a
-`threading.RLock` for its lifetime, and entering and exiting in two separate
-executor tasks can release that lock from a thread that never acquired it.
-Pass a synchronous callback to `atomic()` instead, and the whole transaction
-runs in one executor thread:
+`async with collection.tx()` mirrors the sync context manager. Catalog writes
+and vector writes commit or roll back together:
+
+```python
+async with collection.tx() as coll:
+    await coll.delete_by_ids([1])
+    await coll.add_texts(["replacement"], embeddings=[[0.1] * 384])
+```
+
+A transaction holds a `threading.RLock` for its lifetime, so its enter and
+exit must happen on one thread — the shared pool cannot promise that, and
+releasing an RLock from a thread that never acquired it raises. Each
+transaction therefore gets a private single-worker executor.
+
+**Operate through the yielded handle.** It is bound to that pinned thread;
+the outer collection is not. Awaiting work on the outer handle inside the
+block sends it to the shared pool, where it blocks on the DB lock this
+transaction holds — and that lock is not released until the block exits,
+which cannot happen while it is awaiting.
+
+`atomic()` makes that mistake unrepresentable: the callback is synchronous
+and cannot await at all.
 
 ```python
 def move(coll):
@@ -73,8 +104,8 @@ def move(coll):
 new_ids = await collection.atomic(move)
 ```
 
-The callback receives the underlying sync `VectorCollection` and must not
-await. Catalog writes and vector writes commit or roll back together.
+`AsyncVectorDB.transaction(fn)` is the database-wide equivalent, spanning
+collections via `tx["name"]`.
 
 ## Concurrent Operations
 

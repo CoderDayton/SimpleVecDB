@@ -92,13 +92,25 @@ class _TxState:
     usearch index, so vector writes are held here and applied only when
     the outermost transaction is about to release; a rollback truncates
     the buffer instead, leaving the two stores in step.
+
+    `owner` is the thread id holding the transaction. A writer that is not
+    the owner is by definition not inside the transaction — its rows are
+    already committed — so it must apply its vectors immediately rather
+    than buffer them into a transaction that may roll back and discard
+    them. Vector writes happen outside the DB lock, so identity is what
+    decides this, not `depth` alone.
     """
 
-    __slots__ = ("depth", "index_ops")
+    __slots__ = ("depth", "index_ops", "owner")
 
     def __init__(self) -> None:
         self.depth: int = 0
         self.index_ops: list[Callable[[], None]] = []
+        self.owner: int | None = None
+
+    def owned_by_current_thread(self) -> bool:
+        """True when the calling thread is inside this transaction."""
+        return self.depth > 0 and self.owner == threading.get_ident()
 
 
 class _CatalogWritable:

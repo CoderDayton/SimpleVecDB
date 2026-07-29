@@ -109,7 +109,11 @@ class QuantizationStrategy:
             ValueError: If quantization mode unsupported or dim missing for BIT
         """
         if self.quantization == Quantization.FLOAT:
-            return np.frombuffer(blob, dtype=np.float32)
+            # np.frombuffer aliases the blob and is read-only. Every other
+            # branch below returns a fresh writable array (astype/where copy),
+            # so copy here too rather than hand back a vector whose
+            # mutability depends on the quantization mode.
+            return np.frombuffer(blob, dtype=np.float32).copy()
 
         elif self.quantization == Quantization.INT8:
             return np.frombuffer(blob, dtype=np.int8).astype(np.float32) / 127.0

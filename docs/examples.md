@@ -287,12 +287,16 @@ with collection.tx() as coll:
     # rows and vectors both survive, or neither does
 ```
 
-On the async side there is no `async with`; pass a sync callback to
-`atomic()` instead — see the async API reference for why.
+The async side mirrors this. Operate through the yielded handle — it is
+bound to the transaction's pinned thread, and the outer collection is not:
 
 ```python
-await collection.atomic(lambda coll: coll.add_texts(["x"], embeddings=[vec]))
+async with collection.tx() as coll:
+    await coll.add_texts(["x"], embeddings=[vec])
 ```
+
+`await collection.atomic(fn)` runs a synchronous callback instead, which
+cannot await and so cannot make that mistake. See the async API reference.
 
 ### Reserving ids
 

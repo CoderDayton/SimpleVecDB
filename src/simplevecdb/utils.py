@@ -113,6 +113,16 @@ def retry_on_lock(
     def decorator(func: F) -> F:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Never retry inside the caller's transaction. There, the write
+            # helper suppresses the per-call commit, so a statement that
+            # failed halfway through leaves its earlier statements applied
+            # and un-rolled-back; re-running the body would insert the
+            # auto-id rows a second time. The transaction owns atomicity, so
+            # let the error reach it and be rolled back as a unit.
+            tx_state = getattr(args[0], "_tx_state", None) if args else None
+            if tx_state is not None and tx_state.owned_by_current_thread():
+                return func(*args, **kwargs)
+
             last_exception: sqlite3.OperationalError | None = None
             total_wait = 0.0
 
