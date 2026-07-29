@@ -44,6 +44,7 @@ db = AsyncVectorDB("vectors.db", max_workers=8)
 | Sync Method                       | Async Method                                       |
 | --------------------------------- | -------------------------------------------------- |
 | `add_texts()`                     | `await collection.add_texts()`                     |
+| `reserve_ids()`                   | `await collection.reserve_ids()`                   |
 | `similarity_search()`             | `await collection.similarity_search()`             |
 | `similarity_search_batch()`       | `await collection.similarity_search_batch()`       |
 | `keyword_search()`                | `await collection.keyword_search()`                |
@@ -55,6 +56,25 @@ db = AsyncVectorDB("vectors.db", max_workers=8)
 Synchronous properties remain unchanged:
 
 - `collection.name` - Collection name
+
+## Transactions
+
+`collection.tx()` has no `async with` equivalent — the transaction holds a
+`threading.RLock` for its lifetime, and entering and exiting in two separate
+executor tasks can release that lock from a thread that never acquired it.
+Pass a synchronous callback to `atomic()` instead, and the whole transaction
+runs in one executor thread:
+
+```python
+def move(coll):
+    coll.delete_by_ids([1])
+    return coll.add_texts(["replacement"], embeddings=[[0.1] * 384])
+
+new_ids = await collection.atomic(move)
+```
+
+The callback receives the underlying sync `VectorCollection` and must not
+await. Catalog writes and vector writes commit or roll back together.
 
 ## Concurrent Operations
 

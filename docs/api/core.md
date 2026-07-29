@@ -22,6 +22,7 @@ A named collection of vectors within a database.
       members:
         - add_texts
         - add_texts_streaming
+        - reserve_ids
         - similarity_search
         - similarity_search_batch
         - keyword_search

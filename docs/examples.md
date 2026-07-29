@@ -265,10 +265,7 @@ collection.events.prune(before_seq=seq - 100_000)
 
 `db.transaction()` and `collection.tx()` wrap a SAVEPOINT around
 catalog writes (metadata, counters, edges, events, TTL, and the
-pending overlay). A raised exception rolls all SQL writes back. Coarse
-vector mutations (`add_texts`, `delete_by_ids`) are *not* rolled back —
-use `update_embedding` + `pending.flush()` for vector changes that
-must be commit-gated.
+pending overlay). A raised exception rolls all SQL writes back.
 
 ```python
 with db.transaction() as tx:
@@ -276,6 +273,46 @@ with db.transaction() as tx:
     tx["personal"].edges.add_edge(1, 2, kind="cites", weight=0.6)
     # any exception below rolls both writes back
 ```
+
+Vector mutations (`add_texts`, `delete_by_ids`, `pending.flush()`,
+`ttl.sweep()`) take part too: a SAVEPOINT cannot roll back the HNSW
+index, so the vector writes are buffered and applied when the outermost
+transaction commits. The tradeoff is that a search *inside* the
+transaction does not see the transaction's own vector writes.
+
+```python
+with collection.tx() as coll:
+    coll.delete_by_ids([1])
+    coll.add_texts(["replacement"], embeddings=[vec])
+    # rows and vectors both survive, or neither does
+```
+
+On the async side there is no `async with`; pass a sync callback to
+`atomic()` instead — see the async API reference for why.
+
+```python
+await collection.atomic(lambda coll: coll.add_texts(["x"], embeddings=[vec]))
+```
+
+### Reserving ids
+
+`reserve_ids(n)` burns ids out of the auto-increment sequence without
+writing rows, so a document's own id can be baked into its metadata and
+the whole group written in one call.
+
+```python
+ids = collection.reserve_ids(3)
+group = {"episode_group_id": ids[0]}
+collection.add_texts(
+    texts,
+    metadatas=[{**group, "id": i} for i in ids],
+    embeddings=vectors,
+    ids=ids,
+)
+```
+
+Passing an `ids=` value that already exists raises. Pass
+`on_conflict="replace"` for the old overwrite-in-place behaviour.
 
 ## Benchmark scripts
 

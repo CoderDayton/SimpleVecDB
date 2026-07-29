@@ -95,11 +95,15 @@ class SimpleVecDBVectorStore(VectorStore):
         embeddings = None
         if self.embedding:
             embeddings = self.embedding.embed_documents(texts_list)
+        # LangChain callers expect add_texts(ids=…) to overwrite an existing
+        # document, so this adapter keeps upsert semantics even though the
+        # native API now refuses a colliding id by default.
         ids = self._collection.add_texts(
             texts=texts_list,
             metadatas=metadatas,
             embeddings=embeddings,
             ids=kwargs.get("ids"),
+            on_conflict=kwargs.get("on_conflict", "replace"),
         )
         return [str(id_) for id_ in ids]
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import field
 from enum import Enum
-from typing import Callable, TypedDict, TYPE_CHECKING
+from typing import Callable, Literal, TypedDict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
@@ -36,6 +36,13 @@ class StreamingProgress(TypedDict):
 
 # Type alias for progress callback
 ProgressCallback = Callable[[StreamingProgress], None]
+
+
+# What an explicitly supplied document id that already exists should do.
+# "error" refuses the whole write; "replace" overwrites the stored row.
+OnConflict = Literal["error", "replace"]
+
+ON_CONFLICT_POLICIES: frozenset[str] = frozenset({"error", "replace"})
 
 
 class DistanceStrategy(StrEnum):

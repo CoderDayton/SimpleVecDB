@@ -26,6 +26,7 @@ import multiprocessing
 from .types import (
     Document,
     DistanceStrategy,
+    OnConflict,
     Quantization,
     Edge,
     Event,
@@ -34,7 +35,7 @@ from .types import (
     ClusterResult,
     ClusterTagCallback,
 )
-from .utils import _import_optional
+from .utils import _import_optional, find_duplicates
 from .engine.quantization import QuantizationStrategy
 from .engine.search import SearchEngine
 from .engine.catalog import CatalogManager, _TxState
@@ -296,6 +297,76 @@ class VectorCollection:
 
         return self._index_path
 
+    def reserve_ids(self, count: int) -> list[int]:
+        """Reserve `count` document ids without writing any rows.
+
+        The ids are burned out of the auto-increment sequence, so no later
+        insert can be handed one of them. Use this when a document's own id
+        has to appear in its metadata — a self-reference, or a shared group
+        key across a batch — so the whole group goes in with a single
+        `add_texts` call instead of an insert followed by a patch-up write.
+
+            ids = collection.reserve_ids(3)
+            group = {"group_id": ids[0]}
+            collection.add_texts(texts, [{**group, "id": i} for i in ids], ids=ids)
+
+        Reserving is not inserting: ids that are never passed back as `ids=`
+        stay unused, leaving a gap in the sequence.
+
+        Args:
+            count: How many ids to reserve. Must be positive.
+
+        Returns:
+            `count` consecutive ids in ascending order.
+
+        Raises:
+            ValueError: If `count` is not positive.
+        """
+        return self._catalog.reserve_ids(count)
+
+    def _index_add(
+        self,
+        keys: "np.ndarray",
+        vectors: "np.ndarray",
+        *,
+        threads: int = 0,
+    ) -> None:
+        """Add vectors to the HNSW index, deferring the write inside a tx.
+
+        A SQLite SAVEPOINT cannot roll back usearch, so when a transaction
+        is open the write is buffered on the shared transaction state and
+        applied just before the outermost savepoint releases. A rollback
+        discards the buffer, so the catalog and the index stay in step.
+
+        The buffered arrays are copied: they may alias caller-owned memory
+        that is free to change before the transaction commits.
+        """
+        if self._tx_state.depth > 0:
+            keys_buf = np.array(keys, dtype=np.uint64, copy=True)
+            vecs_buf = np.array(vectors, dtype=np.float32, copy=True)
+
+            def _deferred_add() -> None:
+                self._index.add(keys_buf, vecs_buf, threads=threads)
+
+            self._tx_state.index_ops.append(_deferred_add)
+            return
+        self._index.add(keys, vectors, threads=threads)
+
+    def _index_remove(self, keys: list[int]) -> None:
+        """Remove keys from the HNSW index, deferring the write inside a tx.
+
+        Counterpart to `_index_add`; see there for why the write is held.
+        """
+        if self._tx_state.depth > 0:
+            keys_buf = [int(k) for k in keys]
+
+            def _deferred_remove() -> None:
+                self._index.remove(keys_buf)
+
+            self._tx_state.index_ops.append(_deferred_remove)
+            return
+        self._index.remove(keys)
+
     def add_texts(
         self,
         texts: Sequence[str],
@@ -305,29 +376,36 @@ class VectorCollection:
         *,
         parent_ids: Sequence[int | None] | None = None,
         threads: int = 0,
+        on_conflict: OnConflict = "error",
     ) -> list[int]:
         """
         Add texts with optional embeddings and metadata to the collection.
 
-        Automatically infers vector dimension from first batch. Supports upsert
-        (update on conflict) when providing existing IDs. For COSINE distance,
-        vectors are L2-normalized automatically by usearch.
+        Automatically infers vector dimension from first batch. For COSINE
+        distance, vectors are L2-normalized automatically by usearch.
+
+        Supplying `ids` that already exist is an error by default; pass
+        `on_conflict="replace"` to get upsert behaviour.
 
         Args:
             texts: Document text content to store.
             metadatas: Optional metadata dicts (one per text).
             embeddings: Optional pre-computed embeddings (one per text).
                 If None, attempts to use local embedding model.
-            ids: Optional document IDs for upsert behavior.
+            ids: Optional explicit document IDs — see `reserve_ids`.
             parent_ids: Optional parent document IDs for hierarchical relationships.
             threads: Number of threads for parallel insertion (0=auto).
+            on_conflict: What an explicit id that already exists does —
+                ``"error"`` (default) raises before anything is written,
+                ``"replace"`` overwrites the existing document.
 
         Returns:
             List of inserted/updated document IDs.
 
         Raises:
-            ValueError: If embedding dimensions don't match, or if no embeddings
-                provided and local embedder not available.
+            ValueError: If embedding dimensions don't match, if no embeddings
+                provided and local embedder not available, or if `ids` collide
+                with existing documents under ``on_conflict="error"``.
         """
         if not texts:
             return []
@@ -348,6 +426,28 @@ class VectorCollection:
             raise ValueError(
                 f"parent_ids length ({len(parent_ids)}) must match texts length ({len(texts)})"
             )
+
+        # Check explicit ids once, for the whole call. The catalog re-checks
+        # per batch, but by then an earlier batch may already have committed —
+        # only an up-front check can promise that a rejected call wrote
+        # nothing. Runs before embedding resolution so a doomed call does not
+        # pay for embeddings first.
+        explicit_ids = [i for i in ids if i is not None] if ids is not None else []
+        if explicit_ids:
+            duplicates = find_duplicates(explicit_ids)
+            if duplicates:
+                raise ValueError(
+                    f"ids contains duplicate values within a single call: {duplicates}"
+                )
+            if on_conflict == "error":
+                colliding = self._catalog.existing_ids(explicit_ids)
+                if colliding:
+                    raise ValueError(
+                        f"add_texts: {len(colliding)} id(s) already exist: "
+                        f"{colliding[:10]}{'...' if len(colliding) > 10 else ''}. "
+                        'Pass on_conflict="replace" to overwrite them, or use '
+                        "reserve_ids() to get ids that cannot collide."
+                    )
 
         # Resolve embeddings
         if embeddings is None:
@@ -396,14 +496,17 @@ class VectorCollection:
                 batch_ids,
                 embeddings=batch_embeds if self._store_embeddings else None,
                 parent_ids=batch_parent_ids,
+                on_conflict=on_conflict,
             )
 
-            # Add to usearch index. The catalog rows above are already
-            # committed, so if this fails the two stores diverge (rows present,
-            # vectors missing). Log it so the divergence is visible instead of
-            # silent; recovery is rebuild_index() (needs store_embeddings=True).
+            # Add to usearch index. Inside a transaction this is buffered and
+            # applied with the commit, so a rollback drops both stores
+            # together. Outside one the catalog rows are already committed, so
+            # a failure here diverges the two (rows present, vectors missing);
+            # log it rather than fail silently. Recovery is rebuild_index()
+            # (needs store_embeddings=True).
             try:
-                self._index.add(
+                self._index_add(
                     np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads
                 )
             except Exception:
@@ -594,7 +697,7 @@ class VectorCollection:
         doc_ids = self._catalog.add_documents(
             texts, metas, None, embeddings=embeds_resolved
         )
-        self._index.add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
+        self._index_add(np.asarray(doc_ids, dtype=np.uint64), emb_np, threads=threads)
 
         return doc_ids
 
@@ -775,8 +878,9 @@ class VectorCollection:
         self._catalog.delete_by_ids(ids_list)
 
         # Then remove from usearch (if this fails, catalog is clean and
-        # rebuild_index() can recover the index from stored data)
-        self._index.remove(ids_list)
+        # rebuild_index() can recover the index from stored data). Inside a
+        # transaction the removal is buffered until commit.
+        self._index_remove(ids_list)
 
     def remove_texts(
         self,
@@ -1813,7 +1917,7 @@ class _PendingNamespace:
             .copy()
         )
         # add() takes the write lock and does remove+add per existing key.
-        idx.add(ids, mat)
+        self._collection._index_add(ids, mat)
         cat.delete_pending_vectors([int(i) for i in ids])
         # Track flush count for the rebuild scheduler.
         try:
@@ -1897,7 +2001,7 @@ class _TTLNamespace:
         )
         if deleted:
             try:
-                self._collection._index.remove(deleted)
+                self._collection._index_remove(deleted)
             except Exception:
                 # Catalog rows are already gone; index drift means
                 # subsequent searches may surface phantom hits until a
@@ -2143,16 +2247,24 @@ class _DBTransaction:
     owns skips its per-call commit. On success the SAVEPOINT is
     released; on exception it's rolled back and the depth is reset.
 
+    Vector writes are held too: collections buffer their HNSW mutations
+    on the shared transaction state (see `VectorCollection._index_add`)
+    and the outermost transaction applies them just before releasing, so
+    a rollback leaves neither store changed. The cost of deferring is
+    that a search inside the transaction cannot see the transaction's
+    own vector writes.
+
     Yields a mapping-like object so callers can do
     `tx["collection_name"]` to operate on individual collections.
     """
 
-    __slots__ = ("_db", "_savepoint_name", "_entered")
+    __slots__ = ("_db", "_savepoint_name", "_entered", "_index_mark")
 
     def __init__(self, db: "VectorDB") -> None:
         self._db = db
         self._savepoint_name: str | None = None
         self._entered = False
+        self._index_mark = 0
 
     def __enter__(self) -> "_DBTransaction":
         self._db._lock.acquire()
@@ -2163,19 +2275,60 @@ class _DBTransaction:
             self._db._tx_state.depth = depth + 1
             self._savepoint_name = name
             self._entered = True
+            # Everything buffered from here on belongs to this savepoint and
+            # is dropped if it rolls back.
+            self._index_mark = len(self._db._tx_state.index_ops)
         except Exception:
             self._db._lock.release()
             raise
         return self
 
+    def _apply_index_ops(self, savepoint: str) -> None:
+        """Flush buffered HNSW writes before the outermost savepoint releases.
+
+        Running ahead of the RELEASE is what makes the two stores atomic in
+        the normal case: if a vector write raises, the catalog side can still
+        be rolled back. usearch has no undo, so a failure partway through the
+        buffer can still leave vectors applied for rows that are about to
+        disappear — that case is reported loudly rather than papered over.
+        """
+        ops = self._db._tx_state.index_ops
+        if not ops:
+            return
+        applied = 0
+        try:
+            for op in ops:
+                op()
+                applied += 1
+        except Exception:
+            self._db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self._db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            _logger.error(
+                "transaction: %d of %d buffered index operations applied before "
+                "failure; catalog rolled back but the index may retain vectors "
+                "for rows that no longer exist — run rebuild_index() to resync.",
+                applied,
+                len(ops),
+                exc_info=True,
+            )
+            raise
+        finally:
+            ops.clear()
+
     def __exit__(self, exc_type, exc, tb) -> None:
         try:
             name = self._savepoint_name
             assert name is not None
+            state = self._db._tx_state
             try:
                 if exc_type is None:
+                    if state.depth == 1:
+                        self._apply_index_ops(name)
                     self._db.conn.execute(f"RELEASE SAVEPOINT {name}")
                 else:
+                    # Drop vector writes buffered inside this savepoint; an
+                    # outer transaction keeps everything it buffered earlier.
+                    del state.index_ops[self._index_mark :]
                     self._db.conn.execute(f"ROLLBACK TO SAVEPOINT {name}")
                     self._db.conn.execute(f"RELEASE SAVEPOINT {name}")
             finally:

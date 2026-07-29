@@ -34,6 +34,22 @@ def _batched(iterable: Iterable[Any], n: int) -> Iterable[Sequence[Any]]:
             yield batch
 
 
+def find_duplicates(values: Sequence[int]) -> list[int]:
+    """Return the values appearing more than once, in ascending order.
+
+    Single pass over the input — callers hand this whole batches of
+    caller-supplied document ids, so a quadratic scan is not an option.
+    """
+    seen: set[int] = set()
+    repeated: set[int] = set()
+    for value in values:
+        if value in seen:
+            repeated.add(value)
+        else:
+            seen.add(value)
+    return sorted(repeated)
+
+
 def _import_optional(name: str) -> Any:
     """Attempt to import a module while honoring tests that stub sys.modules."""
     sentinel = object()

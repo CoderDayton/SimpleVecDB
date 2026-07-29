@@ -5,6 +5,60 @@ All notable changes to SimpleVecDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-07-29
+
+### Transactions cover the vector index
+
+`tx()` and `db.transaction()` guarded only half the store: the SAVEPOINT
+rolled back the catalog rows while the vectors written to the HNSW index
+stayed put, leaving the index keyed to rows that no longer existed. Vector
+writes now take part in the transaction, and explicit document ids stop
+overwriting existing documents by accident.
+
+#### Breaking
+
+- **`add_texts(ids=…)` refuses an id that already exists.** It previously
+  upserted silently, so a stale or guessed id destroyed the stored document
+  with no error. Pass `on_conflict="replace"` for the old behaviour. The
+  check runs before anything is written, so a rejected call leaves the
+  collection untouched — including across internal batches. Repeating an id
+  within a single call is always an error.
+- The LangChain adapter keeps upserting: `SimpleVecDBVectorStore.add_texts`
+  defaults to `on_conflict="replace"` so LangChain's own contract holds.
+
+#### Added
+
+- **`collection.reserve_ids(n)`** — reserve ids without writing rows. Ids
+  come out of the auto-increment sequence and can never be handed out again,
+  so a document's own id (a self-reference, a shared group key) can be baked
+  into its metadata and the whole group written with one `add_texts` call
+  instead of an insert followed by a patch-up write.
+- **`AsyncVectorCollection.atomic(fn)`** — run a transaction from async code.
+  `fn` is a synchronous callable receiving the sync collection. This is a
+  callback rather than `async with` because a transaction holds a
+  `threading.RLock` for its lifetime: entering and exiting in two separate
+  executor tasks can release the lock from a thread that never acquired it
+  (`RuntimeError: cannot release un-acquired lock`), and holding it across
+  awaits starves the pool. Running the whole body in one executor task keeps
+  acquire and release paired.
+- **`AsyncVectorCollection.reserve_ids`** and `on_conflict` on the async
+  `add_texts`.
+
+#### Fixed
+
+- **Vector writes are transactional.** `add_texts`, `delete_by_ids`,
+  `pending.flush()` and `ttl.sweep()` buffer their HNSW mutations while a
+  transaction is open and apply them just before the outermost savepoint
+  releases, so a rollback undoes rows and vectors together. Applying ahead of
+  the release means a failing vector write can still roll the catalog back;
+  usearch has no undo, so a failure partway through the buffer is logged
+  loudly with a `rebuild_index()` recommendation rather than hidden.
+
+#### Changed
+
+- A search *inside* a transaction does not see that transaction's own vector
+  writes — they land at commit. Catalog reads are unaffected.
+
 ## [2.6.2] - 2026-06-06
 
 ### Correctness and contract fixes

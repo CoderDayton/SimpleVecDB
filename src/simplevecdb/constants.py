@@ -123,6 +123,11 @@ EVENTS_RETENTION_LIMIT = 100_000
 # Default cadence for opt-in TTL background sweeper threads.
 TTL_SWEEP_DEFAULT_INTERVAL_S = 60.0
 
+# Bound-parameter budget for a single SQLite statement. Well under the
+# SQLITE_MAX_VARIABLE_NUMBER floor (999 on builds before 3.32), so an
+# `IN (...)` list built from caller-supplied ids is chunked, never rejected.
+SQLITE_MAX_BOUND_PARAMS = 900
+
 # Heuristic thresholds that trigger maintenance.rebuild_if_needed.
 REBUILD_PENDING_THRESHOLD = 5_000
 REBUILD_TOMBSTONE_THRESHOLD = 5_000

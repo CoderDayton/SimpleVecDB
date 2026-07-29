@@ -27,14 +27,16 @@ from __future__ import annotations
 import asyncio
 import functools
 from concurrent.futures import ThreadPoolExecutor
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from threading import Lock
-from typing import Any
+from typing import Any, TypeVar
 
 import logging
 
 from .core import VectorDB, VectorCollection
-from .types import Document, DistanceStrategy, Quantization
+from .types import Document, DistanceStrategy, OnConflict, Quantization
+
+T = TypeVar("T")
 
 _logger = logging.getLogger(__name__)
 
@@ -69,6 +71,53 @@ class AsyncVectorCollection:
             self._executor, functools.partial(fn, *args, **kwargs)
         )
 
+    async def atomic(self, fn: Callable[[VectorCollection], T]) -> T:
+        """Run `fn` inside a transaction on this collection.
+
+        `fn` is an ordinary synchronous callable and receives the underlying
+        `VectorCollection`; everything it does — catalog writes and vector
+        writes alike — commits or rolls back as one unit.
+
+            async def swap(coll):
+                coll.delete_by_ids([1])
+                coll.add_texts(["replacement"], embeddings=[vec])
+
+            await collection.atomic(swap)
+
+        This is a callback rather than `async with collection.tx()` on
+        purpose. The transaction holds a `threading.RLock` for its whole
+        lifetime, and an `async with` would enter and exit in two separate
+        executor tasks: the pool is free to run them on different threads,
+        and releasing an RLock from a thread that did not acquire it raises
+        `RuntimeError: cannot release un-acquired lock`. Landing on the same
+        thread by luck would be no better — every other call on this
+        collection would sit on that lock across each `await` in the body,
+        which starves a pool this small. Running the whole body in one
+        executor task keeps acquire and release paired on one thread.
+
+        Because `fn` runs off the event loop, it must not await; use the
+        sync collection API inside it.
+
+        Args:
+            fn: Callable invoked with the sync collection.
+
+        Returns:
+            Whatever `fn` returns.
+        """
+        return await self._run(self._in_tx, fn)
+
+    def _in_tx(self, fn: Callable[[VectorCollection], T]) -> T:
+        """Body of `atomic`, run wholly inside one executor thread."""
+        with self._collection.tx() as coll:
+            return fn(coll)
+
+    async def reserve_ids(self, count: int) -> list[int]:
+        """Reserve document ids without writing rows.
+
+        See VectorCollection.reserve_ids for full documentation.
+        """
+        return await self._run(self._collection.reserve_ids, count)
+
     async def add_texts(
         self,
         texts: Sequence[str],
@@ -78,6 +127,7 @@ class AsyncVectorCollection:
         *,
         parent_ids: Sequence[int | None] | None = None,
         threads: int = 0,
+        on_conflict: OnConflict = "error",
     ) -> list[int]:
         """Add texts with optional embeddings and metadata.
 
@@ -91,6 +141,7 @@ class AsyncVectorCollection:
             ids,
             parent_ids=parent_ids,
             threads=threads,
+            on_conflict=on_conflict,
         )
 
     async def similarity_search(

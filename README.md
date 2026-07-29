@@ -216,7 +216,8 @@ A few of the things SimpleVecDB does well — see
   delete/callback sweep, and a threshold-driven rebuild scheduler.
 - **Atomic counters & transactions (v2.6.1)** — `increment_metadata` for
   JSON deltas in one statement; SAVEPOINT-backed `db.transaction()` /
-  `collection.tx()` rolling all catalog writes back on error.
+  `collection.tx()` rolling catalog *and* vector writes back on error,
+  with `reserve_ids()` for ids you need before the rows exist.
 - **Async, encryption, clustering, hierarchies** — full async surface
   (with executor injection), SQLCipher AES-256, K-means / MiniBatch
   K-means / HDBSCAN, parent/child relationships.
